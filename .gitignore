@@ -1,0 +1,18 @@
+# ── Credenciais (NUNCA commitar) ────────────────────────────────
+serviceAccountKey.json
+*.json.bak
+.env
+
+# ── Modelos treinados (gerados localmente) ──────────────────────
+*.pkl
+
+# ── Dados coletados (recriáveis) ────────────────────────────────
+ticks.csv
+dataset.csv
+operacoes_log.csv
+
+# ── Python ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/

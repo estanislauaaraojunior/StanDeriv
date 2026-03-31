@@ -1,0 +1,23 @@
+# Dependências do Deriv Trading Bot
+# Instalação: pip install -r requirements.txt
+
+# WebSocket client (conexão com a API Deriv)
+websocket-client>=1.6.0
+
+# Machine Learning
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+joblib>=1.3.0
+
+# Deep Learning — Temporal Fusion Transformer
+# CPU-only (~220 MB): pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+
+# Dados
+pandas>=2.1.0
+numpy>=1.26.0
+
+# Dashboard web
+flask>=3.0.0
+psutil>=5.9.0
+python-dotenv>=1.0.0

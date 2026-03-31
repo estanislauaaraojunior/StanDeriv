@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deriv Bot — Dashboard</title>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <!-- Chart.js DateTime adapter (para eixo temporal) -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- ─── Sidebar ─────────────────────────────────────────────── -->
+<nav id="sidebar">
+  <div class="sidebar-brand">
+    <span class="brand-icon">◈</span>
+    <span class="brand-text">Deriv Bot</span>
+  </div>
+
+  <ul class="nav-list">
+    <li class="nav-item active" data-tab="overview">
+      <span class="nav-icon">⬡</span>
+      <span class="nav-label">Overview</span>
+    </li>
+    <li class="nav-item" data-tab="technical">
+      <span class="nav-icon">⬢</span>
+      <span class="nav-label">Análise Técnica</span>
+    </li>
+    <li class="nav-item" data-tab="ai">
+      <span class="nav-icon">◈</span>
+      <span class="nav-label">IA &amp; Risco</span>
+    </li>
+    <li class="nav-item" data-tab="history">
+      <span class="nav-icon">☰</span>
+      <span class="nav-label">Histórico</span>
+    </li>
+    <li class="nav-item" data-tab="pipeline">
+      <span class="nav-icon">▤</span>
+      <span class="nav-label">Pipeline Logs</span>
+    </li>
+  </ul>
+
+  <div class="sidebar-footer">
+    <div class="status-led" id="statusLed"></div>
+    <span id="statusText" class="status-text">Verificando...</span>
+  </div>
+</nav>
+
+<!-- ─── Main Content ─────────────────────────────────────────── -->
+<main id="main">
+
+  <!-- Top bar -->
+  <header id="topbar">
+    <div id="topbarLeft">
+      <span id="topbarTitle">Overview</span>
+    </div>
+    <div id="topbarRight">
+      <span id="lastUpdate" class="last-update">—</span>
+      <button id="btnStart" class="btn btn-green" onclick="botStart()">▶ Iniciar</button>
+      <button id="btnStop"  class="btn btn-red"   onclick="botStop()"  style="display:none">■ Parar</button>
+    </div>
+  </header>
+
+  <!-- ════════════════════ TAB: OVERVIEW ════════════════════ -->
+  <section id="tab-overview" class="tab active">
+
+    <!-- Cards de resumo -->
+    <div class="cards-grid">
+      <div class="card">
+        <div class="card-label">Saldo Atual</div>
+        <div class="card-value" id="cardBalance">—</div>
+        <div class="card-sub" id="cardBalanceSub">USD</div>
+      </div>
+      <div class="card">
+        <div class="card-label">P&amp;L Hoje</div>
+        <div class="card-value" id="cardPnl">—</div>
+        <div class="card-sub" id="cardPnlPct">—%</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Win Rate</div>
+        <div class="card-value" id="cardWinRate">—</div>
+        <div class="card-sub" id="cardWinRateSub">— / — trades</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Status</div>
+        <div class="card-value" id="cardStatus">—</div>
+        <div class="card-sub" id="cardStatusSub">—</div>
+      </div>
+    </div>
+
+    <!-- Gráfico de equity + preço -->
+    <div class="chart-section">
+      <div class="chart-card" style="flex:1.5">
+        <div class="chart-title">Curva de Equity</div>
+        <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+      </div>
+      <div class="chart-card" style="flex:1">
+        <div class="chart-title">Últimas Operações</div>
+        <div id="recentTradesDots" class="trade-dots-wrap"></div>
+        <div class="trade-dots-legend">
+          <span class="dot win"></span> WIN &nbsp;
+          <span class="dot loss"></span> LOSS
+        </div>
+      </div>
+    </div>
+
+    <!-- Informações do modelo -->
+    <div class="model-info-grid">
+      <div class="info-item">
+        <span class="info-label">Ticks coletados</span>
+        <span class="info-value" id="infoTicks">—</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Linhas dataset</span>
+        <span class="info-value" id="infoDataset">—</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Modelo RF/XGB</span>
+        <span class="info-value" id="infoModel">—</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Transformer (TFT)</span>
+        <span class="info-value" id="infoTft">—</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Último treino</span>
+        <span class="info-value" id="infoModelMtime">—</span>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════ TAB: ANÁLISE TÉCNICA ════════════════ -->
+  <section id="tab-technical" class="tab">
+
+    <!-- Gráfico de preço + EMAs -->
+    <div class="chart-card full-width">
+      <div class="chart-title">
+        Preço &amp; EMAs
+        <span class="legend-item"><span class="dot" style="background:#00ff88"></span>EMA 9</span>
+        <span class="legend-item"><span class="dot" style="background:#ffb830"></span>EMA 21</span>
+      </div>
+      <div class="chart-wrap chart-tall"><canvas id="priceChart"></canvas></div>
+    </div>
+
+    <!-- Indicadores em grid -->
+    <div class="indicators-grid">
+
+      <!-- RSI -->
+      <div class="chart-card">
+        <div class="chart-title">RSI (14)</div>
+        <div class="chart-wrap chart-short"><canvas id="rsiChart"></canvas></div>
+        <div class="indicator-value" id="rsiValue">—</div>
+      </div>
+
+      <!-- ADX -->
+      <div class="chart-card">
+        <div class="chart-title">ADX (14)</div>
+        <div class="ind-gauge-wrap">
+          <div class="ind-bar-bg">
+            <div class="ind-bar-fill" id="adxBar" style="width:0%"></div>
+          </div>
+          <div class="ind-bar-labels"><span>0</span><span>20</span><span>50</span><span>100</span></div>
+          <div class="indicator-value" id="adxValue">—</div>
+          <div class="ind-badge" id="adxBadge">—</div>
+        </div>
+      </div>
+
+      <!-- MACD -->
+      <div class="chart-card">
+        <div class="chart-title">MACD Histograma</div>
+        <div class="chart-wrap chart-short"><canvas id="macdChart"></canvas></div>
+        <div class="indicator-value" id="macdValue">—</div>
+      </div>
+
+      <!-- Bollinger / status mercado -->
+      <div class="chart-card">
+        <div class="chart-title">Condição de Mercado</div>
+        <div class="market-cond-wrap">
+          <div class="market-cond-badge" id="marketCondBadge">—</div>
+          <table class="ind-table">
+            <tr><td>EMA 9</td><td id="indEma9">—</td></tr>
+            <tr><td>EMA 21</td><td id="indEma21">—</td></tr>
+            <tr><td>RSI</td><td id="indRsi">—</td></tr>
+            <tr><td>ADX</td><td id="indAdx">—</td></tr>
+            <tr><td>MACD hist</td><td id="indMacd">—</td></tr>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ════════════════════ TAB: IA & RISCO ═════════════════════ -->
+  <section id="tab-ai" class="tab">
+
+    <div class="ai-risk-grid">
+
+      <!-- Confiança IA -->
+      <div class="card ai-card">
+        <div class="card-label">Confiança IA</div>
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 120 70" class="gauge-svg">
+            <path d="M10 60 A50 50 0 0 1 110 60" fill="none" stroke="#1e2737" stroke-width="12" stroke-linecap="round"/>
+            <path id="gaugeFill" d="M10 60 A50 50 0 0 1 110 60" fill="none" stroke="#00ff88" stroke-width="12" stroke-linecap="round"
+                  stroke-dasharray="157" stroke-dashoffset="157" style="transition: stroke-dashoffset 0.6s ease"/>
+          </svg>
+          <div class="gauge-value" id="gaugeValue">—</div>
+          <div class="gauge-label" id="gaugeLabel">...</div>
+        </div>
+      </div>
+
+      <!-- AI Score -->
+      <div class="card ai-card">
+        <div class="card-label">AI Score Composto</div>
+        <div class="score-bar-wrap">
+          <div class="score-bar-bg">
+            <div class="score-bar-fill" id="aiScoreBar"></div>
+            <div class="score-threshold" style="left:55%"></div>
+          </div>
+          <div class="score-labels">
+            <span>0.0</span><span id="aiScoreVal">—</span><span>1.0</span>
+          </div>
+          <div class="score-hint">Mínimo: 0.55</div>
+        </div>
+      </div>
+
+      <!-- Drawdown -->
+      <div class="card ai-card">
+        <div class="card-label">Drawdown do Dia</div>
+        <div class="drawdown-wrap">
+          <div class="drawdown-bar-bg">
+            <div class="drawdown-bar-fill" id="drawdownBar"></div>
+          </div>
+          <div class="drawdown-labels">
+            <span>0%</span><span id="drawdownVal">—</span><span>-25%</span>
+          </div>
+          <div class="drawdown-hint">Stop Loss: -25%</div>
+        </div>
+      </div>
+
+      <!-- Losses consecutivos -->
+      <div class="card ai-card">
+        <div class="card-label">Losses Consecutivos</div>
+        <div class="consec-wrap">
+          <div id="consecDots" class="consec-dots"></div>
+          <div class="consec-value" id="consecVal">0 / 3</div>
+          <div class="consec-hint" id="consecHint">Normal</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Alerta de drift -->
+    <div id="driftAlert" class="drift-alert" style="display:none">
+      ⚠ Drift detectado: Win rate recente abaixo do mínimo. Considera re-treinar o modelo.
+    </div>
+
+    <!-- Win rate recente (últimas 20 operações) -->
+    <div class="chart-card full-width" style="margin-top:16px">
+      <div class="chart-title">Win Rate Recente (últimas 20 operações)</div>
+      <div id="recentWinDots" class="trade-dots-wrap large"></div>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════ TAB: HISTÓRICO ═════════════════════ -->
+  <section id="tab-history" class="tab">
+
+    <div class="hist-toolbar">
+      <div class="hist-filters">
+        <button class="filter-btn active" data-filter="all">Todos</button>
+        <button class="filter-btn" data-filter="BUY">BUY</button>
+        <button class="filter-btn" data-filter="SELL">SELL</button>
+        <button class="filter-btn" data-filter="WIN">WIN</button>
+        <button class="filter-btn" data-filter="LOSS">LOSS</button>
+      </div>
+      <div class="hist-actions">
+        <input type="number" id="histCount" value="50" min="10" max="500" style="width:60px" />
+        <button class="btn btn-outline" onclick="loadHistory()">Carregar</button>
+        <button class="btn btn-outline" onclick="exportCsv()">↓ CSV</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="histTable" class="hist-table">
+        <thead>
+          <tr>
+            <th>Data/Hora</th>
+            <th>Dir.</th>
+            <th>Stake</th>
+            <th>Dur.</th>
+            <th>Resultado</th>
+            <th>Profit</th>
+            <th>Saldo</th>
+            <th>RSI</th>
+            <th>ADX</th>
+            <th>AI Conf.</th>
+            <th>Mercado</th>
+          </tr>
+        </thead>
+        <tbody id="histBody">
+          <tr><td colspan="11" class="empty-msg">Carregando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="hist-summary" id="histSummary"></div>
+
+  </section>
+
+  <!-- ════════════════════ TAB: PIPELINE LOGS ══════════════════ -->
+  <section id="tab-pipeline" class="tab tab-logs">
+    <div class="log-toolbar">
+      <span class="log-toolbar-title">▤ Pipeline — Saída em Tempo Real</span>
+      <div class="log-toolbar-actions">
+        <input type="text" id="logFilter" placeholder="Filtrar linhas..." class="log-filter-input" oninput="renderLogs()" />
+        <label class="log-autoscroll-label">
+          <input type="checkbox" id="logAutoScroll" checked />
+          Auto-scroll
+        </label>
+        <button class="btn btn-outline" onclick="clearLogs()">Limpar</button>
+      </div>
+    </div>
+    <div class="log-statusbar">
+      <span id="logLineCount" class="log-stat">0 linhas</span>
+      <span id="logBotStatus" class="log-stat log-bot-indicator stopped">● Parado</span>
+      <span id="logLastFetch" class="log-stat log-last-fetch">—</span>
+    </div>
+    <div class="log-terminal" id="logTerminal">
+      <span class="log-empty-msg">Nenhum log disponível. Inicie o bot para ver a saída do pipeline.</span>
+    </div>
+  </section>
+
+</main>
+
+<!-- ─── Startup Panel (overlay durante inicialização) ────────────── -->
+<div id="startupPanel" class="startup-overlay" style="display:none">
+  <div class="startup-box">
+    <div class="startup-header">
+      <span class="startup-icon">◈</span>
+      <span class="startup-title">Iniciando Deriv Bot</span>
+    </div>
+
+    <div class="startup-phases">
+      <div class="startup-phase" id="phase-scan">
+        <span class="phase-icon">○</span>
+        <span class="phase-label">Scan de tendência</span>
+        <span class="phase-detail" id="phase-scan-detail"></span>
+      </div>
+      <div class="startup-phase" id="phase-collect">
+        <span class="phase-icon">○</span>
+        <span class="phase-label">Coletando ticks históricos</span>
+        <span class="phase-detail" id="phase-collect-detail"></span>
+      </div>
+      <div class="startup-phase" id="phase-build">
+        <span class="phase-icon">○</span>
+        <span class="phase-label">Construindo dataset</span>
+        <span class="phase-detail" id="phase-build-detail"></span>
+      </div>
+      <div class="startup-phase" id="phase-train">
+        <span class="phase-icon">○</span>
+        <span class="phase-label">Treinando modelos RF/XGB</span>
+        <span class="phase-detail" id="phase-train-detail"></span>
+      </div>
+      <div class="startup-phase" id="phase-bot">
+        <span class="phase-icon">○</span>
+        <span class="phase-label">Bot operando</span>
+        <span class="phase-detail" id="phase-bot-detail"></span>
+      </div>
+    </div>
+
+    <div class="startup-log-wrap">
+      <div class="startup-log" id="startupLog">Aguardando saída do pipeline...</div>
+    </div>
+
+    <button class="btn btn-red startup-cancel" onclick="botStop(); closeStartupPanel()">■ Cancelar</button>
+  </div>
+</div>
+
+<!-- ─── Modal Start Bot ──────────────────────────────────────── -->
+<div id="startModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeStartModal()">
+  <div class="modal-box">
+    <div class="modal-title">Iniciar Bot</div>
+    <div class="modal-body">
+      <label>Modo
+        <select id="modeSelect">
+          <option value="demo" selected>Demo (dinheiro virtual)</option>
+          <option value="real">Real (dinheiro real)</option>
+        </select>
+      </label>
+      <label>Saldo inicial (USD)
+        <input type="number" id="balanceInput" value="1000" min="10" step="10" />
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" id="skipCollect" /> Pular coleta (usar ticks.csv existente)
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeStartModal()">Cancelar</button>
+      <button class="btn btn-green" onclick="confirmStart()">▶ Confirmar opções</button>
+    </div>
+    <div class="modal-divider"></div>
+    <button class="btn btn-green modal-quick-start" onclick="quickStart()">
+      ⚡ Quick Start &mdash; Demo $1000
+    </button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
