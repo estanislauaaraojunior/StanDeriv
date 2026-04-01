@@ -9,6 +9,7 @@ Responsabilidades:
 """
 
 import csv
+import os
 import time
 from datetime import datetime, date
 from config import (
@@ -43,22 +44,30 @@ class RiskManager:
         # Controle de sequência de perdas
         self._consec_losses: int = 0
         self._pause_until: float = 0.0  # epoch timestamp
+        self.consecutive_losses: int = 0  # exposto para cadência adaptativa
 
         # P13: Janela deslizante de resultados para detecção de drift
         self._recent_results: list = []
 
-        # Inicializa arquivo de log com cabeçalho
-        with open(OPERATIONS_LOG, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "timestamp", "symbol", "direction", "stake", "duration",
-                "result", "profit",
-                "balance_before", "balance_after",
-                "ema9", "ema21", "rsi", "adx", "macd_hist",
-                "ai_confidence", "ai_score",
-                "consec_losses",
-                "drawdown_pct", "win_rate_recent", "market_condition",
-            ])
+        # Inicializa arquivo de log (append se existir com conteúdo, senão cria com cabeçalho)
+        _header = [
+            "timestamp", "symbol", "direction", "stake", "duration",
+            "result", "profit",
+            "balance_before", "balance_after",
+            "ema9", "ema21", "rsi", "adx", "macd_hist",
+            "ai_confidence", "ai_score",
+            "consec_losses",
+            "drawdown_pct", "win_rate_recent", "market_condition",
+        ]
+        if os.path.exists(OPERATIONS_LOG) and os.path.getsize(OPERATIONS_LOG) > 0:
+            # Arquivo existe com conteúdo → append sem cabeçalho
+            self._log_file = open(OPERATIONS_LOG, "a", newline="")
+            self._csv_writer = csv.writer(self._log_file)
+        else:
+            # Arquivo novo → criar com cabeçalho
+            self._log_file = open(OPERATIONS_LOG, "w", newline="")
+            self._csv_writer = csv.writer(self._log_file)
+            self._csv_writer.writerow(_header)
 
     # ──────────────────────────────────────────────
     #  Verificações
@@ -142,6 +151,8 @@ class RiskManager:
                 self._pause_until = 0.0
                 print("[RISCO] Win detectado durante pausa — retomando operações")
             self._consec_losses = 0
+
+        self.consecutive_losses = self._consec_losses
 
         # P8: Pausa escalável — base * scale_factor ^ (losses_extras), cap 2h
         if self._consec_losses >= MAX_CONSEC_LOSSES:

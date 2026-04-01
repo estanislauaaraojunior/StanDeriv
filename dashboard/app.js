@@ -800,6 +800,7 @@ function init() {
   pollIndicators();
   pollModel();
   loadHistory();
+  pollCandlePatterns();
 
   // Polls contínuos
   setInterval(pollBotStatus,  POLL_STATUS);
@@ -809,9 +810,45 @@ function init() {
   setInterval(pollIndicators, POLL_IND);
   setInterval(pollModel,      POLL_MODEL);
   setInterval(loadHistory,    POLL_TRADES);
+  setInterval(pollCandlePatterns, POLL_IND);
 
   pollLogs();
   setInterval(pollLogs, POLL_LOGS);
+}
+
+
+// ─── Candle Patterns ───────────────────────────────────────────
+
+async function pollCandlePatterns() {
+  try {
+    const res = await fetch('/api/candle-patterns');
+    const data = await res.json();
+    const wrap = document.getElementById('candlePatternsWrap');
+    if (!wrap) return;
+
+    if (!Array.isArray(data) || data.length === 0) {
+      wrap.innerHTML = '<div class="candle-pattern-empty">Nenhum padrão detectado</div>';
+      return;
+    }
+
+    wrap.innerHTML = data.map(p => {
+      const icon = { bullish: '🟢', bearish: '🔴', neutral: '🟡' }[p.direction] || '⚪';
+      const strengthPct = Math.round(p.strength * 100);
+      const barColor = p.direction === 'bullish' ? '#00ff88' : p.direction === 'bearish' ? '#ff4466' : '#ffb830';
+      return `
+        <div class="candle-pattern-item">
+          <span class="cp-icon">${icon}</span>
+          <div class="cp-info">
+            <div class="cp-name">${p.name}</div>
+            <div class="cp-meta">Força: ${strengthPct}% ${p.context ? '| ' + p.context : ''}</div>
+            <div class="cp-bar"><div class="cp-bar-fill" style="width:${strengthPct}%;background:${barColor}"></div></div>
+          </div>
+          <span class="cp-price">${p.price}</span>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    // silenciar erros de polling
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

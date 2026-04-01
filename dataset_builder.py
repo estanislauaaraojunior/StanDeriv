@@ -37,6 +37,7 @@ from config import (
     BB_PERIOD, BB_STD,
     TICKS_CSV, DATASET_CSV, SYMBOL,
     CANDIDATE_DURATIONS,
+    CANDLE_SIZE, PA_SR_TOLERANCE, TARGET_NOISE_THRESHOLD,
 )
 
 # Tamanho mínimo da janela de preços para calcular todos os indicadores
@@ -106,7 +107,7 @@ def _extract_features(window: list) -> dict | None:
     low5  = min(last5)
     hl5   = (high5 - low5) / price if price != 0 else 0.0
 
-    return {
+    features = {
         # Indicadores técnicos (mesmos do bot)
         "ema9":       ema9,
         "ema21":      ema21,
@@ -126,6 +127,23 @@ def _extract_features(window: list) -> dict | None:
         "volatility_20": _vol(20),
         "high_low_5":   hl5,
     }
+
+    # -- Price Action features --
+    candles = ind.ticks_to_candles(window, CANDLE_SIZE)
+    pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
+    if pa is not None:
+        features.update(pa)
+    else:
+        # Fallback: zeros para todas as 11 PA features
+        for key in [
+            "pa_market_structure", "pa_bos_strength", "pa_trend_consistency",
+            "pa_sr_distance", "pa_sr_touch_count", "pa_sr_position",
+            "pa_demand_zone", "pa_supply_zone",
+            "pa_fvg_bullish", "pa_fvg_bearish", "pa_candle_at_sr",
+        ]:
+            features[key] = 0.0
+
+    return features
 
 
 def build_dataset(
@@ -193,21 +211,34 @@ def build_dataset(
             skipped += 1
             continue
 
-        target = 1 if next_p > current else 0
+        # Target com threshold de ruído
+        delta_pct = (next_p - current) / current if current != 0 else 0.0
+        if abs(delta_pct) < TARGET_NOISE_THRESHOLD:
+            skipped += 1
+            continue
+        target = 1 if delta_pct > 0 else 0
         features["target"] = target
 
-        # ── Duração ótima ──────────────────────────────────────────────
-        # Direção base do movimento: +1 sobe, -1 cai
-        direction = 1 if next_p > current else -1
+        # ── Duração ótima (heurística por volatilidade — sem lookahead) ──
+        def _vol_window(n: int) -> float:
+            s = window[-n - 1:]
+            if len(s) < 2:
+                return 0.0
+            rets = [(s[j] - s[j - 1]) / s[j - 1]
+                    for j in range(1, len(s)) if s[j - 1] != 0]
+            if not rets:
+                return 0.0
+            m = sum(rets) / len(rets)
+            return (sum((r - m) ** 2 for r in rets) / len(rets)) ** 0.5
 
-        best_d   = CANDIDATE_DURATIONS[0]
-        best_abs = 0.0
-        for d in CANDIDATE_DURATIONS:
-            future_p = prices_all[i + d]
-            delta    = (future_p - current) * direction   # positivo = movimento favorável
-            if delta > best_abs:
-                best_abs = delta
-                best_d   = d
+        vol = _vol_window(20)
+        n_cands = len(CANDIDATE_DURATIONS)
+        if vol > 0.002:
+            best_d = CANDIDATE_DURATIONS[0]          # alta vol → duração curta
+        elif vol < 0.0005:
+            best_d = CANDIDATE_DURATIONS[-1]         # baixa vol → duração longa
+        else:
+            best_d = CANDIDATE_DURATIONS[n_cands // 2]  # moderada
 
         features["optimal_duration"] = best_d
         rows.append(features)

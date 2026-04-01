@@ -539,6 +539,22 @@ def _wait_for_ticks(min_ticks: int, poll_sec: int = 10) -> None:
 #  FASES 3 e 4 — Construir dataset e treinar modelo
 # ─────────────────────────────────────────────────────────────────
 
+def _trim_ticks(ticks_path: str, max_ticks: int = 50000) -> None:
+    """Limita ticks.csv aos últimos max_ticks mais recentes para relevância temporal."""
+    import pandas as pd
+    if not os.path.exists(ticks_path) or os.path.getsize(ticks_path) == 0:
+        return
+    try:
+        df = pd.read_csv(ticks_path)
+        if len(df) > max_ticks:
+            trimmed = len(df) - max_ticks
+            df = df.tail(max_ticks)
+            df.to_csv(ticks_path, index=False)
+            print(f"[PIPELINE] Ticks trimados: {trimmed:,} removidos, {max_ticks:,} mantidos.")
+    except Exception as e:
+        print(f"[PIPELINE] Aviso: não foi possível trimar ticks: {e}")
+
+
 def _run_training(
     dataset_path: str = DATASET_CSV,
     model_path: str = AI_MODEL_PATH,
@@ -551,6 +567,8 @@ def _run_training(
     """
     print("\n[PIPELINE] ── Fase 3: Construindo dataset ──")
     try:
+        # Janela temporal: limitar aos últimos 50.000 ticks para relevância
+        _trim_ticks(TICKS_CSV, max_ticks=50000)
         n = dataset_builder.build_dataset(TICKS_CSV, dataset_path, window_size=100)
         if n < 50:
             print(f"[PIPELINE] Dataset muito pequeno ({n} linhas). Colete mais ticks.")

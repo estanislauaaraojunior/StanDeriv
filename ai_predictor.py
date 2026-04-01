@@ -34,6 +34,7 @@ from config import (
     USE_TRANSFORMER, TRANSFORMER_MODEL_PATH,
     TRANSFORMER_BLEND_WEIGHT, TRANSFORMER_SEQ_LEN,
     CANDIDATE_DURATIONS,
+    CANDLE_SIZE, PA_SR_TOLERANCE,
 )
 
 # Lista de features — DEVE ser idêntica ao FEATURES em train_model.py
@@ -47,6 +48,11 @@ _FEATURES = [
     "return_1", "return_3", "return_5",
     "volatility_10", "volatility_20",
     "high_low_5",
+    # Price Action features
+    "pa_market_structure", "pa_bos_strength", "pa_trend_consistency",
+    "pa_sr_distance", "pa_sr_touch_count", "pa_sr_position",
+    "pa_demand_zone", "pa_supply_zone",
+    "pa_fvg_bullish", "pa_fvg_bearish", "pa_candle_at_sr",
 ]
 
 # Singleton: modelo carregado uma única vez
@@ -166,6 +172,17 @@ def _compute_feature_map(prices: list) -> Optional[dict]:
     low5  = min(last5)
     hl5   = (high5 - low5) / price if price != 0 else 0.0
 
+    # -- Price Action features --
+    _pa_default = {
+        "pa_market_structure": 0.0, "pa_bos_strength": 0.0, "pa_trend_consistency": 0.0,
+        "pa_sr_distance": 0.0, "pa_sr_touch_count": 0.0, "pa_sr_position": 0.0,
+        "pa_demand_zone": 0.0, "pa_supply_zone": 0.0,
+        "pa_fvg_bullish": 0.0, "pa_fvg_bearish": 0.0, "pa_candle_at_sr": 0.0,
+    }
+    candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+    pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
+    _pa_features = pa if pa is not None else _pa_default
+
     return {
         "ema9":          ema9,
         "ema21":         ema21,
@@ -183,6 +200,7 @@ def _compute_feature_map(prices: list) -> Optional[dict]:
         "volatility_10": _vol(10),
         "volatility_20": _vol(20),
         "high_low_5":    hl5,
+        **_pa_features,
     }
 
 
@@ -390,16 +408,9 @@ def predict(prices: list) -> tuple:
             return tft_dir, blended
         return None, blended
     else:
-        # Discordância: penaliza 15% no sinal mais confiante
-        if tft_conf >= classical_conf:
-            direction = tft_dir
-            penalized = tft_conf * 0.85
-        else:
-            direction = classical_dir
-            penalized = classical_conf * 0.85
-        if penalized >= AI_CONFIDENCE_MIN:
-            return direction, penalized
-        return None, penalized
+        # Discordância: não operar — modelos divergem
+        blended = tft_conf * blend + classical_conf * (1.0 - blend)
+        return None, blended
 
 
 # ─────────────────────────────────────────────────────────────────

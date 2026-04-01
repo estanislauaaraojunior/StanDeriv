@@ -407,6 +407,61 @@ def api_equity():
     return jsonify(result)
 
 
+# ─── API: Candle Patterns (alertas de padrões de vela) ────────────────────────
+
+@app.route("/api/candle-patterns")
+def api_candle_patterns():
+    """Retorna padrões de vela detectados a partir dos ticks mais recentes."""
+    try:
+        import indicators as ind
+        from config import CANDLE_SIZE, PA_SR_TOLERANCE
+
+        df = _read_csv_safe(TICKS_CSV)
+        if df.empty:
+            return jsonify([])
+
+        if "price" in df.columns:
+            prices = df["price"].astype(float).tolist()
+        elif df.shape[1] >= 4:
+            prices = df.iloc[:, 3].astype(float).tolist()
+        else:
+            prices = df.iloc[:, -1].astype(float).tolist()
+
+        # Usar últimos 500 ticks
+        prices = prices[-500:]
+        candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+
+        if len(candles) < 4:
+            return jsonify([])
+
+        patterns = ind.detect_candle_patterns(candles)
+        pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
+
+        result = []
+        for p in patterns:
+            context_parts = []
+            if pa is not None:
+                if pa["pa_demand_zone"] > 0.3:
+                    context_parts.append("Demand Zone")
+                if pa["pa_supply_zone"] > 0.3:
+                    context_parts.append("Supply Zone")
+                if pa["pa_sr_distance"] < 0.3:
+                    pos = pa["pa_sr_position"]
+                    context_parts.append("Suporte" if pos < -0.3 else "Resistência" if pos > 0.3 else "S/R")
+
+            result.append({
+                "name": p["name"],
+                "direction": p["direction"],
+                "strength": p["strength"],
+                "price": round(prices[-1], 4),
+                "context": " + ".join(context_parts) if context_parts else "",
+            })
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

@@ -41,6 +41,13 @@ ADX_PERIOD   = 14
 BB_PERIOD    = 20
 BB_STD       = 2.0
 
+# ----- Price Action -----
+CANDLE_SIZE            = 10      # ticks por vela sintética
+CANDLE_LOOKBACK        = 5       # velas mínimas para padrões
+PA_SR_TOLERANCE        = 0.001   # tolerância % para clustering S/R
+TARGET_NOISE_THRESHOLD = 0.0001  # variação mínima para classificar target
+CANDLE_NOTIFY          = True    # notificações de padrões de vela no terminal
+
 # ----- Filtros de entrada -----
 RSI_OVERSOLD    = 35   # abaixo → sobrevendido (não abre SELL aqui)
 RSI_OVERBOUGHT  = 65   # acima → sobrecomprado (não abre BUY aqui)

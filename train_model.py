@@ -65,6 +65,11 @@ FEATURES = [
     "return_1", "return_3", "return_5",
     "volatility_10", "volatility_20",
     "high_low_5",
+    # Price Action features
+    "pa_market_structure", "pa_bos_strength", "pa_trend_consistency",
+    "pa_sr_distance", "pa_sr_touch_count", "pa_sr_position",
+    "pa_demand_zone", "pa_supply_zone",
+    "pa_fvg_bullish", "pa_fvg_bearish", "pa_candle_at_sr",
 ]
 
 
