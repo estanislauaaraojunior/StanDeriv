@@ -230,7 +230,7 @@ def _print_feature_importance(rf_pipeline: Pipeline) -> None:
 #  Treinamento principal
 # ─────────────────────────────────────────────────────────────────
 
-def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: float = 0.02) -> None:
+def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: float = 0.02) -> dict:
     if not os.path.exists(dataset_path):
         print(f"[ERRO] Dataset não encontrado: '{dataset_path}'")
         print("       Execute dataset_builder.py primeiro.")
@@ -321,12 +321,14 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
                 _hist_pre = []
         _hist_pre.append({
             "timestamp":  _dt_pre.now().isoformat(),
+            "stage":      "classical",
             "best_model": _best_classical["name"],
             "auc":        round(_best_classical["auc"], 4),
             "accuracy":   round(_best_classical["acc"], 4),
             "f1":         round(_best_classical.get("f1", 0.0), 4),
             "n_train":    int(split),
             "n_test":     int(len(X_test)),
+            "model_path": str(output_path),
         })
         with open(_mpath_pre, "w") as _mf:
             _json_pre.dump(_hist_pre, _mf)
@@ -458,17 +460,28 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
                 history = []
         history.append({
             "timestamp":   _dt.now().isoformat(),
+            "stage":       "final",
             "best_model":  best["name"],
             "auc":         round(best["auc"], 4),
             "accuracy":    round(best["acc"], 4),
             "f1":          round(best.get("f1", 0.0), 4),
             "n_train":     int(split),
             "n_test":      int(len(X_test)),
+            "model_path":  str(output_path),
         })
         with open(metrics_path, "w") as _mf:
             _json.dump(history, _mf)
     except Exception:
         pass
+
+    return {
+        "best_model": best["name"],
+        "auc": float(best["auc"]),
+        "accuracy": float(best["acc"]),
+        "f1": float(best.get("f1", 0.0)),
+        "n_train": int(split),
+        "n_test": int(len(X_test)),
+    }
 
 
 def main() -> None:

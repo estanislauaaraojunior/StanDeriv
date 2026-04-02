@@ -1007,3 +1007,191 @@ html, body {
 /* ─── Status warning (bot pausado) ──────────────────────── */
 .card-value.warning { color: var(--yellow) !important; }
 
+/* ─── Hamburger button (hidden on desktop) ────────────────── */
+.hamburger-btn {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+.hamburger-btn span {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background: var(--text-primary);
+  border-radius: 2px;
+  transition: transform 0.25s, opacity 0.2s;
+}
+/* Animated X when sidebar open */
+.hamburger-btn.open span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.hamburger-btn.open span:nth-child(2) { opacity: 0; }
+.hamburger-btn.open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+/* ─── Sidebar overlay (mobile) ────────────────────────────── */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 99;
+  backdrop-filter: blur(2px);
+}
+.sidebar-overlay.visible { display: block; }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE — Tablet (≤ 768px)
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Sidebar: off-canvas drawer */
+  #sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.28s ease;
+    z-index: 200;
+  }
+  #sidebar.open { transform: translateX(0); }
+
+  #main {
+    margin-left: 0;
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .hamburger-btn { display: flex; }
+
+  /* Topbar */
+  #topbar { padding: 0 12px; gap: 8px; flex-wrap: wrap; }
+  #topbarRight { gap: 8px; }
+  .last-update { display: none; }
+
+  /* Tabs */
+  .tab { padding: 14px 12px 24px; }
+
+  /* Cards */
+  .cards-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  /* Chart section stacked */
+  .chart-section { flex-direction: column; }
+
+  /* Indicators 2-col */
+  .indicators-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* AI risk 2-col */
+  .ai-risk-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  /* Model info */
+  .model-info-grid { gap: 8px; }
+  .info-item { min-width: 100px; padding: 10px 12px; }
+
+  /* History table */
+  .hist-toolbar { gap: 8px; }
+
+  /* Pipeline logs */
+  .tab-logs { height: calc(100vh - var(--topbar-h)); height: calc(100dvh - var(--topbar-h)); }
+  .log-toolbar { padding: 8px 12px; }
+  .log-filter-input { width: 120px; }
+  .sys-resources-bar { gap: 8px; padding: 8px 12px; }
+  .sys-res-item { min-width: 100px; }
+  .sys-res-label { min-width: 60px; font-size: 0.65rem; }
+
+  /* Modal */
+  .modal-box { width: 90vw; padding: 20px; }
+  .startup-box { width: 92vw; padding: 24px 20px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE — Phone (≤ 430px)  — Redmi Note 13 Pro target
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 430px) {
+  :root {
+    --topbar-h: 48px;
+  }
+
+  /* Body: allow full scroll */
+  html, body { overflow: auto; height: auto; }
+
+  #main {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  /* Topbar compact */
+  #topbar {
+    height: var(--topbar-h);
+    padding: 0 10px;
+    gap: 6px;
+  }
+  #topbarTitle { font-size: 14px; }
+  .btn { padding: 6px 12px; font-size: 12px; }
+
+  /* Cards: 1 col on very narrow */
+  .cards-grid { grid-template-columns: 1fr; gap: 8px; margin-bottom: 14px; }
+  .card { padding: 14px 16px; }
+  .card-value { font-size: 22px; }
+
+  /* Charts smaller */
+  .chart-tall { height: 180px; }
+  .chart-short { height: 90px; }
+  .chart-card { padding: 12px; }
+  .chart-title { font-size: 12px; gap: 6px; }
+
+  /* Indicators 1 col */
+  .indicators-grid { grid-template-columns: 1fr; gap: 8px; }
+
+  /* AI risk 1 col */
+  .ai-risk-grid { grid-template-columns: 1fr; gap: 8px; }
+
+  /* Gauge smaller */
+  .gauge-svg { width: 110px; }
+  .gauge-value { font-size: 18px; }
+
+  /* Model info */
+  .model-info-grid { flex-direction: column; }
+  .info-item { flex: none; min-width: 0; }
+
+  /* Model metrics */
+  .model-metrics-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .mm-item-wide { grid-column: span 2; }
+
+  /* History: toolbar stacked */
+  .hist-toolbar { flex-direction: column; align-items: stretch; }
+  .hist-filters { flex-wrap: wrap; }
+  .hist-actions { justify-content: flex-end; }
+  .hist-table th, .hist-table td { padding: 7px 6px; font-size: 11px; }
+
+  /* Stats cards */
+  #tab-stats .cards-grid { grid-template-columns: 1fr; }
+  #tab-stats .chart-section { flex-direction: column; }
+
+  /* Pipeline: full width resources */
+  .sys-resources-bar { flex-direction: column; gap: 6px; padding: 8px 10px; }
+  .sys-res-item { min-width: 0; width: 100%; }
+  .log-toolbar { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 10px; }
+  .log-toolbar-actions { flex-wrap: wrap; justify-content: space-between; }
+  .log-filter-input { width: 100%; }
+  .log-terminal { padding: 8px 10px; font-size: 11px; }
+
+  /* Toast bottom-center on phone */
+  .toast { right: 50%; transform: translateX(50%) translateY(10px); max-width: 90vw; }
+  .toast.show { transform: translateX(50%) translateY(0); }
+
+  /* Candle patterns */
+  .candle-pattern-item { padding: 8px 10px; gap: 8px; }
+  .cp-name { font-size: 0.85rem; }
+
+  /* Trade dots */
+  .tdot { width: 12px; height: 12px; }
+  .trade-dots-wrap.large .tdot { width: 16px; height: 16px; }
+
+  /* Consecutive dots */
+  .consec-dot { width: 18px; height: 18px; }
+  .consec-value { font-size: 18px; }
+}
+

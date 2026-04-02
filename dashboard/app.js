@@ -16,6 +16,7 @@ const state = {
   botRunning:   false,
   histFilter:   'all',
   allTrades:    [],
+  activeContract: null,
 
   // Chart instances
   charts: {
@@ -23,6 +24,7 @@ const state = {
     price:  null,
     rsi:    null,
     macd:   null,
+    rtContract: null,
   },
 
   // Dados locais para RSI/MACD (série temporal de indicadores)
@@ -38,6 +40,10 @@ const POLL_TRADES   = 15_000;
 const POLL_IND      = 5_000;
 const POLL_MODEL    = 10_000;
 const POLL_LOGS     = 2_000;
+const POLL_CONTRACT = 2_000;
+
+// Candlestick desativado por padrão para evitar renderização distorcida de velas.
+const ENABLE_CANDLESTICK = false;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -77,6 +83,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
     el('topbarTitle').textContent = item.querySelector('.nav-label').textContent;
     state.activeTab = tab;
 
+    // Close mobile sidebar when selecting a tab
+    _closeMobileSidebar();
+
     // Força refresh de charts ao trocar aba
     if (tab === 'technical') {
       setTimeout(() => {
@@ -84,6 +93,10 @@ document.querySelectorAll('.nav-item').forEach(item => {
         state.charts.rsi?.resize();
         state.charts.macd?.resize();
       }, 50);
+    }
+    if (tab === 'overview') {
+      setTimeout(() => { state.charts.rtContract?.resize(); }, 50);
+      pollContractRealtime();
     }
     if (tab === 'stats') {
       setTimeout(() => { _profitDistChart?.resize(); }, 50);
@@ -160,12 +173,12 @@ function updateEquityChart(data) {
 
 function initPriceChart() {
   const ctx = el('priceChart').getContext('2d');
-  // Usa candlestick se o plugin estiver disponível, senão fallback para linha
+  // Usa candlestick apenas se habilitado e com plugin disponível.
   const hasCandlestick = typeof Chart !== 'undefined' &&
     Chart.registry && Chart.registry.controllers &&
     Chart.registry.controllers.get && Chart.registry.controllers.get('candlestick');
 
-  if (hasCandlestick) {
+  if (ENABLE_CANDLESTICK && hasCandlestick) {
     state.charts.price = new Chart(ctx, {
       type: 'candlestick',
       data: {
@@ -244,6 +257,98 @@ function updatePriceChart(ticks) {
   chart.update('none');
 }
 
+function initRtContractChart() {
+  const canvas = el('rtContractChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  state.charts.rtContract = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Preço',
+          data: [],
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.05)',
+          pointRadius: 0,
+          borderWidth: 1.6,
+          tension: 0.18,
+          fill: true,
+          order: 2,
+        },
+        {
+          label: 'Entrada',
+          data: [],
+          type: 'scatter',
+          borderColor: '#ffb830',
+          backgroundColor: '#ffb830',
+          pointRadius: 5,
+          pointHoverRadius: 6,
+          pointBorderWidth: 2,
+          pointBorderColor: '#0d1117',
+          showLine: false,
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      ...baseChartOptions,
+      scales: {
+        x: { ...baseChartOptions.scales.x, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        y: { ...baseChartOptions.scales.y, position: 'right' },
+      },
+    },
+  });
+}
+
+function _setRtContractStatus(contract, entryTick, lastTick) {
+  const statusEl = el('rtContractStatus');
+  const metaEl = el('rtContractMeta');
+  if (!statusEl || !metaEl) return;
+
+  if (!contract) {
+    statusEl.textContent = 'Aguardando contrato';
+    statusEl.style.color = '#8b949e';
+    metaEl.textContent = 'Sem contrato ativo no momento.';
+    return;
+  }
+
+  const side = contract.direction === 'BUY' ? 'CALL/BUY' : contract.direction === 'SELL' ? 'PUT/SELL' : (contract.direction || '—');
+  statusEl.textContent = `${contract.symbol || '—'} • ${side}`;
+  statusEl.style.color = contract.direction === 'BUY' ? '#00ff88' : contract.direction === 'SELL' ? '#ff4757' : '#8b949e';
+
+  const entryTxt = entryTick ? fmt(entryTick.price, 2) : fmt(contract.entry_price, 2);
+  const currentTxt = lastTick ? fmt(lastTick.price, 2) : '—';
+  const deltaTicks = (entryTick && lastTick && Number.isFinite(entryTick.epoch) && Number.isFinite(lastTick.epoch))
+    ? Math.max(0, lastTick.epoch - entryTick.epoch)
+    : 0;
+  metaEl.textContent = `Entrada: ${entryTxt} | Atual: ${currentTxt} | Decorrência: ${deltaTicks} ticks`;
+}
+
+function updateRtContractChart(ticks, contract) {
+  const chart = state.charts.rtContract;
+  if (!chart) return;
+
+  if (!contract || !Array.isArray(ticks) || !ticks.length) {
+    chart.data.datasets[0].data = [];
+    chart.data.datasets[1].data = [];
+    chart.update('none');
+    _setRtContractStatus(null);
+    return;
+  }
+
+  const series = ticks.map(t => ({ x: t.epoch, y: t.price }));
+  chart.data.datasets[0].data = series;
+
+  let entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
+  if (!entryTick && ticks.length) entryTick = ticks[0];
+  chart.data.datasets[1].data = entryTick ? [{ x: entryTick.epoch, y: entryTick.price }] : [];
+
+  chart.update('none');
+  _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
+}
+
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
 
 function initRsiChart() {
@@ -318,7 +423,7 @@ let _pollFailures = 0;
 
 async function pollState() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/state');
+    const r = await fetch(API_BASE_URL + '/api/state', { cache: 'no-store' });
     const d = await r.json();
     _pollFailures = 0;
     _updateConnectionBanner(false);
@@ -343,6 +448,11 @@ async function pollState() {
       const isPaused = (d.summary?.is_paused) || (rs.pause_remaining_sec > 0);
       const isStopLoss   = pnlPct <= -25;
       const isTakeProfit = pnlPct >= 50;
+      const hasModel = !!d.model?.model_exists;
+      const ticksCount = Number(d.model?.ticks_count ?? 0);
+      const datasetRows = Number(d.model?.dataset_rows ?? 0);
+      const minTicksTarget = Math.max(1, Number(d.model?.min_ticks_target ?? 500));
+      const hasActiveContract = !!d.active_contract?.has_active;
       if (isStopLoss) {
         el('cardStatus').textContent = 'STOP LOSS';
         el('cardStatus').className   = 'card-value negative';
@@ -358,10 +468,20 @@ async function pollState() {
         el('cardStatusSub').textContent = rem > 0
           ? `Retoma em ${Math.floor(rem/60)}m ${rem%60}s`
           : 'Losses consecutivos';
+      } else if (!hasModel && ticksCount < minTicksTarget) {
+        el('cardStatus').textContent = 'COLETANDO';
+        el('cardStatus').className   = 'card-value';
+        el('cardStatusSub').textContent = `${ticksCount} / ${minTicksTarget} ticks coletados`;
+      } else if (!hasModel && ticksCount >= minTicksTarget) {
+        el('cardStatus').textContent = 'CAPTANDO';
+        el('cardStatus').className   = 'card-value';
+        el('cardStatusSub').textContent = `IA aprendendo (${datasetRows} linhas)`;
       } else {
         el('cardStatus').textContent = 'OPERANDO';
         el('cardStatus').className   = 'card-value positive';
-        el('cardStatusSub').textContent = uptimeSec ? fmtUptime(uptimeSec) : '—';
+        el('cardStatusSub').textContent = hasActiveContract
+          ? 'Contrato ativo em andamento'
+          : 'Procurando entrada para o contrato';
       }
     } else {
       led.className  = 'status-led stopped';
@@ -433,17 +553,17 @@ async function pollState() {
 
     // — Métricas do último treino (via /api/state para atualização a cada 5s) —
     const mm = m.last_metrics ?? {};
-    if (mm.best_model) {
-      if (el('mmBestModel'))  el('mmBestModel').textContent  = mm.best_model;
-      if (el('mmAccuracy'))   el('mmAccuracy').textContent   = mm.accuracy != null ? fmtPct(mm.accuracy * 100) : '—';
-      if (el('mmAuc'))        el('mmAuc').textContent        = mm.auc       != null ? fmt(mm.auc, 4)           : '—';
-      if (el('mmF1'))         el('mmF1').textContent         = mm.f1        != null ? fmt(mm.f1, 4)            : '—';
-      if (el('mmNTrain'))     el('mmNTrain').textContent     = mm.n_train   != null ? mm.n_train.toLocaleString('pt-BR') : '—';
-      if (el('mmNTest'))      el('mmNTest').textContent      = mm.n_test    != null ? mm.n_test.toLocaleString('pt-BR')  : '—';
-      if (el('mmTimestamp'))  el('mmTimestamp').textContent  = mm.timestamp ? new Date(mm.timestamp).toLocaleString('pt-BR') : '—';
-      if (el('mmAccuracy') && mm.accuracy != null) {
-        el('mmAccuracy').style.color = mm.accuracy >= 0.65 ? '#00ff88' : mm.accuracy >= 0.55 ? '#ffb830' : '#ff4757';
-      }
+    if (el('mmBestModel'))  el('mmBestModel').textContent  = mm.best_model || '—';
+    if (el('mmAccuracy'))   el('mmAccuracy').textContent   = mm.accuracy != null ? fmtPct(mm.accuracy * 100) : '—';
+    if (el('mmAuc'))        el('mmAuc').textContent        = mm.auc       != null ? fmt(mm.auc, 4)           : '—';
+    if (el('mmF1'))         el('mmF1').textContent         = mm.f1        != null ? fmt(mm.f1, 4)            : '—';
+    if (el('mmNTrain'))     el('mmNTrain').textContent     = mm.n_train   != null ? mm.n_train.toLocaleString('pt-BR') : '—';
+    if (el('mmNTest'))      el('mmNTest').textContent      = mm.n_test    != null ? mm.n_test.toLocaleString('pt-BR')  : '—';
+    if (el('mmTimestamp'))  el('mmTimestamp').textContent  = mm.timestamp ? new Date(mm.timestamp).toLocaleString('pt-BR') : '—';
+    if (el('mmAccuracy')) {
+      el('mmAccuracy').style.color = mm.accuracy == null
+        ? '#8b949e'
+        : mm.accuracy >= 0.65 ? '#00ff88' : mm.accuracy >= 0.55 ? '#ffb830' : '#ff4757';
     }
 
     // — Risk state —
@@ -496,6 +616,38 @@ function _checkCriticalEvents(summary, riskState) {
   }
 }
 
+// ─── Mobile sidebar toggle ──────────────────────────────────────────────────
+
+function _closeMobileSidebar() {
+  const sidebar = el('sidebar');
+  const overlay = el('sidebarOverlay');
+  const btn = el('hamburgerBtn');
+  if (sidebar) sidebar.classList.remove('open');
+  if (overlay) overlay.classList.remove('visible');
+  if (btn) btn.classList.remove('open');
+}
+
+function _toggleMobileSidebar() {
+  const sidebar = el('sidebar');
+  const overlay = el('sidebarOverlay');
+  const btn = el('hamburgerBtn');
+  const isOpen = sidebar?.classList.toggle('open');
+  if (overlay) overlay.classList.toggle('visible', isOpen);
+  if (btn) btn.classList.toggle('open', isOpen);
+}
+
+// Attach hamburger and overlay listeners once DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  el('hamburgerBtn')?.addEventListener('click', _toggleMobileSidebar);
+  el('sidebarOverlay')?.addEventListener('click', _closeMobileSidebar);
+});
+
+// Resize charts on orientation change
+window.addEventListener('resize', () => {
+  Object.values(state.charts).forEach(c => c?.resize?.());
+  if (typeof _profitDistChart !== 'undefined' && _profitDistChart) _profitDistChart.resize();
+});
+
 // ─── Banner de conexão perdida ────────────────────────────────────────────────
 
 function _updateConnectionBanner(show) {
@@ -505,7 +657,7 @@ function _updateConnectionBanner(show) {
     banner.id = 'connectionBanner';
     banner.className = 'connection-banner';
     banner.textContent = '⚠ Conexão perdida com o servidor';
-    document.querySelector('.topbar')?.appendChild(banner);
+    document.getElementById('topbar')?.appendChild(banner);
   }
   banner.style.display = show ? '' : 'none';
 }
@@ -650,6 +802,28 @@ async function pollTicks() {
     const ticks = await r.json();
 
     if (ticks.length) updatePriceChart(ticks);
+  } catch (_) {}
+}
+
+async function pollContractRealtime() {
+  try {
+    const resp = await fetch(API_BASE_URL + '/api/contract-active', { cache: 'no-store' });
+    const c = await resp.json();
+
+    if (!c || !c.has_active) {
+      state.activeContract = null;
+      updateRtContractChart([], null);
+      return;
+    }
+
+    state.activeContract = c;
+    const params = new URLSearchParams({ n: '600' });
+    if (c.symbol) params.set('symbol', c.symbol);
+    if (c.entry_epoch) params.set('from_epoch', String(c.entry_epoch));
+
+    const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
+    const ticks = await rTicks.json();
+    updateRtContractChart(Array.isArray(ticks) ? ticks : [], c);
   } catch (_) {}
 }
 
@@ -1198,7 +1372,7 @@ async function pollStats() {
 
 async function pollModelMetrics() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/model-metrics');
+    const r = await fetch(API_BASE_URL + '/api/model-metrics', { cache: 'no-store' });
     const d = await r.json();
     if (!d || !d.best_model) {
       const noData = 'Modelo ainda não treinado';
@@ -1268,6 +1442,7 @@ function init() {
 
   initEquityChart();
   initPriceChart();
+  initRtContractChart();
   initRsiChart();
   initMacdChart();
   _initProfitDistChart();
@@ -1275,6 +1450,7 @@ function init() {
   // Primeira carga (estado consolidado + outros)
   pollState();
   pollTicks();
+  pollContractRealtime();
   pollEquity();
   pollCandles();
   loadHistory();
@@ -1285,6 +1461,7 @@ function init() {
   // Polls contínuos — pollState() substitui pollBotStatus + pollSummary + pollIndicators + pollModel
   setInterval(pollState,    POLL_SUMMARY);
   setInterval(pollTicks,    POLL_TICKS);
+  setInterval(pollContractRealtime, POLL_CONTRACT);
   setInterval(pollEquity,   POLL_SUMMARY);
   setInterval(pollCandles,  POLL_TICKS);
   setInterval(loadHistory,  POLL_TRADES);

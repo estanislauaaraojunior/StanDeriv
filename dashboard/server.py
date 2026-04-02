@@ -67,10 +67,11 @@ STATIC_DIR     = Path(__file__).resolve().parent
 RISK_STATE_JSON = _ROOT / "risk_state.json"
 STATE_JSON      = _ROOT / "state.json"
 MODEL_METRICS_JSON = _ROOT / "model_metrics.json"
+PIPELINE_LOG_TXT = _ROOT / "pipeline.log"
 
 # ─── Flask App ────────────────────────────────────────────────────────────────
 
-app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
+app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
 CORS(app)
 
 # ─── Log buffer do pipeline ──────────────────────────────────────────────────
@@ -82,15 +83,33 @@ _bot_log_lock = threading.Lock()
 
 def _read_bot_output(proc: subprocess.Popen) -> None:
     """Lê stdout/stderr do pipeline em thread e preenche o buffer circular."""
+    stdout = proc.stdout
+    if stdout is None:
+        return
     try:
-        for line in iter(proc.stdout.readline, b""):
-            decoded = line.decode("utf-8", errors="replace").rstrip()
-            if decoded:
+        with PIPELINE_LOG_TXT.open("a", encoding="utf-8") as log_file:
+            for line in stdout:
+                decoded = line.rstrip()
+                if not decoded:
+                    continue
+                log_file.write(decoded + "\n")
+                log_file.flush()
                 with _bot_log_lock:
                     _bot_log_buffer.append(decoded)
-        proc.stdout.close()
+        stdout.close()
     except Exception:
         pass
+
+
+def _read_recent_pipeline_logs(max_lines: int = 500) -> list[str]:
+    """Retorna as linhas mais recentes do log persistido do pipeline."""
+    try:
+        if not PIPELINE_LOG_TXT.exists() or PIPELINE_LOG_TXT.stat().st_size == 0:
+            return []
+        with PIPELINE_LOG_TXT.open("r", encoding="utf-8", errors="replace") as log_file:
+            return [line.rstrip("\n") for line in collections.deque(log_file, maxlen=max_lines) if line.strip()]
+    except Exception:
+        return []
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -150,6 +169,18 @@ def favicon():
     return Response(status=204)
 
 
+@app.route("/style.css")
+def style_css():
+    """Serve style.css do diretório estático raiz."""
+    return send_from_directory(str(STATIC_DIR), "style.css")
+
+
+@app.route("/app.js")
+def app_js():
+    """Serve app.js do diretório estático raiz."""
+    return send_from_directory(str(STATIC_DIR), "app.js")
+
+
 # ─── API: Resumo do bot ───────────────────────────────────────────────────────
 
 @app.route("/api/summary")
@@ -170,6 +201,7 @@ def api_summary():
             "consec_losses": 0,
             "is_paused": False,
             "drawdown_pct": 0.0,
+            "risk_state": _read_json_safe(RISK_STATE_JSON),
         })
 
     # Última linha disponível
@@ -198,6 +230,7 @@ def api_summary():
     consec_losses = int(last.get("consec_losses", 0))
     drawdown_pct  = float(last.get("drawdown_pct", 0.0))
     win_rate_rec  = float(last.get("win_rate_recent", 0.0))
+    risk_state    = _read_json_safe(RISK_STATE_JSON)
 
     return jsonify({
         "balance":          round(balance, 2),
@@ -212,6 +245,7 @@ def api_summary():
         "consec_losses":    consec_losses,
         "is_paused":        consec_losses >= 3,
         "drawdown_pct":     round(drawdown_pct, 2),
+        "risk_state":       risk_state,
     })
 
 
@@ -220,6 +254,14 @@ def api_summary():
 @app.route("/api/ticks")
 def api_ticks():
     n = min(int(request.args.get("n", 300)), 2000)
+    symbol = str(request.args.get("symbol", "")).strip()
+    from_epoch_raw = request.args.get("from_epoch")
+    from_epoch = None
+    if from_epoch_raw not in (None, ""):
+        try:
+            from_epoch = int(from_epoch_raw)
+        except (TypeError, ValueError):
+            from_epoch = None
     df = _read_csv_safe(TICKS_CSV)
 
     if df.empty:
@@ -229,12 +271,22 @@ def api_ticks():
     if "price" not in df.columns:
         df.columns = ["epoch", "price"] if len(df.columns) == 2 else list(df.columns)
 
+    if symbol and "symbol" in df.columns:
+        df = df[df["symbol"].astype(str) == symbol]
+
+    if from_epoch is not None and "epoch" in df.columns:
+        try:
+            df = df[df["epoch"].astype(int) >= from_epoch]
+        except Exception:
+            pass
+
     tail = df.tail(n)
     result = []
     for _, row in tail.iterrows():
         result.append({
             "epoch": int(row.get("epoch", 0)),
             "price": float(row.get("price", 0)),
+            "symbol": str(row.get("symbol", "")),
         })
     return jsonify(result)
 
@@ -374,10 +426,11 @@ def api_bot_start():
     history_count = int(data.get("history_count", 500))
     force_retrain = bool(data.get("force_retrain", False))
 
-    cmd = [sys.executable, str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]
+    cmd = [sys.executable, "-u", str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]
     cmd += ["--balance", str(balance)]
     cmd += ["--retrain-interval", str(max(1, retrain_interval))]
-    cmd += ["--min-ticks", str(max(50, min_ticks))]
+    min_ticks_target = max(50, min_ticks)
+    cmd += ["--min-ticks", str(min_ticks_target)]
     cmd += ["--history-count", str(max(0, history_count))]
     if skip_collect:
         cmd += ["--skip-collect"]
@@ -412,22 +465,33 @@ def api_bot_start():
         import datetime as _dt2
         _cur_state = _read_json_safe(STATE_JSON)
         _cur_state["session_start"] = _dt2.datetime.now().isoformat()
+        _cur_state["active_contract"] = None
+        _cur_state["min_ticks_target"] = int(min_ticks_target)
         STATE_JSON.write_text(json.dumps(_cur_state))
     except Exception:
         pass
 
     try:
         global _bot_process
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
         proc = subprocess.Popen(
             cmd,
             cwd=str(_ROOT),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
             start_new_session=True,
+            env=env,
         )
         _bot_process = proc
         with _bot_log_lock:
             _bot_log_buffer.clear()
+        try:
+            PIPELINE_LOG_TXT.write_text("", encoding="utf-8")
+        except Exception:
+            pass
         threading.Thread(target=_read_bot_output, args=(proc,), daemon=True).start()
         PID_FILE.write_text(str(proc.pid))
         return jsonify({"ok": True, "pid": proc.pid, "mode": mode})
@@ -458,6 +522,13 @@ def api_bot_stop():
         if PID_FILE.exists():
             PID_FILE.unlink()
 
+        try:
+            _state = _read_json_safe(STATE_JSON)
+            _state["active_contract"] = None
+            STATE_JSON.write_text(json.dumps(_state))
+        except Exception:
+            pass
+
         return jsonify({"ok": True, "pid": pid})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
@@ -469,6 +540,8 @@ def api_bot_stop():
 def api_bot_logs():
     with _bot_log_lock:
         lines = list(_bot_log_buffer)
+    if not lines:
+        lines = _read_recent_pipeline_logs()
     return jsonify({"lines": lines})
 
 
@@ -682,6 +755,7 @@ def api_state():
         "model_mtime": int(MODEL_PKL.stat().st_mtime) if MODEL_PKL.exists() else None,
         "ticks_count": 0,
         "dataset_rows": 0,
+        "min_ticks_target": 500,
     }
     try:
         df_t = _read_csv_safe(TICKS_CSV)
@@ -699,6 +773,11 @@ def api_state():
             model_info["dataset_rows"] = len(df_d)
     except Exception:
         pass
+
+    try:
+        model_info["min_ticks_target"] = int(active_state_pre.get("min_ticks_target", 500) or 500)
+    except Exception:
+        model_info["min_ticks_target"] = 500
 
     # — Métricas do último treino (model_metrics.json) —
     try:
@@ -722,6 +801,9 @@ def api_state():
     # — Risk state e state.json —
     risk_state = _read_json_safe(RISK_STATE_JSON)
     active_state = active_state_pre  # já lido acima para session_start
+    active_contract = active_state.get("active_contract")
+    if not isinstance(active_contract, dict):
+        active_contract = {"has_active": False}
 
     # — Bot status —
     uptime_sec = None
@@ -738,7 +820,30 @@ def api_state():
         "model": model_info,
         "risk_state": risk_state,
         "active_symbol": active_state.get("symbol", ""),
+        "active_contract": active_contract,
     })
+
+
+# ─── API: Contrato ativo ─────────────────────────────────────────────────────
+
+@app.route("/api/contract-active")
+def api_contract_active():
+    state = _read_json_safe(STATE_JSON)
+    ac = state.get("active_contract")
+    if not isinstance(ac, dict) or not ac.get("has_active"):
+        return jsonify({"has_active": False})
+
+    payload = {
+        "has_active": True,
+        "contract_id": str(ac.get("contract_id", "")),
+        "symbol": str(ac.get("symbol", state.get("symbol", ""))),
+        "direction": str(ac.get("direction", "")),
+        "duration": int(ac.get("duration", 0) or 0),
+        "buy_timestamp": float(ac.get("buy_timestamp", 0.0) or 0.0),
+        "entry_epoch": int(ac.get("entry_epoch", 0) or 0),
+        "entry_price": float(ac.get("entry_price", 0.0) or 0.0),
+    }
+    return jsonify(payload)
 
 
 # ─── API: Séries históricas de indicadores (/api/indicator-series) ────────────
@@ -924,6 +1029,14 @@ def api_stats():
 @app.route("/api/candles")
 def api_candles():
     n = min(int(request.args.get("n", 100)), 500)
+    symbol = str(request.args.get("symbol", "")).strip()
+    from_epoch_raw = request.args.get("from_epoch")
+    from_epoch = None
+    if from_epoch_raw not in (None, ""):
+        try:
+            from_epoch = int(from_epoch_raw)
+        except (TypeError, ValueError):
+            from_epoch = None
     try:
         from config import CANDLE_SIZE
         import indicators as ind
@@ -935,6 +1048,18 @@ def api_candles():
 
         if "price" not in df.columns and df.shape[1] >= 2:
             df.columns = ["epoch", "price"] if df.shape[1] == 2 else list(df.columns)
+
+        if symbol and "symbol" in df.columns:
+            df = df[df["symbol"].astype(str) == symbol]
+
+        if from_epoch is not None and "epoch" in df.columns:
+            try:
+                df = df[df["epoch"].astype(int) >= from_epoch]
+            except Exception:
+                pass
+
+        if df.empty:
+            return jsonify([])
 
         prices = df["price"].astype(float).tolist() if "price" in df.columns else []
         epochs = df["epoch"].astype(int).tolist() if "epoch" in df.columns else list(range(len(prices)))

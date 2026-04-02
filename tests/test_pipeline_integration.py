@@ -105,6 +105,18 @@ class TestDashboardImport:
         result = ind.detect_candle_patterns(candles)
         assert isinstance(result, list)
 
+    def test_dashboard_server_uses_unbuffered_pipeline_logs(self):
+        """Garantir logs em tempo real no dashboard."""
+        import os
+
+        path = os.path.join(os.path.dirname(__file__), "..", "dashboard", "server.py")
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+
+        assert '"-u"' in source, "dashboard/server.py deve iniciar o pipeline com python -u"
+        assert 'PYTHONUNBUFFERED' in source, "dashboard/server.py deve forçar stdout sem buffering"
+        assert 'pipeline.log' in source, "dashboard/server.py deve manter fallback de log persistido"
+
 
 class TestModelMetricsInApiState:
     """Verifica que /api/state inclui last_metrics do model_metrics.json."""

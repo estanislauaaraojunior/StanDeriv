@@ -38,6 +38,7 @@ from config import (
     TICKS_CSV, DATASET_CSV, SYMBOL,
     CANDIDATE_DURATIONS,
     CANDLE_SIZE, PA_SR_TOLERANCE, TARGET_NOISE_THRESHOLD,
+    TARGET_LOOKFORWARD,
 )
 
 
@@ -85,7 +86,7 @@ def build_dataset(
     ticks_path: str,
     output_path: str,
     window_size: int = 100,
-    lookforward: int = 1,
+    lookforward: int = TARGET_LOOKFORWARD,
 ) -> int:
     """
     Constrói o dataset e salva em output_path.
@@ -129,7 +130,7 @@ def build_dataset(
     n_ticks = len(prices_all)
     print(f"[DATASET] {n_ticks:,} ticks carregados.")
 
-    min_needed = window_size + 1  # +1 para o próximo tick (target)
+    min_needed = window_size + max(1, lookforward)
     if n_ticks < min_needed:
         print(
             f"[ERRO] Ticks insuficientes: {n_ticks} < {min_needed} necessários "
@@ -228,9 +229,10 @@ def build_dataset(
     result_df = pd.DataFrame(rows)
     result_df.to_csv(output_path, index=False)
 
+    print(f"[DATASET] Horizonte target: {lookforward} tick(s)")
     print(f"[DATASET] Linhas geradas  : {len(rows):,}")
     print(f"[DATASET] Linhas ignoradas: {skipped:,} (indicadores insuficientes)")
-    print(f"[DATASET] Distribuição do target:")
+    print("[DATASET] Distribuição do target:")
     vc = result_df["target"].value_counts()
     print(f"           Sobe (1): {vc.get(1, 0):>6,} ({vc.get(1, 0)/len(rows)*100:.1f}%)")
     print(f"           Cai  (0): {vc.get(0, 0):>6,} ({vc.get(0, 0)/len(rows)*100:.1f}%)")
@@ -250,8 +252,11 @@ def main() -> None:
         help="Tamanho da janela deslizante de ticks para calcular features (padrão: 100)",
     )
     parser.add_argument(
-        "--lookforward", type=int, default=1,
-        help="Número de ticks à frente para calcular o target (padrão: 1 = próximo tick)",
+        "--lookforward", type=int, default=TARGET_LOOKFORWARD,
+        help=(
+            "Número de ticks à frente para calcular o target "
+            f"(padrão: {TARGET_LOOKFORWARD})"
+        ),
     )
     args = parser.parse_args()
 

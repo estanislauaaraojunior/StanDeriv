@@ -56,12 +56,18 @@
   </div>
 </nav>
 
+<!-- ─── Sidebar overlay (mobile) ──────────────────────────────── -->
+<div id="sidebarOverlay" class="sidebar-overlay"></div>
+
 <!-- ─── Main Content ─────────────────────────────────────────── -->
 <main id="main">
 
   <!-- Top bar -->
   <header id="topbar">
     <div id="topbarLeft">
+      <button id="hamburgerBtn" class="hamburger-btn" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
       <span id="topbarTitle">Overview</span>
       <span id="activeSymbol" class="active-symbol-badge"></span>
     </div>
@@ -117,6 +123,15 @@
           <span class="wl-loss">✘ <span id="recentLossCount">0</span> LOSS</span>
         </div>
       </div>
+    </div>
+
+    <div class="chart-card full-width">
+      <div class="chart-title">
+        Contrato em Tempo Real
+        <span id="rtContractStatus" class="legend-item">Aguardando contrato</span>
+      </div>
+      <div class="trade-dots-legend" id="rtContractMeta">Sem contrato ativo no momento.</div>
+      <div class="chart-wrap chart-tall"><canvas id="rtContractChart"></canvas></div>
     </div>
 
     <!-- Informações do modelo -->

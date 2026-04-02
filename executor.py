@@ -16,6 +16,7 @@ import json
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 import websocket
@@ -33,6 +34,9 @@ from risk_manager import RiskManager
 from strategy import get_signal, get_adaptive_adx_min
 import ai_predictor
 import indicators as ind
+
+
+_STATE_JSON = Path(__file__).resolve().parent / "state.json"
 
 
 class DerivBot:
@@ -67,6 +71,10 @@ class DerivBot:
         self._pending_duration: int = DURATION
         self._pending_indicators: dict = {}
         self._open_contract_id: Optional[str] = None
+        self._entry_price: float = 0.0
+        self._entry_epoch: int = 0
+        self._last_tick_price: float = 0.0
+        self._last_tick_epoch: int = 0
 
         # P1: Timestamp da última proposal enviada (detecta proposals sem resposta)
         self._pending_timestamp: float = 0.0
@@ -86,12 +94,40 @@ class DerivBot:
 
         self._ws: Optional[websocket.WebSocketApp] = None
 
+    def _set_active_contract_state(self, clear: bool = False) -> None:
+        """Sincroniza contrato ativo no state.json para consumo do dashboard."""
+        try:
+            state = {}
+            if _STATE_JSON.exists() and _STATE_JSON.stat().st_size > 0:
+                with _STATE_JSON.open("r", encoding="utf-8") as f:
+                    state = json.load(f)
+
+            if clear:
+                state["active_contract"] = None
+            else:
+                state["active_contract"] = {
+                    "has_active": True,
+                    "contract_id": self._open_contract_id,
+                    "symbol": SYMBOL,
+                    "direction": self._pending_direction,
+                    "duration": self._pending_duration,
+                    "buy_timestamp": self._buy_timestamp,
+                    "entry_epoch": self._entry_epoch,
+                    "entry_price": self._entry_price,
+                }
+
+            with _STATE_JSON.open("w", encoding="utf-8") as f:
+                json.dump(state, f)
+        except Exception:
+            pass
+
     # ─────────────────────────────────────────────────────────
     #  API pública
     # ─────────────────────────────────────────────────────────
 
     def run(self) -> None:
         """Inicia o bot. Bloqueia até encerramento."""
+        self._set_active_contract_state(clear=True)
         mode = "DEMO" if self.demo else "REAL 💸"
         print(f"\n{'=' * 55}")
         print(f"  Deriv Trading Bot — Modo: {mode}")
@@ -166,6 +202,11 @@ class DerivBot:
 
     def _handle_tick(self, ws, tick: dict) -> None:
         price = float(tick["quote"])
+        self._last_tick_price = price
+        try:
+            self._last_tick_epoch = int(tick.get("epoch", 0) or 0)
+        except Exception:
+            self._last_tick_epoch = 0
         self._prices.append(price)
 
         # P9: Reiniciar watchdog a cada tick recebido
@@ -208,6 +249,9 @@ class DerivBot:
                 self._in_trade = False
                 self._open_contract_id = None
                 self._buy_timestamp = 0.0
+                self._entry_price = 0.0
+                self._entry_epoch = 0
+                self._set_active_contract_state(clear=True)
 
         # Não abrir nova ordem se já há contrato ativo
         if self._in_trade:
@@ -285,6 +329,9 @@ class DerivBot:
         self._open_contract_id = contract_id
         self._pending_timestamp = 0.0          # P1: proposal foi aceita, limpar timeout
         self._buy_timestamp = time.time()      # P7: marcar abertura do contrato
+        self._entry_price = self._last_tick_price
+        self._entry_epoch = self._last_tick_epoch
+        self._set_active_contract_state(clear=False)
         print(f"[BOT] Contrato aberto | ID: {contract_id}")
 
         # Subscrever atualizações do contrato para capturar o resultado
@@ -327,6 +374,9 @@ class DerivBot:
         self._in_trade         = False
         self._open_contract_id = None
         self._buy_timestamp    = 0.0  # P7: limpar após contrato encerrado
+        self._entry_price      = 0.0
+        self._entry_epoch      = 0
+        self._set_active_contract_state(clear=True)
 
         # P13: cancelar poll ativo pois resultado já foi recebido
         if self._contract_poll_timer is not None:

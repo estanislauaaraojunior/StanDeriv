@@ -60,6 +60,9 @@ CANDLE_SIZE            = 10      # ticks por vela sintética
 CANDLE_LOOKBACK        = 5       # velas mínimas para padrões
 PA_SR_TOLERANCE        = 0.001   # tolerância % para clustering S/R
 TARGET_NOISE_THRESHOLD = 0.0001  # variação mínima para classificar target
+# Horizonte padrão do target no dataset: 1=próximo tick, N>1=média dos próximos N ticks.
+# Valores maiores tendem a reduzir ruído de microestrutura.
+TARGET_LOOKFORWARD     = 5
 CANDLE_NOTIFY          = True    # notificações de padrões de vela no terminal
 
 # ----- Filtros de entrada -----
@@ -125,6 +128,12 @@ SIGNAL_SCORE_MIN    = 0.65  # limiar mínimo do score técnico ponderado
 # ----- Detecção de drift (P13) -----
 DRIFT_WINDOW       = 20    # janela de trades para calcular win rate recente
 DRIFT_WIN_RATE_MIN = 0.40  # alerta se win rate dos últimos N trades < 40%
+
+# ----- Promoção de modelo (champion-challenger) -----
+# Challenger só substitui o champion quando superar esses critérios mínimos.
+MODEL_PROMOTION_MIN_AUC_DELTA = 0.002  # AUC_novo >= AUC_atual + delta
+MODEL_PROMOTION_MAX_ACC_DROP  = 0.005  # queda máxima tolerada de acurácia
+MODEL_PROMOTION_MAX_F1_DROP   = 0.005  # queda máxima tolerada de F1
 
 # ----- Arquivos de log -----
 TICKS_CSV        = "ticks.csv"
