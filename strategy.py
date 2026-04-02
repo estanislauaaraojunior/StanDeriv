@@ -112,10 +112,10 @@ def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None)
     if adx_val < adx_min:
         return None, indicators
 
-    # ── Filtro ADX rising — tendência perdendo força ──
+    # ── Filtro ADX rising — tendência perdendo força (limiar suavizado para índices sintéticos) ──
     if adx_history and len(adx_history) >= 10:
         adx_avg_recent = sum(adx_history[-10:]) / 10
-        if adx_val < adx_avg_recent * 0.9:
+        if adx_val < adx_avg_recent * 0.75:
             indicators["adx_falling"] = True
             return None, indicators
 

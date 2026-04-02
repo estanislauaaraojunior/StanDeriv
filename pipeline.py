@@ -540,7 +540,7 @@ def _wait_for_ticks(min_ticks: int, poll_sec: int = 10) -> None:
 # ─────────────────────────────────────────────────────────────────
 
 def _trim_ticks(ticks_path: str, max_ticks: int = 50000) -> None:
-    """Limita ticks.csv aos últimos max_ticks mais recentes para relevância temporal."""
+    """Limita o arquivo em ticks_path aos últimos max_ticks mais recentes."""
     import pandas as pd
     if not os.path.exists(ticks_path) or os.path.getsize(ticks_path) == 0:
         return
@@ -563,13 +563,42 @@ def _run_training(
     """
     Constrói dataset.csv e treina model.pkl.
 
+    Copia ticks.csv para um snapshot temporário antes de trimar, de modo que
+    o coletor ao vivo nunca leia um arquivo parcialmente truncado.
+
     Retorna True se ambas as etapas foram concluídas com sucesso.
     """
+    import shutil
+
     print("\n[PIPELINE] ── Fase 3: Construindo dataset ──")
+    tmp_ticks = TICKS_CSV + ".train_snapshot"
     try:
-        # Janela temporal: limitar aos últimos 50.000 ticks para relevância
-        _trim_ticks(TICKS_CSV, max_ticks=50000)
-        n = dataset_builder.build_dataset(TICKS_CSV, dataset_path, window_size=100)
+        # Snapshot do CSV — o original não é alterado enquanto o coletor grava
+        shutil.copy2(TICKS_CSV, tmp_ticks)
+
+        # Filtrar snapshot para o símbolo ativo antes do trim:
+        # Quando o símbolo muda (ex: R_100 → R_10), o CSV tem a maioria dos
+        # ticks do símbolo anterior; filtrar garante que o treino usa só os
+        # ticks relevantes, sem ser engolido pelos dados do símbolo antigo.
+        try:
+            import pandas as _pd
+            import config as _cfg
+            _active_sym = _cfg.get_active_symbol()
+            _snap_df = _pd.read_csv(tmp_ticks)
+            if "symbol" in _snap_df.columns and _active_sym:
+                _before = len(_snap_df)
+                _snap_df = _snap_df[_snap_df["symbol"] == _active_sym]
+                if len(_snap_df) < _before:
+                    print(
+                        f"[PIPELINE] Snapshot filtrado para '{_active_sym}': "
+                        f"{len(_snap_df):,} ticks ({_before - len(_snap_df):,} de outros símbolos removidos)"
+                    )
+                _snap_df.to_csv(tmp_ticks, index=False)
+        except Exception:
+            pass  # falha silenciosa — dataset_builder fará sua própria filtragem
+
+        _trim_ticks(tmp_ticks, max_ticks=200000)
+        n = dataset_builder.build_dataset(tmp_ticks, dataset_path, window_size=100)
         if n < 50:
             print(f"[PIPELINE] Dataset muito pequeno ({n} linhas). Colete mais ticks.")
             return False
@@ -578,6 +607,12 @@ def _run_training(
     except Exception as exc:
         print(f"[PIPELINE] Erro ao construir dataset: {exc}")
         return False
+    finally:
+        if os.path.exists(tmp_ticks):
+            try:
+                os.remove(tmp_ticks)
+            except OSError:
+                pass
 
     print("\n[PIPELINE] ── Fase 4: Treinando modelo ──")
     try:
@@ -608,6 +643,8 @@ def _reset_ai_predictor() -> None:
         ai_predictor._dur_model          = None
         ai_predictor._dur_model_loaded   = False
         ai_predictor._dur_model_features = []
+        ai_predictor._tft_model         = None
+        ai_predictor._tft_model_loaded  = False
         print("[RE-TREINO] Singleton da IA resetado — novo modelo ativo na próxima predição.")
     except Exception:
         pass
@@ -771,6 +808,15 @@ def main() -> None:
                 setattr(_mod, "SYMBOL", detected)
         # Atualiza a variável deste módulo (importada com 'from config import SYMBOL')
         globals()["SYMBOL"] = detected
+
+    # Salva símbolo ativo em state.json para o dashboard
+    try:
+        import json as _json
+        _state_path = os.path.join(os.path.dirname(TICKS_CSV), "state.json")
+        with open(_state_path, "w") as _sf:
+            _json.dump({"symbol": detected}, _sf)
+    except Exception:
+        pass
 
     # ── FASE 0: Histórico inicial ──────────────────────────────
     if not args.skip_collect:

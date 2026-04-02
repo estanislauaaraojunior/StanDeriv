@@ -337,23 +337,33 @@ class DerivBot:
     #  P13 — Poll ativo de resultado de contrato
     # ─────────────────────────────────────────────────────────
 
-    def _poll_contract_result(self, contract_id: str) -> None:
+    def _poll_contract_result(self, contract_id: str, attempt: int = 0) -> None:
         """Consulta pontual (sem subscribe) do estado do contrato.
 
         Disparada após a duração esperada do contrato.  Caso a subscrição
         passiva tenha perdido o evento `is_sold`, esta consulta garante que
         `_handle_contract_update` receberá o resultado e desbloqueará o bot.
+
+        Tenta até 6 vezes (a cada 5 s) antes de desistir e deixar o timeout
+        de 60 s resetar o estado.
         """
         if self._open_contract_id != contract_id:
             return  # contrato já encerrado pelo caminho normal
         ws = self._ws
         if ws is None:
             return
-        print(f"\n[BOT] Poll de resultado para contrato {contract_id}...")
+        print(f"\n[BOT] Poll de resultado para contrato {contract_id} (tentativa {attempt + 1})...")
         ws.send(json.dumps({
             "proposal_open_contract": 1,
             "contract_id":           int(contract_id),
         }))
+        # Reagendar enquanto o contrato ainda não foi resolvido (máx 6 tentativas)
+        if attempt < 5:
+            self._contract_poll_timer = threading.Timer(
+                5, self._poll_contract_result, args=[contract_id, attempt + 1]
+            )
+            self._contract_poll_timer.daemon = True
+            self._contract_poll_timer.start()
 
     # ─────────────────────────────────────────────────────────
     #  P9 — Watchdog de heartbeat

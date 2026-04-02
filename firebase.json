@@ -1,0 +1,23 @@
+{
+  "hosting": {
+    "public": "dashboard",
+    "ignore": [
+      "server.py",
+      "start.sh",
+      "bot.pid",
+      "*.pyc",
+      "**/__pycache__/**"
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      }
+    ]
+  }
+}

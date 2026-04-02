@@ -9,8 +9,10 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
   <!-- Chart.js DateTime adapter (para eixo temporal) -->
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <!-- chartjs-chart-financial (candlestick) -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.1/dist/chartjs-chart-financial.min.js"></script>
 
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
@@ -38,6 +40,10 @@
       <span class="nav-icon">☰</span>
       <span class="nav-label">Histórico</span>
     </li>
+    <li class="nav-item" data-tab="stats">
+      <span class="nav-icon">◉</span>
+      <span class="nav-label">Estatísticas</span>
+    </li>
     <li class="nav-item" data-tab="pipeline">
       <span class="nav-icon">▤</span>
       <span class="nav-label">Pipeline Logs</span>
@@ -57,6 +63,7 @@
   <header id="topbar">
     <div id="topbarLeft">
       <span id="topbarTitle">Overview</span>
+      <span id="activeSymbol" class="active-symbol-badge"></span>
     </div>
     <div id="topbarRight">
       <span id="lastUpdate" class="last-update">—</span>
@@ -105,6 +112,10 @@
           <span class="dot win"></span> WIN &nbsp;
           <span class="dot loss"></span> LOSS
         </div>
+        <div class="trade-wl-count">
+          <span class="wl-win">✔ <span id="recentWinCount">0</span> WIN</span>
+          <span class="wl-loss">✘ <span id="recentLossCount">0</span> LOSS</span>
+        </div>
       </div>
     </div>
 
@@ -129,6 +140,14 @@
       <div class="info-item">
         <span class="info-label">Último treino</span>
         <span class="info-value" id="infoModelMtime">—</span>
+      </div>
+    </div>
+
+    <!-- Padrões de Vela (Overview) -->
+    <div class="chart-card full-width">
+      <div class="chart-title">🕯️ Padrões de Vela Detectados</div>
+      <div id="candlePatternsWrapOverview" class="candle-patterns-wrap">
+        <div class="candle-pattern-empty">Aguardando dados...</div>
       </div>
     </div>
 
@@ -275,6 +294,84 @@
       <div id="recentWinDots" class="trade-dots-wrap large"></div>
     </div>
 
+    <!-- Métricas do último treino -->
+    <div class="chart-card full-width" style="margin-top:16px">
+      <div class="chart-title">Último Treino do Modelo</div>
+      <div class="model-metrics-grid" id="modelMetricsGrid">
+        <div class="mm-item">
+          <span class="mm-label">Algoritmo</span>
+          <span class="mm-value" id="mmBestModel">—</span>
+        </div>
+        <div class="mm-item">
+          <span class="mm-label">Acurácia</span>
+          <span class="mm-value" id="mmAccuracy">—</span>
+        </div>
+        <div class="mm-item">
+          <span class="mm-label">AUC-ROC</span>
+          <span class="mm-value" id="mmAuc">—</span>
+        </div>
+        <div class="mm-item">
+          <span class="mm-label">F1 Score</span>
+          <span class="mm-value" id="mmF1">—</span>
+        </div>
+        <div class="mm-item">
+          <span class="mm-label">Amostras treino</span>
+          <span class="mm-value" id="mmNTrain">—</span>
+        </div>
+        <div class="mm-item">
+          <span class="mm-label">Amostras teste</span>
+          <span class="mm-value" id="mmNTest">—</span>
+        </div>
+        <div class="mm-item mm-item-wide">
+          <span class="mm-label">Data do treino</span>
+          <span class="mm-value" id="mmTimestamp">—</span>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════ TAB: ESTATÍSTICAS ════════════════ -->
+  <section id="tab-stats" class="tab">
+
+    <!-- Cards de estatísticas avançadas -->
+    <div class="cards-grid">
+      <div class="card">
+        <div class="card-label">Profit Factor</div>
+        <div class="card-value" id="statProfitFactor">—</div>
+        <div class="card-sub">lucro / perda bruta</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Expectância / Trade</div>
+        <div class="card-value" id="statExpectancy">—</div>
+        <div class="card-sub">USD médio por operação</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Ganho Médio (WIN)</div>
+        <div class="card-value" id="statAvgWin">—</div>
+        <div class="card-sub" id="statGrossProfit">Bruto: —</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Perda Média (LOSS)</div>
+        <div class="card-value" id="statAvgLoss">—</div>
+        <div class="card-sub" id="statGrossLoss">Bruto: —</div>
+      </div>
+    </div>
+
+    <!-- Distribuição de Profit e Análise por Direção -->
+    <div class="chart-section" style="margin-top:16px">
+      <div class="chart-card" style="flex:1.5">
+        <div class="chart-title">Distribuição de Profit por Operação ($)</div>
+        <div class="chart-wrap chart-tall"><canvas id="profitDistChart"></canvas></div>
+      </div>
+      <div class="chart-card" style="flex:1">
+        <div class="chart-title">Análise por Direção</div>
+        <div id="dirStatsWrap" class="dir-stats-wrap">
+          <div class="candle-pattern-empty">Aguardando dados...</div>
+        </div>
+      </div>
+    </div>
+
   </section>
 
   <!-- ════════════════════ TAB: HISTÓRICO ═════════════════════ -->
@@ -324,6 +421,36 @@
 
   <!-- ════════════════════ TAB: PIPELINE LOGS ══════════════════ -->
   <section id="tab-pipeline" class="tab tab-logs">
+
+    <!-- Recursos do sistema -->
+    <div class="sys-resources-bar" id="sysResourcesBar">
+      <div class="sys-res-item">
+        <span class="sys-res-label">CPU Sistema</span>
+        <div class="sys-res-bg"><div class="sys-res-fill" id="sysCpuBar"></div></div>
+        <span class="sys-res-val" id="sysCpuVal">—</span>
+      </div>
+      <div class="sys-res-item">
+        <span class="sys-res-label">RAM Sistema</span>
+        <div class="sys-res-bg"><div class="sys-res-fill" id="sysRamBar"></div></div>
+        <span class="sys-res-val" id="sysRamVal">—</span>
+      </div>
+      <div class="sys-res-item">
+        <span class="sys-res-label">Disco</span>
+        <div class="sys-res-bg"><div class="sys-res-fill" id="sysDiskBar"></div></div>
+        <span class="sys-res-val" id="sysDiskVal">—</span>
+      </div>
+      <div class="sys-res-item">
+        <span class="sys-res-label">Bot CPU</span>
+        <div class="sys-res-bg"><div class="sys-res-fill sys-res-fill-bot" id="botCpuBar"></div></div>
+        <span class="sys-res-val" id="botCpuVal">—</span>
+      </div>
+      <div class="sys-res-item">
+        <span class="sys-res-label">Bot RAM</span>
+        <div class="sys-res-bg"><div class="sys-res-fill sys-res-fill-bot" id="botRamBar"></div></div>
+        <span class="sys-res-val" id="botRamVal">—</span>
+      </div>
+    </div>
+
     <div class="log-toolbar">
       <span class="log-toolbar-title">▤ Pipeline — Saída em Tempo Real</span>
       <div class="log-toolbar-actions">
@@ -408,6 +535,30 @@
       <label class="checkbox-label">
         <input type="checkbox" id="skipCollect" /> Pular coleta (usar ticks.csv existente)
       </label>
+
+      <details class="advanced-details">
+        <summary>Opções Avançadas</summary>
+        <div class="advanced-body">
+          <label class="checkbox-label">
+            <input type="checkbox" id="noScan" /> Pular scan de tendência
+          </label>
+          <label>Intervalo de re-treino (min)
+            <input type="number" id="retrainInterval" value="10" min="1" step="1" />
+          </label>
+          <label>Mín. de ticks para treino
+            <input type="number" id="minTicks" value="500" min="100" step="100" />
+          </label>
+          <label>Ticks históricos a coletar
+            <input type="number" id="historyCount" value="500" min="100" step="100" />
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="forceRetrain" /> Forçar re-treino imediato
+          </label>
+          <label>Token de autenticação
+            <input type="text" id="authToken" placeholder="Deixe vazio se não configurado" autocomplete="off" />
+          </label>
+        </div>
+      </details>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeStartModal()">Cancelar</button>
@@ -423,6 +574,6 @@
 <!-- Toast -->
 <div id="toast" class="toast"></div>
 
-<script src="/static/app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

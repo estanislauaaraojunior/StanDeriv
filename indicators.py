@@ -94,11 +94,19 @@ def macd(
     if len(prices) < min_len:
         return None
 
-    # Constrói histórico do MACD line a partir de fatias crescentes
+    # Calcula EMA fast e slow incrementalmente em O(n) — sem reprocessar fatias
+    k_fast = 2.0 / (fast + 1)
+    k_slow = 2.0 / (slow + 1)
+    ema_f = prices[0]
+    ema_s = prices[0]
     macd_history: list = []
-    for i in range(slow, len(prices) + 1):
-        chunk = prices[:i]
-        macd_history.append(_ema(chunk, fast) - _ema(chunk, slow))
+    for price in prices:
+        ema_f = price * k_fast + ema_f * (1.0 - k_fast)
+        ema_s = price * k_slow + ema_s * (1.0 - k_slow)
+        macd_history.append(ema_f - ema_s)
+
+    # Usa apenas a parte estabilizada (a partir do índice `slow`)
+    macd_history = macd_history[slow:]
 
     if len(macd_history) < signal_period:
         return None

@@ -19,6 +19,20 @@ TOKEN  = os.environ["DERIV_TOKEN"]    # defina em .env — crie em: developers.d
 
 # ----- Instrumento -----
 SYMBOL        = "R_100"  # índice sintético 24/7 (sem impacto de notícias)
+
+# Símbolo ativo (pode ser alterado pelo scan de tendência em runtime)
+_active_symbol: str = SYMBOL
+
+
+def get_active_symbol() -> str:
+    """Retorna o símbolo ativo atual (pode diferir de SYMBOL se o scan o alterou)."""
+    return _active_symbol
+
+
+def set_active_symbol(symbol: str) -> None:
+    """Atualiza o símbolo ativo em runtime (chamado pelo pipeline após scan)."""
+    global _active_symbol
+    _active_symbol = symbol
 DURATION      = 5        # duração de fallback (usada quando o modelo ainda não existe)
 DURATION_UNIT = "t"      # "t" = ticks | "s" = segundos | "m" = minutos
 BASIS         = "stake"  # base do contrato
@@ -95,12 +109,12 @@ TICK_SPIKE_THRESHOLD = 0.05  # rejeitar ticks com variação > 5% em relação a
 # USE_AI_MODEL = True   → IA pondera o sinal dos indicadores antes de operar
 USE_AI_MODEL       = True
 AI_MODEL_PATH      = "model.pkl"
-AI_CONFIDENCE_MIN  = 0.58   # mantido para compatibilidade; usado internamente
+AI_CONFIDENCE_MIN  = 0.50   # limiar mínimo realista para modelo com ~52% de acurácia
 
 # Ponderação IA vs técnico (P4) — substitui gate duro por score suavizado
 AI_TECH_WEIGHT  = 0.60   # peso do sinal técnico no score final
 AI_MODEL_WEIGHT = 0.40   # peso do sinal da IA no score final
-AI_SCORE_MIN    = 0.55   # score mínimo ponderado para aceitar a operação
+AI_SCORE_MIN    = 0.52   # score mínimo ponderado para aceitar a operação
 
 # ----- Sinal ponderado (P14) -----
 # False = comportamento original (AND rígido — menos entradas, mais seletivo)
@@ -142,7 +156,7 @@ TRANSFORMER_N_LAYERS = 2     # camadas do Transformer Encoder
 TRANSFORMER_DROPOUT  = 0.15  # dropout (maior = mais regularização)
 
 # Treinamento
-TRANSFORMER_EPOCHS     = 80    # épocas máximas (early stopping pode parar antes)
+TRANSFORMER_EPOCHS     = 20    # épocas máximas (early stopping pode parar antes)
 TRANSFORMER_BATCH_SIZE = 128   # batch size (reduzir para 64 se pouca RAM)
 TRANSFORMER_LR         = 3e-4  # learning rate inicial (AdamW + cosine decay)
 TRANSFORMER_PATIENCE   = 10    # épocas sem melhoria antes do early stopping

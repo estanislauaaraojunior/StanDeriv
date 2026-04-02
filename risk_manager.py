@@ -9,6 +9,7 @@ Responsabilidades:
 """
 
 import csv
+import json
 import os
 import time
 from datetime import datetime, date
@@ -49,25 +50,21 @@ class RiskManager:
         # P13: Janela deslizante de resultados para detecção de drift
         self._recent_results: list = []
 
-        # Inicializa arquivo de log (append se existir com conteúdo, senão cria com cabeçalho)
-        _header = [
-            "timestamp", "symbol", "direction", "stake", "duration",
-            "result", "profit",
-            "balance_before", "balance_after",
-            "ema9", "ema21", "rsi", "adx", "macd_hist",
-            "ai_confidence", "ai_score",
-            "consec_losses",
-            "drawdown_pct", "win_rate_recent", "market_condition",
-        ]
-        if os.path.exists(OPERATIONS_LOG) and os.path.getsize(OPERATIONS_LOG) > 0:
-            # Arquivo existe com conteúdo → append sem cabeçalho
-            self._log_file = open(OPERATIONS_LOG, "a", newline="")
-            self._csv_writer = csv.writer(self._log_file)
-        else:
-            # Arquivo novo → criar com cabeçalho
-            self._log_file = open(OPERATIONS_LOG, "w", newline="")
-            self._csv_writer = csv.writer(self._log_file)
-            self._csv_writer.writerow(_header)
+        # Tenta restaurar estado salvo da sessão anterior
+        self._load_saved_state()
+
+        # Garante que o arquivo de log existe com cabeçalho (sem manter handle aberto)
+        if not (os.path.exists(OPERATIONS_LOG) and os.path.getsize(OPERATIONS_LOG) > 0):
+            with open(OPERATIONS_LOG, "w", newline="") as f:
+                csv.writer(f).writerow([
+                    "timestamp", "symbol", "direction", "stake", "duration",
+                    "result", "profit",
+                    "balance_before", "balance_after",
+                    "ema9", "ema21", "rsi", "adx", "macd_hist",
+                    "ai_confidence", "ai_score",
+                    "consec_losses",
+                    "drawdown_pct", "win_rate_recent", "market_condition",
+                ])
 
     # ──────────────────────────────────────────────
     #  Verificações
@@ -203,6 +200,8 @@ class RiskManager:
                 drawdown_pct, win_rate_recent, market_condition,
             ])
 
+        self._save_risk_state()
+
     # ──────────────────────────────────────────────
     #  Interno
     # ──────────────────────────────────────────────
@@ -227,3 +226,71 @@ class RiskManager:
                 f"{wr:.1%} (abaixo de {DRIFT_WIN_RATE_MIN:.0%}) "
                 "→ considere retreinar o modelo"
             )
+
+    # ──────────────────────────────────────────────
+    #  Exposição de estado para o dashboard
+    # ──────────────────────────────────────────────
+
+    def to_state_dict(self) -> dict:
+        """Retorna estado atual do RiskManager como dict serializável em JSON."""
+        daily_pnl_pct = (
+            self._daily_profit / self._daily_start_balance
+            if self._daily_start_balance > 0 else 0.0
+        )
+        wr = (
+            round(sum(self._recent_results) / len(self._recent_results) * 100, 1)
+            if self._recent_results else 0.0
+        )
+        drift = len(self._recent_results) >= DRIFT_WINDOW and wr / 100 < DRIFT_WIN_RATE_MIN
+        pause_remaining = max(0, int(self._pause_until - time.time()))
+        return {
+            # Para o dashboard
+            "is_paused":           pause_remaining > 0,
+            "pause_remaining_sec": pause_remaining,
+            "daily_pnl":           round(self._daily_profit, 2),
+            "daily_pnl_pct":       round(daily_pnl_pct * 100, 2),
+            "consec_losses":       self._consec_losses,
+            "drift_detected":      drift,
+            "win_rate_recent":     wr,
+            # Para restauração de estado
+            "date":                date.today().isoformat(),
+            "balance":             round(self.balance, 2),
+            "pause_until_epoch":   self._pause_until,
+            "recent_results":      self._recent_results[-DRIFT_WINDOW:],
+        }
+
+    def _save_risk_state(self) -> None:
+        """Persiste estado atual em risk_state.json para leitura pelo dashboard."""
+        try:
+            state_path = os.path.join(os.path.dirname(OPERATIONS_LOG), "risk_state.json")
+            with open(state_path, "w") as f:
+                json.dump(self.to_state_dict(), f)
+        except Exception:
+            pass
+
+    def _load_saved_state(self) -> None:
+        """Restaura estado salvo de execução anterior (consec_losses, pause_until, recent_results)."""
+        try:
+            state_path = os.path.join(os.path.dirname(OPERATIONS_LOG), "risk_state.json")
+            if not os.path.exists(state_path):
+                return
+            with open(state_path) as f:
+                saved = json.load(f)
+            # Só restaura se for do mesmo dia
+            saved_date_str = saved.get("date", "")
+            if saved_date_str != date.today().isoformat():
+                return
+            self._consec_losses = int(saved.get("consec_losses", 0))
+            self.consecutive_losses = self._consec_losses
+            self._pause_until = float(saved.get("pause_until_epoch", 0.0))
+            self._recent_results = list(saved.get("recent_results", []))
+            self._daily_profit = float(saved.get("daily_pnl", 0.0))
+            saved_balance = float(saved.get("balance", 0.0))
+            if saved_balance > 0:
+                self.balance = saved_balance
+            print(
+                f"[RISCO] Estado restaurado: consec_losses={self._consec_losses}, "
+                f"saldo={self.balance:.2f}"
+            )
+        except Exception:
+            pass

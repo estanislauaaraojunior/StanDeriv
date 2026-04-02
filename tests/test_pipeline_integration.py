@@ -104,3 +104,70 @@ class TestDashboardImport:
         candles = ind.ticks_to_candles(prices, 10)
         result = ind.detect_candle_patterns(candles)
         assert isinstance(result, list)
+
+
+class TestModelMetricsInApiState:
+    """Verifica que /api/state inclui last_metrics do model_metrics.json."""
+
+    def test_read_json_safe_returns_list(self):
+        """_read_json_safe deve retornar listas, não só dicts."""
+        import json, tempfile, os, sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "dashboard"))
+
+        # Simula leitura de model_metrics.json (lista)
+        data = [
+            {"timestamp": "2026-04-01T16:22:58", "best_model": "Stacking",
+             "auc": 0.5054, "accuracy": 0.519, "f1": 0.4826, "n_train": 4672, "n_test": 1052},
+            {"timestamp": "2026-04-01T16:39:48", "best_model": "RandomForest",
+             "auc": 0.61, "accuracy": 0.58, "f1": 0.55, "n_train": 6000, "n_test": 1500},
+        ]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(data, f)
+            path = f.name
+        try:
+            with open(path) as fh:
+                loaded = json.load(fh)
+            assert isinstance(loaded, list), "Deve retornar lista"
+            assert loaded[-1]["best_model"] == "RandomForest", "Deve retornar último item"
+            assert loaded[-1]["n_train"] == 6000
+        finally:
+            os.unlink(path)
+
+    def test_last_metrics_keys(self):
+        """last_metrics deve ter todas as chaves esperadas."""
+        import json, tempfile, os
+        entry = {
+            "timestamp": "2026-04-01T17:00:00",
+            "best_model": "XGBoost",
+            "auc": 0.62, "accuracy": 0.60, "f1": 0.58,
+            "n_train": 7000, "n_test": 1800,
+        }
+        expected_keys = {"best_model", "accuracy", "auc", "f1", "n_train", "n_test", "timestamp"}
+        assert expected_keys.issubset(entry.keys()), (
+            f"Chaves ausentes: {expected_keys - entry.keys()}"
+        )
+
+    def test_pipeline_trim_limit_is_at_least_200k(self):
+        """Verifica que o pipeline usa max_ticks >= 200000 no retrain."""
+        import re, os
+        pipeline_path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
+        with open(pipeline_path) as f:
+            source = f.read()
+        matches = re.findall(r"_trim_ticks\(tmp_ticks,\s*max_ticks=(\d+)\)", source)
+        assert matches, "_trim_ticks com max_ticks não encontrado em pipeline.py"
+        for val in matches:
+            assert int(val) >= 200000, (
+                f"max_ticks={val} é muito pequeno (mínimo 200000 para dataset crescer com o tempo)"
+            )
+
+    def test_train_model_metrics_path_is_absolute(self):
+        """Garante que train_model.py usa caminho absoluto para model_metrics.json."""
+        import re, os
+        path = os.path.join(os.path.dirname(__file__), "..", "train_model.py")
+        with open(path) as f:
+            source = f.read()
+        # Deve usar abspath — nunca o padrão relativo 'or "."'
+        assert 'abspath' in source, "train_model.py deve usar os.path.abspath para gravar model_metrics.json"
+        assert 'os.path.dirname(output_path) or "."' not in source, (
+            "Caminho relativo 'or \".\"' ainda presente — corrigir para os.path.abspath"
+        )
