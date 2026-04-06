@@ -41,6 +41,10 @@ import train_model
 from config import (
     APP_ID, TOKEN, SYMBOL,
     TICKS_CSV, DATASET_CSV, AI_MODEL_PATH,
+    TARGET_LOOKFORWARD,
+    MODEL_PROMOTION_MIN_AUC_DELTA,
+    MODEL_PROMOTION_MAX_ACC_DROP,
+    MODEL_PROMOTION_MAX_F1_DROP,
     DEMO_MODE,
 )
 from executor import DerivBot
@@ -401,7 +405,7 @@ def _banner(history_count: int, min_ticks: int, retrain_min: int, demo: bool) ->
     print(f"  Ticks históricos  : {history_count:,}")
     print(f"  Ticks p/ treino   : {min_ticks:,}")
     print(f"  Re-treino a cada  : {retrain_min} min")
-    print(f"  Pressione Ctrl+C para encerrar tudo")
+    print("  Pressione Ctrl+C para encerrar tudo")
     print("=" * 60)
 
 
@@ -539,38 +543,146 @@ def _wait_for_ticks(min_ticks: int, poll_sec: int = 10) -> None:
 #  FASES 3 e 4 — Construir dataset e treinar modelo
 # ─────────────────────────────────────────────────────────────────
 
+def _trim_ticks(ticks_path: str, max_ticks: int = 50000) -> None:
+    """Limita o arquivo em ticks_path aos últimos max_ticks mais recentes."""
+    import pandas as pd
+    if not os.path.exists(ticks_path) or os.path.getsize(ticks_path) == 0:
+        return
+    try:
+        df = pd.read_csv(ticks_path)
+        if len(df) > max_ticks:
+            trimmed = len(df) - max_ticks
+            df = df.tail(max_ticks)
+            df.to_csv(ticks_path, index=False)
+            print(f"[PIPELINE] Ticks trimados: {trimmed:,} removidos, {max_ticks:,} mantidos.")
+    except Exception as e:
+        print(f"[PIPELINE] Aviso: não foi possível trimar ticks: {e}")
+
+
+def _load_latest_final_metrics() -> Optional[dict]:
+    """Lê a última entrada de métricas com stage='final' em model_metrics.json."""
+    metrics_path = os.path.join(os.path.dirname(os.path.abspath(AI_MODEL_PATH)), "model_metrics.json")
+    if not os.path.exists(metrics_path):
+        return None
+    try:
+        with open(metrics_path, "r") as f:
+            hist = json.load(f)
+        if not isinstance(hist, list):
+            return None
+        for item in reversed(hist):
+            if isinstance(item, dict) and item.get("stage") == "final":
+                return item
+    except Exception:
+        return None
+    return None
+
+
+def _should_promote_model(current: Optional[dict], challenger: Optional[dict]) -> tuple[bool, str]:
+    """Decide promoção de challenger com regras conservadoras de não-regressão."""
+    if challenger is None:
+        return False, "métricas do challenger indisponíveis"
+    if current is None:
+        return True, "sem champion anterior com métricas finais"
+
+    cur_auc = float(current.get("auc", 0.0))
+    cur_acc = float(current.get("accuracy", 0.0))
+    cur_f1 = float(current.get("f1", 0.0))
+
+    ch_auc = float(challenger.get("auc", 0.0))
+    ch_acc = float(challenger.get("accuracy", 0.0))
+    ch_f1 = float(challenger.get("f1", 0.0))
+
+    auc_ok = ch_auc >= (cur_auc + MODEL_PROMOTION_MIN_AUC_DELTA)
+    acc_ok = ch_acc >= (cur_acc - MODEL_PROMOTION_MAX_ACC_DROP)
+    f1_ok = ch_f1 >= (cur_f1 - MODEL_PROMOTION_MAX_F1_DROP)
+
+    if auc_ok and acc_ok and f1_ok:
+        return True, (
+            f"AUC {ch_auc:.4f} >= {cur_auc:.4f}+{MODEL_PROMOTION_MIN_AUC_DELTA:.4f}, "
+            f"ACC {ch_acc:.4f} sem queda excessiva, F1 {ch_f1:.4f} sem queda excessiva"
+        )
+
+    return False, (
+        f"gate reprovado | champion(AUC={cur_auc:.4f}, ACC={cur_acc:.4f}, F1={cur_f1:.4f}) "
+        f"vs challenger(AUC={ch_auc:.4f}, ACC={ch_acc:.4f}, F1={ch_f1:.4f})"
+    )
+
+
 def _run_training(
     dataset_path: str = DATASET_CSV,
     model_path: str = AI_MODEL_PATH,
     test_ratio: float = 0.2,
-) -> bool:
+) -> tuple[bool, Optional[dict]]:
     """
     Constrói dataset.csv e treina model.pkl.
 
-    Retorna True se ambas as etapas foram concluídas com sucesso.
+    Copia ticks.csv para um snapshot temporário antes de trimar, de modo que
+    o coletor ao vivo nunca leia um arquivo parcialmente truncado.
+
+    Retorna (sucesso, métricas_finais).
     """
+    import shutil
+
     print("\n[PIPELINE] ── Fase 3: Construindo dataset ──")
+    tmp_ticks = f"{TICKS_CSV}.train_snapshot"
     try:
-        n = dataset_builder.build_dataset(TICKS_CSV, dataset_path, window_size=100)
+        # Snapshot do CSV — o original não é alterado enquanto o coletor grava
+        shutil.copy2(TICKS_CSV, tmp_ticks)
+
+        # Filtrar snapshot para o símbolo ativo antes do trim:
+        # Quando o símbolo muda (ex: R_100 → R_10), o CSV tem a maioria dos
+        # ticks do símbolo anterior; filtrar garante que o treino usa só os
+        # ticks relevantes, sem ser engolido pelos dados do símbolo antigo.
+        try:
+            import pandas as _pd
+            import config as _cfg
+            _active_sym = _cfg.get_active_symbol()
+            _snap_df = _pd.read_csv(tmp_ticks)
+            if "symbol" in _snap_df.columns and _active_sym:
+                _before = len(_snap_df)
+                _snap_df = _snap_df[_snap_df["symbol"] == _active_sym]
+                if len(_snap_df) < _before:
+                    print(
+                        f"[PIPELINE] Snapshot filtrado para '{_active_sym}': "
+                        f"{len(_snap_df):,} ticks ({_before - len(_snap_df):,} de outros símbolos removidos)"
+                    )
+                _snap_df.to_csv(tmp_ticks, index=False)
+        except Exception:
+            pass  # falha silenciosa — dataset_builder fará sua própria filtragem
+
+        _trim_ticks(tmp_ticks, max_ticks=200000)
+        n = dataset_builder.build_dataset(
+            tmp_ticks,
+            dataset_path,
+            window_size=100,
+            lookforward=TARGET_LOOKFORWARD,
+        )
         if n < 50:
             print(f"[PIPELINE] Dataset muito pequeno ({n} linhas). Colete mais ticks.")
-            return False
+            return False, None
     except SystemExit:
-        return False
+        return False, None
     except Exception as exc:
         print(f"[PIPELINE] Erro ao construir dataset: {exc}")
-        return False
+        return False, None
+    finally:
+        if os.path.exists(tmp_ticks):
+            try:
+                os.remove(tmp_ticks)
+            except OSError:
+                pass
 
     print("\n[PIPELINE] ── Fase 4: Treinando modelo ──")
+    metrics: Optional[dict] = None
     try:
-        train_model.train(dataset_path, model_path, test_ratio)
+        metrics = train_model.train(dataset_path, model_path, test_ratio)
     except SystemExit:
-        return False
+        return False, None
     except Exception as exc:
         print(f"[PIPELINE] Erro ao treinar modelo: {exc}")
-        return False
+        return False, None
 
-    return True
+    return True, metrics
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -590,6 +702,8 @@ def _reset_ai_predictor() -> None:
         ai_predictor._dur_model          = None
         ai_predictor._dur_model_loaded   = False
         ai_predictor._dur_model_features = []
+        ai_predictor._tft_model         = None
+        ai_predictor._tft_model_loaded  = False
         print("[RE-TREINO] Singleton da IA resetado — novo modelo ativo na próxima predição.")
     except Exception:
         pass
@@ -622,19 +736,24 @@ def _retrain_loop(interval_min: int) -> None:
         )
 
         # Usa arquivos temporários para não corromper os arquivos em uso
-        tmp_dataset = DATASET_CSV + ".tmp"
-        tmp_model   = AI_MODEL_PATH + ".new"
+        tmp_dataset = f"{DATASET_CSV}.tmp"
+        tmp_model   = f"{AI_MODEL_PATH}.new"
 
-        success = _run_training(dataset_path=tmp_dataset, model_path=tmp_model)
+        champion_metrics = _load_latest_final_metrics()
+        success, challenger_metrics = _run_training(dataset_path=tmp_dataset, model_path=tmp_model)
 
         if success and os.path.exists(tmp_model):
-            # Substituição atômica: o bot nunca lê um arquivo pela metade
-            os.replace(tmp_model, AI_MODEL_PATH)
-            _reset_ai_predictor()
-            print(
-                f"[RE-TREINO] model.pkl atualizado com sucesso. "
-                f"Próximo re-treino em {interval_min} min."
-            )
+            promote, reason = _should_promote_model(champion_metrics, challenger_metrics)
+            if promote:
+                # Substituição atômica: o bot nunca lê um arquivo pela metade
+                os.replace(tmp_model, AI_MODEL_PATH)
+                _reset_ai_predictor()
+                print(
+                    f"[RE-TREINO] model.pkl atualizado com sucesso ({reason}). "
+                    f"Próximo re-treino em {interval_min} min."
+                )
+            else:
+                print(f"[RE-TREINO] Challenger não promovido: {reason}")
         else:
             print("[RE-TREINO] Falhou — bot continua com o modelo anterior.")
 
@@ -754,6 +873,23 @@ def main() -> None:
         # Atualiza a variável deste módulo (importada com 'from config import SYMBOL')
         globals()["SYMBOL"] = detected
 
+    # Salva símbolo ativo em state.json para o dashboard
+    try:
+        import json as _json
+        _state_path = os.path.join(os.path.dirname(TICKS_CSV), "state.json")
+        _state = {}
+        if os.path.exists(_state_path):
+            try:
+                with open(_state_path) as _sf:
+                    _state = _json.load(_sf)
+            except Exception:
+                _state = {}
+        _state["symbol"] = detected
+        with open(_state_path, "w") as _sf:
+            _json.dump(_state, _sf)
+    except Exception:
+        pass
+
     # ── FASE 0: Histórico inicial ──────────────────────────────
     if not args.skip_collect:
         n_hist = _fetch_historical_ticks(args.history_count)
@@ -787,7 +923,7 @@ def main() -> None:
         _wait_for_ticks(args.min_ticks)
 
         # Constrói dataset e treina (fases 3 e 4)
-        success = _run_training()
+        success, _metrics = _run_training()
         if not success:
             print("\n[PIPELINE] Treino inicial falhou. Encerrando.")
             _shutdown.set()

@@ -5,6 +5,10 @@
 
 'use strict';
 
+// ─── Backend URL ────────────────────────────────────────────────────────────
+// Aponta para o servidor local Flask. Altere se o servidor rodar em outro IP.
+const API_BASE_URL = 'http://localhost:5055';
+
 // ─── Estado ────────────────────────────────────────────────────────────────
 
 const state = {
@@ -12,6 +16,7 @@ const state = {
   botRunning:   false,
   histFilter:   'all',
   allTrades:    [],
+  activeContract: null,
 
   // Chart instances
   charts: {
@@ -19,6 +24,7 @@ const state = {
     price:  null,
     rsi:    null,
     macd:   null,
+    rtContract: null,
   },
 
   // Dados locais para RSI/MACD (série temporal de indicadores)
@@ -32,8 +38,12 @@ const POLL_SUMMARY  = 5_000;
 const POLL_TICKS    = 4_000;
 const POLL_TRADES   = 15_000;
 const POLL_IND      = 5_000;
-const POLL_MODEL    = 30_000;
+const POLL_MODEL    = 10_000;
 const POLL_LOGS     = 2_000;
+const POLL_CONTRACT = 2_000;
+
+// Candlestick desativado por padrão para evitar renderização distorcida de velas.
+const ENABLE_CANDLESTICK = false;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -73,6 +83,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
     el('topbarTitle').textContent = item.querySelector('.nav-label').textContent;
     state.activeTab = tab;
 
+    // Close mobile sidebar when selecting a tab
+    _closeMobileSidebar();
+
     // Força refresh de charts ao trocar aba
     if (tab === 'technical') {
       setTimeout(() => {
@@ -80,6 +93,20 @@ document.querySelectorAll('.nav-item').forEach(item => {
         state.charts.rsi?.resize();
         state.charts.macd?.resize();
       }, 50);
+    }
+    if (tab === 'overview') {
+      setTimeout(() => { state.charts.rtContract?.resize(); }, 50);
+      pollContractRealtime();
+    }
+    if (tab === 'stats') {
+      setTimeout(() => { _profitDistChart?.resize(); }, 50);
+      pollStats();
+    }
+    if (tab === 'pipeline') {
+      pollSystem();
+    }
+    if (tab === 'ai') {
+      pollModelMetrics();
     }
   });
 });
@@ -146,16 +173,123 @@ function updateEquityChart(data) {
 
 function initPriceChart() {
   const ctx = el('priceChart').getContext('2d');
-  state.charts.price = new Chart(ctx, {
+  // Usa candlestick apenas se habilitado e com plugin disponível.
+  const hasCandlestick = typeof Chart !== 'undefined' &&
+    Chart.registry && Chart.registry.controllers &&
+    Chart.registry.controllers.get && Chart.registry.controllers.get('candlestick');
+
+  if (ENABLE_CANDLESTICK && hasCandlestick) {
+    state.charts.price = new Chart(ctx, {
+      type: 'candlestick',
+      data: {
+        datasets: [
+          { label: 'OHLC', data: [], color: { up: '#00ff88', down: '#ff4757', unchanged: '#8b949e' } },
+          { type: 'line', label: 'EMA 9',  data: [], borderColor: '#00ff88', borderWidth: 1.5,
+            pointRadius: 0, tension: 0.3, order: 1 },
+          { type: 'line', label: 'EMA 21', data: [], borderColor: '#ffb830', borderWidth: 1.5,
+            pointRadius: 0, tension: 0.3, order: 2 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { tooltip: { mode: 'index', intersect: false }, legend: { display: false } },
+        scales: {
+          x: { grid: { color: '#1e2737' }, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+          y: { grid: { color: '#1e2737' }, position: 'right' },
+        },
+      },
+    });
+    state._priceChartIsCandlestick = true;
+  } else {
+    state.charts.price = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [
+          { label: 'Preço', data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.04)',
+            tension: 0.1, fill: true, pointRadius: 0, borderWidth: 1.5, order: 3 },
+          { label: 'EMA 9', data: [], borderColor: '#00ff88', borderWidth: 1.5,
+            pointRadius: 0, tension: 0.3, order: 2 },
+          { label: 'EMA 21', data: [], borderColor: '#ffb830', borderWidth: 1.5,
+            pointRadius: 0, tension: 0.3, order: 1 },
+        ],
+      },
+      options: {
+        ...baseChartOptions,
+        scales: {
+          x: { ...baseChartOptions.scales.x, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+          y: { ...baseChartOptions.scales.y, position: 'right' },
+        },
+      },
+    });
+    state._priceChartIsCandlestick = false;
+  }
+}
+
+// Polling periódico de candles (para gráfico candlestick)
+async function pollCandles() {
+  try {
+    const r = await fetch(API_BASE_URL + '/api/candles?n=100');
+    const candles = await r.json();
+    if (!Array.isArray(candles) || !candles.length) return;
+    const chart = state.charts.price;
+    if (!chart || !state._priceChartIsCandlestick) return;
+
+    chart.data.datasets[0].data = candles.map(c => ({ x: c.t, o: c.o, h: c.h, l: c.l, c: c.c }));
+    // EMA sobre closes
+    const closes = candles.map(c => c.c);
+    const ema9d  = calcEma(closes, 9).map((v, i) => ({ x: candles[i]?.t, y: v }));
+    const ema21d = calcEma(closes, 21).map((v, i) => ({ x: candles[i]?.t, y: v }));
+    chart.data.datasets[1].data = ema9d;
+    chart.data.datasets[2].data = ema21d;
+    chart.update('none');
+  } catch (_) {}
+}
+
+function updatePriceChart(ticks) {
+  const chart = state.charts.price;
+  if (!chart || !ticks.length) return;
+  if (state._priceChartIsCandlestick) return; // updated by pollCandles
+
+  chart.data.datasets[0].data = ticks.map(t => ({ x: t.epoch, y: t.price }));
+  const prices = ticks.map(t => t.price);
+  chart.data.datasets[1].data = calcEma(prices, 9).map((v, i) => ({ x: ticks[i]?.epoch, y: v }));
+  chart.data.datasets[2].data = calcEma(prices, 21).map((v, i) => ({ x: ticks[i]?.epoch, y: v }));
+  chart.update('none');
+}
+
+function initRtContractChart() {
+  const canvas = el('rtContractChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  state.charts.rtContract = new Chart(ctx, {
     type: 'line',
     data: {
       datasets: [
-        { label: 'Preço', data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.04)',
-          tension: 0.1, fill: true, pointRadius: 0, borderWidth: 1.5, order: 3 },
-        { label: 'EMA 9', data: [], borderColor: '#00ff88', borderWidth: 1.5,
-          pointRadius: 0, tension: 0.3, order: 2 },
-        { label: 'EMA 21', data: [], borderColor: '#ffb830', borderWidth: 1.5,
-          pointRadius: 0, tension: 0.3, order: 1 },
+        {
+          label: 'Preço',
+          data: [],
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.05)',
+          pointRadius: 0,
+          borderWidth: 1.6,
+          tension: 0.18,
+          fill: true,
+          order: 2,
+        },
+        {
+          label: 'Entrada',
+          data: [],
+          type: 'scatter',
+          borderColor: '#ffb830',
+          backgroundColor: '#ffb830',
+          pointRadius: 5,
+          pointHoverRadius: 6,
+          pointBorderWidth: 2,
+          pointBorderColor: '#0d1117',
+          showLine: false,
+          order: 1,
+        },
       ],
     },
     options: {
@@ -168,19 +302,51 @@ function initPriceChart() {
   });
 }
 
-function updatePriceChart(ticks) {
-  const chart = state.charts.price;
-  if (!chart || !ticks.length) return;
+function _setRtContractStatus(contract, entryTick, lastTick) {
+  const statusEl = el('rtContractStatus');
+  const metaEl = el('rtContractMeta');
+  if (!statusEl || !metaEl) return;
 
-  const labels = ticks.map(t => t.epoch);
-  chart.data.datasets[0].data = ticks.map(t => ({ x: t.epoch, y: t.price }));
+  if (!contract) {
+    statusEl.textContent = 'Aguardando contrato';
+    statusEl.style.color = '#8b949e';
+    metaEl.textContent = 'Sem contrato ativo no momento.';
+    return;
+  }
 
-  // EMAs calculados localmente (simples, só para visualização)
-  const prices = ticks.map(t => t.price);
-  chart.data.datasets[1].data = calcEma(prices, 9).map((v, i) => ({ x: ticks[i]?.epoch, y: v }));
-  chart.data.datasets[2].data = calcEma(prices, 21).map((v, i) => ({ x: ticks[i]?.epoch, y: v }));
+  const side = contract.direction === 'BUY' ? 'CALL/BUY' : contract.direction === 'SELL' ? 'PUT/SELL' : (contract.direction || '—');
+  statusEl.textContent = `${contract.symbol || '—'} • ${side}`;
+  statusEl.style.color = contract.direction === 'BUY' ? '#00ff88' : contract.direction === 'SELL' ? '#ff4757' : '#8b949e';
+
+  const entryTxt = entryTick ? fmt(entryTick.price, 2) : fmt(contract.entry_price, 2);
+  const currentTxt = lastTick ? fmt(lastTick.price, 2) : '—';
+  const deltaTicks = (entryTick && lastTick && Number.isFinite(entryTick.epoch) && Number.isFinite(lastTick.epoch))
+    ? Math.max(0, lastTick.epoch - entryTick.epoch)
+    : 0;
+  metaEl.textContent = `Entrada: ${entryTxt} | Atual: ${currentTxt} | Decorrência: ${deltaTicks} ticks`;
+}
+
+function updateRtContractChart(ticks, contract) {
+  const chart = state.charts.rtContract;
+  if (!chart) return;
+
+  if (!contract || !Array.isArray(ticks) || !ticks.length) {
+    chart.data.datasets[0].data = [];
+    chart.data.datasets[1].data = [];
+    chart.update('none');
+    _setRtContractStatus(null);
+    return;
+  }
+
+  const series = ticks.map(t => ({ x: t.epoch, y: t.price }));
+  chart.data.datasets[0].data = series;
+
+  let entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
+  if (!entryTick && ticks.length) entryTick = ticks[0];
+  chart.data.datasets[1].data = entryTick ? [{ x: entryTick.epoch, y: entryTick.price }] : [];
 
   chart.update('none');
+  _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
 }
 
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
@@ -251,9 +417,297 @@ function calcEma(prices, period) {
 
 // ─── Polling: Bot Status ──────────────────────────────────────────────────────
 
+// ─── Polling: Estado consolidado (/api/state) ────────────────────────────────
+
+let _pollFailures = 0;
+
+async function pollState() {
+  try {
+    const r = await fetch(API_BASE_URL + '/api/state', { cache: 'no-store' });
+    const d = await r.json();
+    _pollFailures = 0;
+    _updateConnectionBanner(false);
+
+    // — Bot status —
+    const running = d.bot?.running ?? false;
+    state.botRunning = running;
+    const pid = d.bot?.pid;
+    const uptimeSec = d.bot?.uptime_sec;
+    const led  = el('statusLed');
+    const text = el('statusText');
+    if (running) {
+      led.className  = 'status-led running';
+      text.textContent = 'Rodando' + (pid ? ` (PID ${pid})` : '');
+      el('btnStart').style.display = 'none';
+      el('btnStop').style.display  = '';
+      el('logBotStatus').textContent = '● Rodando';
+      el('logBotStatus').className   = 'log-stat log-bot-indicator running';
+      // — Estado operacional detalhado —
+      const rs = d.risk_state ?? {};
+      const pnlPct = rs.daily_pnl_pct ?? 0;
+      const isPaused = (d.summary?.is_paused) || (rs.pause_remaining_sec > 0);
+      const isStopLoss   = pnlPct <= -25;
+      const isTakeProfit = pnlPct >= 50;
+      const hasModel = !!d.model?.model_exists;
+      const ticksCount = Number(d.model?.ticks_count ?? 0);
+      const datasetRows = Number(d.model?.dataset_rows ?? 0);
+      const minTicksTarget = Math.max(1, Number(d.model?.min_ticks_target ?? 500));
+      const hasActiveContract = !!d.active_contract?.has_active;
+      if (isStopLoss) {
+        el('cardStatus').textContent = 'STOP LOSS';
+        el('cardStatus').className   = 'card-value negative';
+        el('cardStatusSub').textContent = `PnL: ${pnlPct.toFixed(1)}% — Dia encerrado`;
+      } else if (isTakeProfit) {
+        el('cardStatus').textContent = 'TAKE PROFIT';
+        el('cardStatus').className   = 'card-value positive';
+        el('cardStatusSub').textContent = `PnL: +${pnlPct.toFixed(1)}% — Meta atingida`;
+      } else if (isPaused) {
+        el('cardStatus').textContent = 'PAUSADO';
+        el('cardStatus').className   = 'card-value warning';
+        const rem = rs.pause_remaining_sec ?? 0;
+        el('cardStatusSub').textContent = rem > 0
+          ? `Retoma em ${Math.floor(rem/60)}m ${rem%60}s`
+          : 'Losses consecutivos';
+      } else if (!hasModel && ticksCount < minTicksTarget) {
+        el('cardStatus').textContent = 'COLETANDO';
+        el('cardStatus').className   = 'card-value';
+        el('cardStatusSub').textContent = `${ticksCount} / ${minTicksTarget} ticks coletados`;
+      } else if (!hasModel && ticksCount >= minTicksTarget) {
+        el('cardStatus').textContent = 'CAPTANDO';
+        el('cardStatus').className   = 'card-value';
+        el('cardStatusSub').textContent = `IA aprendendo (${datasetRows} linhas)`;
+      } else {
+        el('cardStatus').textContent = 'OPERANDO';
+        el('cardStatus').className   = 'card-value positive';
+        el('cardStatusSub').textContent = hasActiveContract
+          ? 'Contrato ativo em andamento'
+          : 'Procurando entrada para o contrato';
+      }
+    } else {
+      led.className  = 'status-led stopped';
+      text.textContent = 'Parado';
+      el('btnStart').style.display = '';
+      el('btnStop').style.display  = 'none';
+      el('logBotStatus').textContent = '● Parado';
+      el('logBotStatus').className   = 'log-stat log-bot-indicator stopped';
+      el('cardStatus').textContent = 'PARADO';
+      el('cardStatus').className   = 'card-value';
+      el('cardStatusSub').textContent = '—';
+    }
+
+    // — Símbolo ativo —
+    if (d.active_symbol) {
+      const symEl = el('activeSymbol');
+      if (symEl) symEl.textContent = d.active_symbol;
+    }
+
+    // — Resumo —
+    const s = d.summary ?? {};
+    el('cardBalance').textContent = fmtUsd(s.balance);
+    el('cardBalanceSub').textContent = `Inicial: ${fmtUsd(s.balance_initial)}`;
+    const pnl = s.pnl_today ?? 0;
+    el('cardPnl').textContent = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
+    el('cardPnl').className   = 'card-value ' + (pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : '');
+    el('cardPnlPct').textContent = (s.pnl_pct >= 0 ? '+' : '') + fmtPct(s.pnl_pct);
+    el('cardWinRate').textContent = fmtPct(s.win_rate);
+    el('cardWinRateSub').textContent = `${s.wins ?? 0} / ${s.total_trades ?? 0} trades`;
+    // Drawdown diário vem do risk_state (mais preciso que o campo do CSV)
+    const ddPct = Math.abs(d.risk_state?.daily_pnl_pct ?? s.drawdown_pct ?? 0);
+    const dd = Math.min(ddPct / 25 * 100, 100);
+    el('drawdownBar').style.width = dd + '%';
+    el('drawdownVal').textContent = fmtPct(-(d.risk_state?.daily_pnl_pct ?? 0));
+    const cl = s.consec_losses ?? 0;
+    el('consecVal').textContent = `${cl} / 3`;
+    const dotsEl = el('consecDots');
+    if (dotsEl) {
+      dotsEl.innerHTML = '';
+      for (let i = 0; i < 3; i++) {
+        const dot = document.createElement('div');
+        dot.className = 'consec-dot' + (i < cl ? ' filled' : '');
+        dotsEl.appendChild(dot);
+      }
+    }
+    el('consecHint').textContent = s.is_paused ? '⚠ Pausado' : cl > 0 ? `${cl} loss(es)` : 'Normal';
+    const drift = (s.win_rate_recent > 0) && (s.win_rate_recent < 40);
+    el('driftAlert').style.display = drift ? '' : 'none';
+
+    // Win rate dots (aba IA & Risco)
+    updateRecentDots('recentWinDots');
+
+    el('lastUpdate').textContent = 'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
+
+    // Notificações de eventos críticos (Phase 4.4)
+    _checkCriticalEvents(s, d.risk_state ?? {});
+
+    // — Indicadores ao vivo —
+    const ind = d.indicators ?? {};
+    if (Object.keys(ind).length) _applyIndicators(ind);
+
+    // — Modelo —
+    const m = d.model ?? {};
+    if (el('infoTicks')) el('infoTicks').textContent = m.ticks_count?.toLocaleString('pt-BR') ?? '—';
+    if (el('infoDataset')) el('infoDataset').textContent = m.dataset_rows?.toLocaleString('pt-BR') ?? '—';
+    if (el('infoModel')) { el('infoModel').textContent = m.model_exists ? '✓ OK' : '✗ Ausente'; el('infoModel').style.color = m.model_exists ? '#00ff88' : '#ff4757'; }
+    if (el('infoTft')) { el('infoTft').textContent = m.tft_exists ? '✓ OK' : '✗ Ausente'; el('infoTft').style.color = m.tft_exists ? '#00ff88' : '#ff4757'; }
+    if (el('infoModelMtime') && m.model_mtime) el('infoModelMtime').textContent = new Date(m.model_mtime * 1000).toLocaleString('pt-BR');
+
+    // — Métricas do último treino (via /api/state para atualização a cada 5s) —
+    const mm = m.last_metrics ?? {};
+    if (el('mmBestModel'))  el('mmBestModel').textContent  = mm.best_model || '—';
+    if (el('mmAccuracy'))   el('mmAccuracy').textContent   = mm.accuracy != null ? fmtPct(mm.accuracy * 100) : '—';
+    if (el('mmAuc'))        el('mmAuc').textContent        = mm.auc       != null ? fmt(mm.auc, 4)           : '—';
+    if (el('mmF1'))         el('mmF1').textContent         = mm.f1        != null ? fmt(mm.f1, 4)            : '—';
+    if (el('mmNTrain'))     el('mmNTrain').textContent     = mm.n_train   != null ? mm.n_train.toLocaleString('pt-BR') : '—';
+    if (el('mmNTest'))      el('mmNTest').textContent      = mm.n_test    != null ? mm.n_test.toLocaleString('pt-BR')  : '—';
+    if (el('mmTimestamp'))  el('mmTimestamp').textContent  = mm.timestamp ? new Date(mm.timestamp).toLocaleString('pt-BR') : '—';
+    if (el('mmAccuracy')) {
+      el('mmAccuracy').style.color = mm.accuracy == null
+        ? '#8b949e'
+        : mm.accuracy >= 0.65 ? '#00ff88' : mm.accuracy >= 0.55 ? '#ffb830' : '#ff4757';
+    }
+
+    // — Risk state —
+    const rs = d.risk_state ?? {};
+    if (rs.pause_remaining_sec > 0) {
+      const rem = rs.pause_remaining_sec;
+      el('consecHint').textContent = `⚠ Pausado — ${Math.floor(rem/60)}m ${rem%60}s`;
+    }
+  } catch (_) {
+    _pollFailures++;
+    if (_pollFailures >= 3) _updateConnectionBanner(true);
+  }
+}
+
+// ─── Notificações de eventos críticos ────────────────────────────────────────
+
+const _notifState = { paused: false, stopLoss: false, drift: false };
+
+function _checkCriticalEvents(summary, riskState) {
+  if (!('Notification' in window)) return;
+  const hasPerm = Notification.permission === 'granted';
+
+  function _notify(title, body) {
+    if (hasPerm) new Notification(title, { body });
+    showToast(`🔔 ${title}: ${body}`, 'err');
+  }
+
+  const isPaused = summary.is_paused || (riskState.pause_remaining_sec > 0);
+  if (isPaused && !_notifState.paused) {
+    _notifState.paused = true;
+    _notify('Bot Pausado', 'Losses consecutivos atingiram o limite.');
+  } else if (!isPaused) {
+    _notifState.paused = false;
+  }
+
+  const stopHit = (summary.pnl_pct ?? 0) <= -25;
+  if (stopHit && !_notifState.stopLoss) {
+    _notifState.stopLoss = true;
+    _notify('Stop Diário Atingido', `PnL: ${fmtPct(summary.pnl_pct)}`);
+  } else if (!stopHit) {
+    _notifState.stopLoss = false;
+  }
+
+  const hasDrift = riskState.drift_detected;
+  if (hasDrift && !_notifState.drift) {
+    _notifState.drift = true;
+    _notify('Drift Detectado', `Win rate recente abaixo do mínimo.`);
+  } else if (!hasDrift) {
+    _notifState.drift = false;
+  }
+}
+
+// ─── Mobile sidebar toggle ──────────────────────────────────────────────────
+
+function _closeMobileSidebar() {
+  const sidebar = el('sidebar');
+  const overlay = el('sidebarOverlay');
+  const btn = el('hamburgerBtn');
+  if (sidebar) sidebar.classList.remove('open');
+  if (overlay) overlay.classList.remove('visible');
+  if (btn) btn.classList.remove('open');
+}
+
+function _toggleMobileSidebar() {
+  const sidebar = el('sidebar');
+  const overlay = el('sidebarOverlay');
+  const btn = el('hamburgerBtn');
+  const isOpen = sidebar?.classList.toggle('open');
+  if (overlay) overlay.classList.toggle('visible', isOpen);
+  if (btn) btn.classList.toggle('open', isOpen);
+}
+
+// Attach hamburger and overlay listeners once DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  el('hamburgerBtn')?.addEventListener('click', _toggleMobileSidebar);
+  el('sidebarOverlay')?.addEventListener('click', _closeMobileSidebar);
+});
+
+// Resize charts on orientation change
+window.addEventListener('resize', () => {
+  Object.values(state.charts).forEach(c => c?.resize?.());
+  if (typeof _profitDistChart !== 'undefined' && _profitDistChart) _profitDistChart.resize();
+});
+
+// ─── Banner de conexão perdida ────────────────────────────────────────────────
+
+function _updateConnectionBanner(show) {
+  let banner = el('connectionBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'connectionBanner';
+    banner.className = 'connection-banner';
+    banner.textContent = '⚠ Conexão perdida com o servidor';
+    document.getElementById('topbar')?.appendChild(banner);
+  }
+  banner.style.display = show ? '' : 'none';
+}
+
+// ─── Função compartilhada para aplicar indicadores aos elementos ─────────────
+
+function _applyIndicators(d) {
+    el('indEma9').textContent  = fmt(d.ema9, 4);
+    el('indEma21').textContent = fmt(d.ema21, 4);
+    el('indRsi').textContent   = fmt(d.rsi, 1);
+    el('indAdx').textContent   = fmt(d.adx, 1);
+    el('indMacd').textContent  = (d.macd_hist >= 0 ? '+' : '') + fmt(d.macd_hist, 5);
+    const adxPct = Math.min((d.adx / 100) * 100, 100);
+    el('adxBar').style.width = adxPct + '%';
+    el('adxValue').textContent = fmt(d.adx, 1);
+    const adxBadge = el('adxBadge');
+    if (d.adx >= 20) { adxBadge.textContent = 'Tendência'; adxBadge.style.background = 'rgba(0,255,136,0.15)'; adxBadge.style.color = '#00ff88'; }
+    else { adxBadge.textContent = 'Lateral'; adxBadge.style.background = 'rgba(255,184,48,0.15)'; adxBadge.style.color = '#ffb830'; }
+    el('rsiValue').textContent = fmt(d.rsi, 1);
+    el('rsiValue').style.color = d.rsi > 65 ? '#ff4757' : d.rsi < 35 ? '#00ff88' : '#e6edf3';
+    el('macdValue').textContent = (d.macd_hist >= 0 ? '+' : '') + fmt(d.macd_hist, 5);
+    el('macdValue').style.color = d.macd_hist >= 0 ? '#00ff88' : '#ff4757';
+    const mc = d.market_condition || 'unknown';
+    const mcEl = el('marketCondBadge');
+    mcEl.textContent = mc.charAt(0).toUpperCase() + mc.slice(1);
+    mcEl.className = 'market-cond-badge ' + (mc === 'trending' ? 'trending' : 'lateral');
+    const conf = d.ai_confidence ?? 0;
+    const dashOffset = 157 - (conf * 157);
+    el('gaugeFill').style.strokeDashoffset = dashOffset;
+    el('gaugeFill').style.stroke = conf >= 0.58 ? '#00ff88' : conf >= 0.45 ? '#ffb830' : '#ff4757';
+    el('gaugeValue').textContent = fmtPct(conf * 100);
+    el('gaugeLabel').textContent = conf >= 0.58 ? 'Confiável' : 'Baixa confiança';
+    const score = d.ai_score ?? 0;
+    el('aiScoreBar').style.width = (score * 100) + '%';
+    el('aiScoreVal').textContent = fmt(score, 3);
+    // Série para gráficos RSI/MACD
+    const now = Date.now();
+    state.rsiSeries.push({ x: now, y: d.rsi });
+    state.macdSeries.push({ x: now, y: d.macd_hist });
+    if (state.rsiSeries.length > 60) state.rsiSeries.shift();
+    if (state.macdSeries.length > 60) state.macdSeries.shift();
+    state.charts.rsi.data.datasets[0].data = [...state.rsiSeries];
+    state.charts.rsi.update('none');
+    state.charts.macd.data.datasets[0].data = [...state.macdSeries];
+    state.charts.macd.update('none');
+}
+
 async function pollBotStatus() {
   try {
-    const r = await fetch('/api/bot/status');
+    const r = await fetch(API_BASE_URL + '/api/bot/status');
     const d = await r.json();
 
     state.botRunning = d.running;
@@ -272,7 +726,7 @@ async function pollBotStatus() {
       el('logBotStatus').className   = 'log-stat log-bot-indicator running';
       el('cardStatus').textContent = 'RODANDO';
       el('cardStatus').className   = 'card-value positive';
-      el('cardStatusSub').textContent = d.uptime_sec ? fmtUptime(d.uptime_sec) : '—';
+      el('cardStatusSub').textContent = fmtUptime(d.uptime_sec);
     } else {
       led.className  = 'status-led stopped';
       text.textContent = 'Parado';
@@ -287,11 +741,12 @@ async function pollBotStatus() {
   } catch (_) {}
 }
 
+
 // ─── Polling: Summary ─────────────────────────────────────────────────────────
 
 async function pollSummary() {
   try {
-    const r = await fetch('/api/summary');
+    const r = await fetch(API_BASE_URL + '/api/summary');
     const d = await r.json();
 
     // Saldo
@@ -308,10 +763,12 @@ async function pollSummary() {
     el('cardWinRate').textContent = fmtPct(d.win_rate);
     el('cardWinRateSub').textContent = `${d.wins} / ${d.total_trades} trades`;
 
-    // IA & Risco — drawdown
-    const dd = Math.min(Math.abs(d.drawdown_pct ?? 0) / 25 * 100, 100);
+    // IA & Risco — drawdown diário (risk_state)
+    const ddPct = Math.abs(d.risk_state?.daily_pnl_pct ?? 0);
+    const dd = Math.min(ddPct / 25 * 100, 100);
     el('drawdownBar').style.width = dd + '%';
-    el('drawdownVal').textContent = fmtPct(d.drawdown_pct ?? 0);
+    el('drawdownBar').style.background = ddPct > 20 ? 'var(--red)' : ddPct > 10 ? 'var(--yellow)' : 'var(--green)';
+    el('drawdownVal').textContent = fmtPct(-(d.risk_state?.daily_pnl_pct ?? 0));
 
     // Losses consecutivos
     const cl = d.consec_losses ?? 0;
@@ -341,10 +798,32 @@ async function pollSummary() {
 
 async function pollTicks() {
   try {
-    const r = await fetch('/api/ticks?n=300');
+    const r = await fetch(API_BASE_URL + '/api/ticks?n=300');
     const ticks = await r.json();
 
     if (ticks.length) updatePriceChart(ticks);
+  } catch (_) {}
+}
+
+async function pollContractRealtime() {
+  try {
+    const resp = await fetch(API_BASE_URL + '/api/contract-active', { cache: 'no-store' });
+    const c = await resp.json();
+
+    if (!c || !c.has_active) {
+      state.activeContract = null;
+      updateRtContractChart([], null);
+      return;
+    }
+
+    state.activeContract = c;
+    const params = new URLSearchParams({ n: '600' });
+    if (c.symbol) params.set('symbol', c.symbol);
+    if (c.entry_epoch) params.set('from_epoch', String(c.entry_epoch));
+
+    const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
+    const ticks = await rTicks.json();
+    updateRtContractChart(Array.isArray(ticks) ? ticks : [], c);
   } catch (_) {}
 }
 
@@ -352,7 +831,7 @@ async function pollTicks() {
 
 async function pollEquity() {
   try {
-    const r = await fetch('/api/equity');
+    const r = await fetch(API_BASE_URL + '/api/equity');
     const data = await r.json();
     updateEquityChart(data);
   } catch (_) {}
@@ -362,7 +841,7 @@ async function pollEquity() {
 
 async function pollIndicators() {
   try {
-    const r = await fetch('/api/indicators');
+    const r = await fetch(API_BASE_URL + '/api/indicators');
     const d = await r.json();
     if (!Object.keys(d).length) return;
 
@@ -437,7 +916,7 @@ async function pollIndicators() {
 
 async function pollModel() {
   try {
-    const r = await fetch('/api/model');
+    const r = await fetch(API_BASE_URL + '/api/model');
     const d = await r.json();
 
     el('infoTicks').textContent   = d.ticks_count?.toLocaleString('pt-BR') ?? '—';
@@ -460,7 +939,7 @@ async function pollModel() {
 async function loadHistory() {
   const n = el('histCount')?.value || 50;
   try {
-    const r = await fetch(`/api/trades?n=${n}`);
+    const r = await fetch(`${API_BASE_URL}/api/trades?n=${n}`);
     state.allTrades = await r.json();
     renderHistory();
   } catch (_) {}
@@ -516,6 +995,14 @@ function updateRecentDots(containerId) {
   container.innerHTML = recent.length
     ? recent.map(t => `<div class="tdot ${t.result === 'WIN' ? 'win' : 'loss'}" title="${t.result} — ${fmtUsd(t.profit)}"></div>`).join('')
     : '<span style="color:var(--text-dim);font-size:12px">Sem operações</span>';
+  if (containerId === 'recentTradesDots') {
+    const wins   = recent.filter(t => t.result === 'WIN').length;
+    const losses = recent.length - wins;
+    const wc = el('recentWinCount');
+    const lc = el('recentLossCount');
+    if (wc) wc.textContent = wins;
+    if (lc) lc.textContent = losses;
+  }
 }
 
 // ─── Filtros do histórico ─────────────────────────────────────────────────────
@@ -614,7 +1101,7 @@ function _updatePhaseUI(activePhaseId) {
 
 async function pollStartupLogs() {
   try {
-    const r = await fetch('/api/bot/logs');
+    const r = await fetch(API_BASE_URL + '/api/bot/logs');
     const d = await r.json();
     const lines = d.lines || [];
 
@@ -668,18 +1155,26 @@ function stopStartupPolling() {
 }
 
 // Quick Start: inicia no modo demo com valores padr\u00e3o, sem precisar da modal
+function _authHeaders(extra = {}) {
+  const token = (el('authToken') ? el('authToken').value.trim() : '') ||
+                localStorage.getItem('dashboardToken') || '';
+  if (token) localStorage.setItem('dashboardToken', token);
+  return { 'Content-Type': 'application/json', ...(token ? { 'X-Auth-Token': token } : {}), ...extra };
+}
+
 async function quickStart() {
   closeStartModal();
   try {
-    const r = await fetch('/api/bot/start', {
+    const r = await fetch(API_BASE_URL + '/api/bot/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: _authHeaders(),
       body: JSON.stringify({ mode: 'demo', balance: 1000, skip_collect: false }),
     });
     const d = await r.json();
     if (d.ok) {
       showToast(`Bot iniciado (PID ${d.pid}) \u2014 Demo $1000`, 'ok');
       startStartupPolling();
+      pollState();
     } else {
       showToast('Erro: ' + d.msg, 'err');
     }
@@ -689,24 +1184,33 @@ async function quickStart() {
 }
 async function confirmStart() {
   closeStartModal();
-  const mode        = el('modeSelect').value;
-  const balance     = parseFloat(el('balanceInput').value) || 1000;
-  const skipCollect = el('skipCollect').checked;
+  const mode            = el('modeSelect').value;
+  const balance         = parseFloat(el('balanceInput').value) || 1000;
+  const skipCollect     = el('skipCollect').checked;
+  const noScan          = el('noScan') ? el('noScan').checked : false;
+  const retrainInterval = el('retrainInterval') ? (parseInt(el('retrainInterval').value) || 10) : 10;
+  const minTicks        = el('minTicks') ? (parseInt(el('minTicks').value) || 500) : 500;
+  const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 500) : 500;
+  const forceRetrain    = el('forceRetrain') ? el('forceRetrain').checked : false;
 
   if (mode === 'real') {
     if (!confirm('⚠ Modo REAL usa dinheiro real. Confirma?')) return;
   }
 
   try {
-    const r = await fetch('/api/bot/start', {
+    const r = await fetch(API_BASE_URL + '/api/bot/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, balance, skip_collect: skipCollect }),
+      headers: _authHeaders(),
+      body: JSON.stringify({ mode, balance, skip_collect: skipCollect,
+        no_scan: noScan, retrain_interval: retrainInterval,
+        min_ticks: minTicks, history_count: historyCount,
+        force_retrain: forceRetrain }),
     });
     const d = await r.json();
     if (d.ok) {
       showToast(`Bot iniciado (PID ${d.pid}) — modo ${mode}`, 'ok');
       startStartupPolling();
+      pollState();
     } else {
       showToast('Erro: ' + d.msg, 'err');
     }
@@ -718,7 +1222,7 @@ async function confirmStart() {
 async function botStop() {
   if (!confirm('Parar o bot?')) return;
   try {
-    const r = await fetch('/api/bot/stop', { method: 'POST' });
+    const r = await fetch(API_BASE_URL + '/api/bot/stop', { method: 'POST', headers: _authHeaders() });
     const d = await r.json();
     if (d.ok) {
       showToast('Bot encerrado.', 'ok');
@@ -736,7 +1240,7 @@ let _allLogLines = [];
 
 async function pollLogs() {
   try {
-    const r = await fetch('/api/bot/logs');
+    const r = await fetch(API_BASE_URL + '/api/bot/logs');
     const d = await r.json();
     _allLogLines = d.lines || [];
     renderLogs();
@@ -784,34 +1288,232 @@ function clearLogs() {
   if (logLineCount) logLineCount.textContent = '0 linhas';
 }
 
+// ─── Polling: Estatísticas avançadas ─────────────────────────────────────────
+
+let _profitDistChart = null;
+
+function _initProfitDistChart() {
+  const ctx = el('profitDistChart');
+  if (!ctx) return;
+  _profitDistChart = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Operações',
+        data: [],
+        backgroundColor: d => {
+          const lbl = d.chart.data.labels[d.dataIndex] || '';
+          return lbl.startsWith('-') || lbl.startsWith('<') ? 'rgba(255,71,87,0.75)' : 'rgba(0,255,136,0.75)';
+        },
+        borderRadius: 3,
+      }],
+    },
+    options: {
+      ...baseChartOptions,
+      scales: {
+        x: { ...baseChartOptions.scales.x, ticks: { maxRotation: 35, font: { size: 10 } } },
+        y: { ...baseChartOptions.scales.y, ticks: { maxTicksLimit: 5 } },
+      },
+    },
+  });
+}
+
+async function pollStats() {
+  try {
+    const r = await fetch(API_BASE_URL + '/api/stats');
+    const d = await r.json();
+    if (!d || d.error) return;
+
+    const pf = d.profit_factor;
+    el('statProfitFactor').textContent = pf != null ? fmt(pf, 2) : '∞';
+    el('statProfitFactor').style.color = pf == null || pf >= 1.2 ? '#00ff88' : pf >= 1.0 ? '#ffb830' : '#ff4757';
+
+    el('statExpectancy').textContent = (d.expectancy >= 0 ? '+' : '') + fmtUsd(d.expectancy);
+    el('statExpectancy').style.color = d.expectancy >= 0 ? '#00ff88' : '#ff4757';
+
+    el('statAvgWin').textContent = '+' + fmtUsd(d.avg_win);
+    el('statAvgWin').style.color = '#00ff88';
+    el('statGrossProfit').textContent = 'Bruto: +' + fmtUsd(d.gross_profit);
+
+    el('statAvgLoss').textContent = fmtUsd(d.avg_loss);
+    el('statAvgLoss').style.color = '#ff4757';
+    el('statGrossLoss').textContent = 'Bruto: -' + fmtUsd(d.gross_loss);
+
+    // Distribuição de profit
+    if (_profitDistChart && d.hist_labels) {
+      _profitDistChart.data.labels = d.hist_labels;
+      _profitDistChart.data.datasets[0].data = d.hist_counts;
+      _profitDistChart.update('none');
+    }
+
+    // Por direção
+    const wrap = el('dirStatsWrap');
+    if (wrap && d.by_direction) {
+      const entries = Object.entries(d.by_direction);
+      if (!entries.length) {
+        wrap.innerHTML = '<div class="candle-pattern-empty">Sem dados</div>';
+      } else {
+        wrap.innerHTML = entries.map(([dir, s]) => `
+          <div class="dir-stat-row">
+            <span class="dir-badge dir-${dir.toLowerCase()}">${dir}</span>
+            <div class="dir-stat-detail">
+              <span>${s.total} trades &nbsp;|&nbsp; WR ${fmtPct(s.wr)}</span>
+              <span class="${s.profit >= 0 ? 'positive' : 'negative'}">${(s.profit >= 0 ? '+' : '') + fmtUsd(s.profit)}</span>
+            </div>
+            <div class="dir-wr-bar-bg"><div class="dir-wr-bar-fill" style="width:${s.wr}%"></div></div>
+          </div>`).join('');
+      }
+    }
+  } catch (_) {}
+}
+
+// ─── Polling: Métricas do modelo ─────────────────────────────────────────────
+
+async function pollModelMetrics() {
+  try {
+    const r = await fetch(API_BASE_URL + '/api/model-metrics', { cache: 'no-store' });
+    const d = await r.json();
+    if (!d || !d.best_model) {
+      const noData = 'Modelo ainda não treinado';
+      ['mmBestModel','mmAccuracy','mmAuc','mmF1','mmNTrain','mmNTest','mmTimestamp']
+        .forEach(id => { if (el(id) && el(id).textContent === '—') el(id).textContent = noData; });
+      if (el('mmBestModel')) el('mmBestModel').textContent = noData;
+      if (el('mmTimestamp')) el('mmTimestamp').textContent = '—';
+      return;
+    }
+    if (el('mmBestModel'))   el('mmBestModel').textContent   = d.best_model;
+    if (el('mmAccuracy'))    el('mmAccuracy').textContent    = d.accuracy != null ? fmtPct(d.accuracy * 100) : '—';
+    if (el('mmAuc'))         el('mmAuc').textContent         = d.auc       != null ? fmt(d.auc, 4)          : '—';
+    if (el('mmF1'))          el('mmF1').textContent          = d.f1        != null ? fmt(d.f1, 4)           : '—';
+    if (el('mmNTrain'))      el('mmNTrain').textContent      = d.n_train   != null ? d.n_train.toLocaleString('pt-BR') : '—';
+    if (el('mmNTest'))       el('mmNTest').textContent       = d.n_test    != null ? d.n_test.toLocaleString('pt-BR')  : '—';
+    if (el('mmTimestamp'))   el('mmTimestamp').textContent   = d.timestamp ? new Date(d.timestamp).toLocaleString('pt-BR') : '—';
+
+    // Colorir acurácia
+    if (el('mmAccuracy') && d.accuracy != null) {
+      el('mmAccuracy').style.color = d.accuracy >= 0.65 ? '#00ff88' : d.accuracy >= 0.55 ? '#ffb830' : '#ff4757';
+    }
+  } catch (_) {}
+}
+
+// ─── Polling: CPU/RAM do sistema ─────────────────────────────────────────────
+
+async function pollSystem() {
+  try {
+    const r = await fetch(API_BASE_URL + '/api/system');
+    const d = await r.json();
+
+    function _setBar(barId, valId, pct, suffix, isBot = false) {
+      const bar = el(barId);
+      const val = el(valId);
+      if (!bar || !val || pct == null) return;
+      bar.style.width = Math.min(pct, 100) + '%';
+      bar.style.background = pct > 85 ? '#ff4757' : pct > 65 ? '#ffb830' : isBot ? '#58a6ff' : '#00ff88';
+      val.textContent = fmt(pct, 1) + suffix;
+    }
+
+    _setBar('sysCpuBar', 'sysCpuVal', d.cpu_pct, '%');
+    _setBar('sysRamBar', 'sysRamVal', d.ram_pct, `% (${fmt(d.ram_used_mb, 0)} MB)`);
+    _setBar('sysDiskBar', 'sysDiskVal', d.disk_pct, '%');
+    _setBar('botCpuBar', 'botCpuVal', d.bot_cpu_pct, '%', true);
+
+    const botRamBar = el('botRamBar');
+    const botRamVal = el('botRamVal');
+    if (botRamBar && botRamVal && d.bot_ram_mb != null) {
+      botRamBar.style.width = Math.min(d.bot_ram_mb / 5, 100) + '%';
+      botRamBar.style.background = '#58a6ff';
+      botRamVal.textContent = fmt(d.bot_ram_mb, 1) + ' MB';
+    }
+  } catch (_) {}
+}
+
 // ─── Inicialização ────────────────────────────────────────────────────────────
 
 function init() {
+  // Restore saved auth token into field if present
+  const savedToken = localStorage.getItem('dashboardToken');
+  if (savedToken && el('authToken')) el('authToken').value = savedToken;
+
+  // Solicitar permissão para notificações push
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
   initEquityChart();
   initPriceChart();
+  initRtContractChart();
   initRsiChart();
   initMacdChart();
+  _initProfitDistChart();
 
-  // Primeira carga
-  pollBotStatus();
-  pollSummary();
+  // Primeira carga (estado consolidado + outros)
+  pollState();
   pollTicks();
+  pollContractRealtime();
   pollEquity();
-  pollIndicators();
-  pollModel();
+  pollCandles();
   loadHistory();
+  pollModelMetrics();
+  pollStats();
+  pollSystem();
 
-  // Polls contínuos
-  setInterval(pollBotStatus,  POLL_STATUS);
-  setInterval(pollSummary,    POLL_SUMMARY);
-  setInterval(pollTicks,      POLL_TICKS);
-  setInterval(pollEquity,     POLL_SUMMARY);
-  setInterval(pollIndicators, POLL_IND);
-  setInterval(pollModel,      POLL_MODEL);
-  setInterval(loadHistory,    POLL_TRADES);
+  // Polls contínuos — pollState() substitui pollBotStatus + pollSummary + pollIndicators + pollModel
+  setInterval(pollState,    POLL_SUMMARY);
+  setInterval(pollTicks,    POLL_TICKS);
+  setInterval(pollContractRealtime, POLL_CONTRACT);
+  setInterval(pollEquity,   POLL_SUMMARY);
+  setInterval(pollCandles,  POLL_TICKS);
+  setInterval(loadHistory,  POLL_TRADES);
+  setInterval(pollCandlePatterns, POLL_IND);
+  setInterval(pollModelMetrics, POLL_MODEL);
+  setInterval(pollStats,    POLL_TRADES);
+  setInterval(pollSystem,   5_000);
 
   pollLogs();
   setInterval(pollLogs, POLL_LOGS);
+}
+
+
+// ─── Candle Patterns ───────────────────────────────────────────
+
+async function pollCandlePatterns() {
+  try {
+    const res = await fetch(API_BASE_URL + '/api/candle-patterns');
+    const data = await res.json();
+
+    const wraps = [
+      document.getElementById('candlePatternsWrap'),
+      document.getElementById('candlePatternsWrapOverview'),
+    ];
+
+    for (const wrap of wraps) {
+      if (!wrap) continue;
+
+      if (!Array.isArray(data) || data.length === 0) {
+        wrap.innerHTML = '<div class="candle-pattern-empty">Nenhum padrão detectado</div>';
+        continue;
+      }
+
+      wrap.innerHTML = data.map(p => {
+        const icon = { bullish: '🟢', bearish: '🔴', neutral: '🟡' }[p.direction] || '⚪';
+        const strengthPct = Math.round(p.strength * 100);
+        const barColor = p.direction === 'bullish' ? '#00ff88' : p.direction === 'bearish' ? '#ff4466' : '#ffb830';
+        return `
+          <div class="candle-pattern-item">
+            <span class="cp-icon">${icon}</span>
+            <div class="cp-info">
+              <div class="cp-name">${p.name}</div>
+              <div class="cp-meta">Força: ${strengthPct}% ${p.context ? '| ' + p.context : ''}</div>
+              <div class="cp-bar"><div class="cp-bar-fill" style="width:${strengthPct}%;background:${barColor}"></div></div>
+            </div>
+            <span class="cp-price">${p.price}</span>
+          </div>`;
+      }).join('');
+    }
+  } catch (e) {
+    // silenciar erros de polling
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -13,6 +13,7 @@ Uso:
 Pressione Ctrl+C para encerrar. A reconexão é automática (intervalo 5s).
 """
 
+import collections
 import csv
 import json
 import os
@@ -28,7 +29,9 @@ WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 _tick_count = 0
 _ws_instance = None
 _last_price: float = 0.0          # P2: referência para detecção de spike
-_seen_epochs: set = set()          # P5: deduplicação por epoch
+# P5: deduplicação — guarda os últimos 10.000 epochs sem nunca limpar tudo de uma vez
+_seen_epochs_deque: collections.deque = collections.deque(maxlen=10_000)
+_seen_epochs_set: set = set()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -60,7 +63,7 @@ def on_open(ws) -> None:
 
 
 def on_message(ws, message: str) -> None:
-    global _tick_count, _last_price, _seen_epochs
+    global _tick_count, _last_price, _seen_epochs_deque, _seen_epochs_set
 
     data = json.loads(message)
 
@@ -79,11 +82,15 @@ def on_message(ws, message: str) -> None:
         dt_str    = datetime.fromtimestamp(epoch).isoformat()
 
         # P5: deduplicação — ignora ticks já vistos (ex: reconexão)
-        if epoch in _seen_epochs:
+        # deque com maxlen=10_000 descarta automaticamente os mais antigos
+        if epoch in _seen_epochs_set:
             return
-        _seen_epochs.add(epoch)
-        if len(_seen_epochs) > 10_000:
-            _seen_epochs.clear()
+        # Se deque chegou ao limite, remove o epoch mais antigo do set auxiliar
+        if len(_seen_epochs_deque) == _seen_epochs_deque.maxlen:
+            oldest = _seen_epochs_deque[0]
+            _seen_epochs_set.discard(oldest)
+        _seen_epochs_deque.append(epoch)
+        _seen_epochs_set.add(epoch)
 
         # P2: rejeitar spikes (variação > TICK_SPIKE_THRESHOLD)
         if not _is_valid_tick(_last_price, price):

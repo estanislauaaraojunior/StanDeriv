@@ -16,6 +16,7 @@ import json
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 import websocket
@@ -27,10 +28,15 @@ from config import (
     PRICE_BUFFER_SIZE,
     PROPOSAL_TIMEOUT_SEC,
     HEARTBEAT_TIMEOUT_SEC,
+    CANDLE_SIZE, CANDLE_NOTIFY, PA_SR_TOLERANCE,
 )
 from risk_manager import RiskManager
 from strategy import get_signal, get_adaptive_adx_min
 import ai_predictor
+import indicators as ind
+
+
+_STATE_JSON = Path(__file__).resolve().parent / "state.json"
 
 
 class DerivBot:
@@ -54,6 +60,10 @@ class DerivBot:
         # P10: Histórico de ADX para cálculo adaptativo do limiar
         self._adx_history: deque = deque(maxlen=500)
 
+        # Alertas de padrões de vela (últimos 20)
+        self._candle_alerts: deque = deque(maxlen=20)
+        self._candle_tick_counter: int = 0
+
         # Estado da operação em andamento
         self._in_trade: bool = False
         self._pending_direction: str = ""
@@ -61,6 +71,10 @@ class DerivBot:
         self._pending_duration: int = DURATION
         self._pending_indicators: dict = {}
         self._open_contract_id: Optional[str] = None
+        self._entry_price: float = 0.0
+        self._entry_epoch: int = 0
+        self._last_tick_price: float = 0.0
+        self._last_tick_epoch: int = 0
 
         # P1: Timestamp da última proposal enviada (detecta proposals sem resposta)
         self._pending_timestamp: float = 0.0
@@ -80,12 +94,40 @@ class DerivBot:
 
         self._ws: Optional[websocket.WebSocketApp] = None
 
+    def _set_active_contract_state(self, clear: bool = False) -> None:
+        """Sincroniza contrato ativo no state.json para consumo do dashboard."""
+        try:
+            state = {}
+            if _STATE_JSON.exists() and _STATE_JSON.stat().st_size > 0:
+                with _STATE_JSON.open("r", encoding="utf-8") as f:
+                    state = json.load(f)
+
+            if clear:
+                state["active_contract"] = None
+            else:
+                state["active_contract"] = {
+                    "has_active": True,
+                    "contract_id": self._open_contract_id,
+                    "symbol": SYMBOL,
+                    "direction": self._pending_direction,
+                    "duration": self._pending_duration,
+                    "buy_timestamp": self._buy_timestamp,
+                    "entry_epoch": self._entry_epoch,
+                    "entry_price": self._entry_price,
+                }
+
+            with _STATE_JSON.open("w", encoding="utf-8") as f:
+                json.dump(state, f)
+        except Exception:
+            pass
+
     # ─────────────────────────────────────────────────────────
     #  API pública
     # ─────────────────────────────────────────────────────────
 
     def run(self) -> None:
         """Inicia o bot. Bloqueia até encerramento."""
+        self._set_active_contract_state(clear=True)
         mode = "DEMO" if self.demo else "REAL 💸"
         print(f"\n{'=' * 55}")
         print(f"  Deriv Trading Bot — Modo: {mode}")
@@ -160,6 +202,11 @@ class DerivBot:
 
     def _handle_tick(self, ws, tick: dict) -> None:
         price = float(tick["quote"])
+        self._last_tick_price = price
+        try:
+            self._last_tick_epoch = int(tick.get("epoch", 0) or 0)
+        except Exception:
+            self._last_tick_epoch = 0
         self._prices.append(price)
 
         # P9: Reiniciar watchdog a cada tick recebido
@@ -170,6 +217,12 @@ class DerivBot:
         if n < MIN_TICKS:
             print(f"\r[BOT] Aquecendo... {n}/{MIN_TICKS} ticks", end="", flush=True)
             return
+
+        # Verificar padrões de vela a cada CANDLE_SIZE ticks
+        self._candle_tick_counter += 1
+        if self._candle_tick_counter >= CANDLE_SIZE:
+            self._candle_tick_counter = 0
+            self._check_candle_patterns(price)
 
         # Incrementa o contador de ticks desde a última entrada
         self._ticks_since_last_entry += 1
@@ -196,6 +249,9 @@ class DerivBot:
                 self._in_trade = False
                 self._open_contract_id = None
                 self._buy_timestamp = 0.0
+                self._entry_price = 0.0
+                self._entry_epoch = 0
+                self._set_active_contract_state(clear=True)
 
         # Não abrir nova ordem se já há contrato ativo
         if self._in_trade:
@@ -204,10 +260,14 @@ class DerivBot:
         if not self.risk_manager.can_trade():
             return
 
-        # Cadência: 1ª entrada imediata (histórico 500 candles já treinado),
-        # depois aguarda ENTRY_TICK_INTERVAL ticks entre cada entrada.
-        if self._ticks_since_last_entry < ENTRY_TICK_INTERVAL:
-            remaining = ENTRY_TICK_INTERVAL - self._ticks_since_last_entry
+        # Cadência adaptativa: ajustar intervalo com base no desempenho
+        adaptive_interval = ENTRY_TICK_INTERVAL
+        if hasattr(self.risk_manager, "consecutive_losses"):
+            if self.risk_manager.consecutive_losses >= 2:
+                adaptive_interval = int(ENTRY_TICK_INTERVAL * 1.5)
+
+        if self._ticks_since_last_entry < adaptive_interval:
+            remaining = adaptive_interval - self._ticks_since_last_entry
             print(
                 f"\r[BOT] {price:.4f} | Próxima entrada em {remaining} ticks   ",
                 end="", flush=True,
@@ -217,7 +277,7 @@ class DerivBot:
         # P10: Calcular ADX mínimo adaptativo e armazenar histórico
         prices_list = list(self._prices)
         adx_min = get_adaptive_adx_min(list(self._adx_history))
-        signal, indicators = get_signal(prices_list, adx_min=adx_min)
+        signal, indicators = get_signal(prices_list, adx_min=adx_min, adx_history=list(self._adx_history))
 
         # Atualizar histórico de ADX para próximas chamadas
         if indicators.get("adx"):
@@ -269,6 +329,9 @@ class DerivBot:
         self._open_contract_id = contract_id
         self._pending_timestamp = 0.0          # P1: proposal foi aceita, limpar timeout
         self._buy_timestamp = time.time()      # P7: marcar abertura do contrato
+        self._entry_price = self._last_tick_price
+        self._entry_epoch = self._last_tick_epoch
+        self._set_active_contract_state(clear=False)
         print(f"[BOT] Contrato aberto | ID: {contract_id}")
 
         # Subscrever atualizações do contrato para capturar o resultado
@@ -311,6 +374,9 @@ class DerivBot:
         self._in_trade         = False
         self._open_contract_id = None
         self._buy_timestamp    = 0.0  # P7: limpar após contrato encerrado
+        self._entry_price      = 0.0
+        self._entry_epoch      = 0
+        self._set_active_contract_state(clear=True)
 
         # P13: cancelar poll ativo pois resultado já foi recebido
         if self._contract_poll_timer is not None:
@@ -321,23 +387,33 @@ class DerivBot:
     #  P13 — Poll ativo de resultado de contrato
     # ─────────────────────────────────────────────────────────
 
-    def _poll_contract_result(self, contract_id: str) -> None:
+    def _poll_contract_result(self, contract_id: str, attempt: int = 0) -> None:
         """Consulta pontual (sem subscribe) do estado do contrato.
 
         Disparada após a duração esperada do contrato.  Caso a subscrição
         passiva tenha perdido o evento `is_sold`, esta consulta garante que
         `_handle_contract_update` receberá o resultado e desbloqueará o bot.
+
+        Tenta até 6 vezes (a cada 5 s) antes de desistir e deixar o timeout
+        de 60 s resetar o estado.
         """
         if self._open_contract_id != contract_id:
             return  # contrato já encerrado pelo caminho normal
         ws = self._ws
         if ws is None:
             return
-        print(f"\n[BOT] Poll de resultado para contrato {contract_id}...")
+        print(f"\n[BOT] Poll de resultado para contrato {contract_id} (tentativa {attempt + 1})...")
         ws.send(json.dumps({
             "proposal_open_contract": 1,
             "contract_id":           int(contract_id),
         }))
+        # Reagendar enquanto o contrato ainda não foi resolvido (máx 6 tentativas)
+        if attempt < 5:
+            self._contract_poll_timer = threading.Timer(
+                5, self._poll_contract_result, args=[contract_id, attempt + 1]
+            )
+            self._contract_poll_timer.daemon = True
+            self._contract_poll_timer.start()
 
     # ─────────────────────────────────────────────────────────
     #  P9 — Watchdog de heartbeat
@@ -356,6 +432,66 @@ class DerivBot:
             f"\n[SAÚDE] Nenhum tick recebido por {HEARTBEAT_TIMEOUT_SEC}s "
             "— WebSocket pode estar morto ou mercado fechado"
         )
+
+    # ─────────────────────────────────────────────────────────
+    #  Detecção de padrões de vela
+    # ─────────────────────────────────────────────────────────
+
+    def _check_candle_patterns(self, current_price: float) -> None:
+        """Verifica padrões de vela e exibe notificação no terminal."""
+        if not CANDLE_NOTIFY:
+            return
+
+        prices_list = list(self._prices)
+        candles = ind.ticks_to_candles(prices_list, CANDLE_SIZE)
+        if len(candles) < 4:
+            return
+
+        patterns = ind.detect_candle_patterns(candles)
+        pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
+
+        for p in patterns:
+            if p["strength"] < 0.5:
+                continue
+
+            # Contexto PA
+            context_parts = []
+            if pa is not None:
+                if pa["pa_demand_zone"] > 0.3:
+                    context_parts.append("Demand Zone")
+                if pa["pa_supply_zone"] > 0.3:
+                    context_parts.append("Supply Zone")
+                if pa["pa_sr_distance"] < 0.3:
+                    if pa["pa_sr_position"] < -0.3:
+                        context_parts.append("Suporte próximo")
+                    elif pa["pa_sr_position"] > 0.3:
+                        context_parts.append("Resistência próxima")
+                if pa["pa_fvg_bullish"] > 0.3:
+                    context_parts.append("FVG Bullish")
+                if pa["pa_fvg_bearish"] > 0.3:
+                    context_parts.append("FVG Bearish")
+
+            context = " + ".join(context_parts) if context_parts else "Sem contexto especial"
+
+            icon = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(p["direction"], "⚪")
+            action_map = {"bullish": "BUY favorecido", "bearish": "SELL favorecido", "neutral": "Aguardar"}
+            action = action_map.get(p["direction"], "")
+
+            alert = {
+                "name": p["name"],
+                "direction": p["direction"],
+                "strength": p["strength"],
+                "price": current_price,
+                "timestamp": time.time(),
+                "context": context,
+            }
+            self._candle_alerts.append(alert)
+
+            print(f"\n[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print(f"  {icon} {p['name']} (força: {p['strength']:.2f})")
+            print(f"  Preço: {current_price:.4f} | Contexto: {context}")
+            print(f"  Ação sugerida: {action}")
+            print(f"[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     # ─────────────────────────────────────────────────────────
     #  Display

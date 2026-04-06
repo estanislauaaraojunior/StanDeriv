@@ -34,20 +34,12 @@ from config import (
     USE_TRANSFORMER, TRANSFORMER_MODEL_PATH,
     TRANSFORMER_BLEND_WEIGHT, TRANSFORMER_SEQ_LEN,
     CANDIDATE_DURATIONS,
+    CANDLE_SIZE, PA_SR_TOLERANCE,
 )
+from feature_engine import compute_feature_map as _fe_compute_feature_map, FEATURES as _FE_FEATURES
 
-# Lista de features — DEVE ser idêntica ao FEATURES em train_model.py
-_FEATURES = [
-    "ema9", "ema21", "ema_cross",
-    "rsi",
-    "macd_line", "macd_hist",
-    "adx",
-    "bb_width", "bb_position",
-    "momentum3",
-    "return_1", "return_3", "return_5",
-    "volatility_10", "volatility_20",
-    "high_low_5",
-]
+# Lista de features — importada de feature_engine (fonte única)
+_FEATURES = _FE_FEATURES
 
 # Singleton: modelo carregado uma única vez
 _model = None
@@ -111,79 +103,8 @@ def _load_model() -> None:
 # ─────────────────────────────────────────────────────────────────
 
 def _compute_feature_map(prices: list) -> Optional[dict]:
-    """
-    Calcula todos os indicadores para uma janela de preços e retorna um dict.
-
-    Fatorado fora de _extract_features para ser reutilizado pelo TFT sem duplicar código.
-    Retorna None se houver dados insuficientes para qualquer indicador.
-    """
-    ema9  = ind.ema(prices, EMA_FAST)
-    ema21 = ind.ema(prices, EMA_SLOW)
-    rsi_v = ind.rsi(prices, RSI_PERIOD)
-    macd_ = ind.macd(prices, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
-    adx_v = ind.adx(prices, ADX_PERIOD)
-    bb_   = ind.bollinger(prices, BB_PERIOD, BB_STD)
-    mom3  = ind.momentum(prices, 3)
-
-    if any(v is None for v in [ema9, ema21, rsi_v, macd_, adx_v, mom3]):
-        return None
-
-    macd_line, _sig, macd_hist = macd_
-    price = prices[-1]
-
-    ema_cross = (ema9 - ema21) / price if price != 0 else 0.0
-
-    bb_width    = 0.0
-    bb_position = 0.0
-    if bb_ is not None:
-        bb_upper, bb_mid, bb_lower = bb_
-        band_range = bb_upper - bb_lower
-        if band_range > 0:
-            bb_width    = band_range / bb_mid if bb_mid != 0 else 0.0
-            bb_position = (price - bb_lower) / band_range
-
-    def _ret(n: int) -> float:
-        if len(prices) <= n:
-            return 0.0
-        p_prev = prices[-1 - n]
-        return (price - p_prev) / p_prev if p_prev != 0 else 0.0
-
-    def _vol(n: int) -> float:
-        slice_ = prices[-n - 1:]
-        if len(slice_) < 2:
-            return 0.0
-        rets = [(slice_[i] - slice_[i - 1]) / slice_[i - 1]
-                for i in range(1, len(slice_))
-                if slice_[i - 1] != 0]
-        if not rets:
-            return 0.0
-        mean_ = sum(rets) / len(rets)
-        var_  = sum((r - mean_) ** 2 for r in rets) / len(rets)
-        return var_ ** 0.5
-
-    last5 = prices[-5:]
-    high5 = max(last5)
-    low5  = min(last5)
-    hl5   = (high5 - low5) / price if price != 0 else 0.0
-
-    return {
-        "ema9":          ema9,
-        "ema21":         ema21,
-        "ema_cross":     ema_cross,
-        "rsi":           rsi_v,
-        "macd_line":     macd_line,
-        "macd_hist":     macd_hist,
-        "adx":           adx_v,
-        "bb_width":      bb_width,
-        "bb_position":   bb_position,
-        "momentum3":     mom3,
-        "return_1":      _ret(1),
-        "return_3":      _ret(3),
-        "return_5":      _ret(5),
-        "volatility_10": _vol(10),
-        "volatility_20": _vol(20),
-        "high_low_5":    hl5,
-    }
+    """Delega para feature_engine.compute_feature_map (fonte única de features)."""
+    return _fe_compute_feature_map(prices)
 
 
 def _extract_features(prices: list) -> Optional[list]:
@@ -281,8 +202,6 @@ def _predict_classical(prices: list) -> tuple:
         else:
             direction, conf = "SELL", p_down
 
-        if conf < AI_CONFIDENCE_MIN:
-            return None, conf
         return direction, conf
     except Exception:
         return None, 0.0
@@ -311,8 +230,6 @@ def _predict_tft(prices: list) -> tuple:
         else:
             direction, conf = "SELL", p_down
 
-        if conf < AI_CONFIDENCE_MIN:
-            return None, conf
         return direction, conf
     except Exception:
         return None, 0.0
@@ -390,16 +307,9 @@ def predict(prices: list) -> tuple:
             return tft_dir, blended
         return None, blended
     else:
-        # Discordância: penaliza 15% no sinal mais confiante
-        if tft_conf >= classical_conf:
-            direction = tft_dir
-            penalized = tft_conf * 0.85
-        else:
-            direction = classical_dir
-            penalized = classical_conf * 0.85
-        if penalized >= AI_CONFIDENCE_MIN:
-            return direction, penalized
-        return None, penalized
+        # Discordância: não operar — modelos divergem
+        blended = tft_conf * blend + classical_conf * (1.0 - blend)
+        return None, blended
 
 
 # ─────────────────────────────────────────────────────────────────

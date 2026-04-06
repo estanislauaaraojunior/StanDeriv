@@ -19,5 +19,6 @@ numpy>=1.26.0
 
 # Dashboard web
 flask>=3.0.0
+flask-cors>=4.0.0
 psutil>=5.9.0
 python-dotenv>=1.0.0

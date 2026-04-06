@@ -31,6 +31,7 @@ from config import (
     USE_AI_MODEL,
     USE_WEIGHTED_SIGNAL, SIGNAL_SCORE_MIN,
     AI_TECH_WEIGHT, AI_MODEL_WEIGHT, AI_SCORE_MIN,
+    CANDLE_SIZE, PA_SR_TOLERANCE,
 )
 import ai_predictor
 
@@ -61,13 +62,14 @@ def get_adaptive_adx_min(adx_history: list) -> float:
 #  Interface pública
 # ─────────────────────────────────────────────────────────────────
 
-def get_signal(prices: list, adx_min: float = ADX_MIN) -> SignalResult:
+def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None) -> SignalResult:
     """
     Avalia o estado do mercado e retorna ("BUY" | "SELL" | None, indicadores).
 
     Args:
-        prices:  lista de floats com histórico de preços
-        adx_min: limiar mínimo de ADX (P10: pode ser adaptativo)
+        prices:      lista de floats com histórico de preços
+        adx_min:     limiar mínimo de ADX (P10: pode ser adaptativo)
+        adx_history: histórico recente de ADX para filtro de tendência crescente
 
     O dict `indicadores` está sempre populado quando há dados suficientes,
     mesmo quando o sinal é None — útil para exibição e logging.
@@ -110,13 +112,21 @@ def get_signal(prices: list, adx_min: float = ADX_MIN) -> SignalResult:
     if adx_val < adx_min:
         return None, indicators
 
-    # ── Filtro 2: RSI — evitar extremos ────────────────────
-    if not (RSI_OVERSOLD <= rsi_val <= RSI_OVERBOUGHT):
-        return None, indicators
+    # ── Filtro ADX rising — tendência perdendo força (limiar suavizado para índices sintéticos) ──
+    if adx_history and len(adx_history) >= 10:
+        adx_avg_recent = sum(adx_history[-10:]) / 10
+        if adx_val < adx_avg_recent * 0.75:
+            indicators["adx_falling"] = True
+            return None, indicators
+
+    # ── Filtro 2: RSI — bloquear sinais contra extremos ─────
+    # RSI < 30 → bloquear BUY (sobrevendido demais para comprar)
+    # RSI > 70 → bloquear SELL (sobrecomprado demais para vender)
+    # Permite BUY com RSI > 65 (momentum forte) e SELL com RSI < 35
 
     # ── P14: Score ponderado (opcional) ────────────────────
     if USE_WEIGHTED_SIGNAL:
-        return _weighted_signal(ema9, ema21, macd_hist, mom, adx_val, last_price, indicators, prices)
+        return _weighted_signal(ema9, ema21, macd_hist, mom, adx_val, rsi_val, last_price, indicators, prices)
 
     # ── Sinal de COMPRA (AND rígido) ─────────────────────────────────────────
     if (
@@ -124,6 +134,7 @@ def get_signal(prices: list, adx_min: float = ADX_MIN) -> SignalResult:
         and last_price > ema9  # preço acima da média rápida
         and macd_hist > 0      # momentum positivo
         and mom > 0            # últimos ticks subindo
+        and rsi_val > 30       # não sobrevendido contra
     ):
         return _apply_ai_filter("BUY", prices, indicators)
 
@@ -133,6 +144,7 @@ def get_signal(prices: list, adx_min: float = ADX_MIN) -> SignalResult:
         and last_price < ema9  # preço abaixo da média rápida
         and macd_hist < 0      # momentum negativo
         and mom < 0            # últimos ticks caindo
+        and rsi_val < 70       # não sobrecomprado contra
     ):
         return _apply_ai_filter("SELL", prices, indicators)
 
@@ -146,28 +158,43 @@ def get_signal(prices: list, adx_min: float = ADX_MIN) -> SignalResult:
 
 def _weighted_signal(
     ema9: float, ema21: float, macd_hist: float, mom: float,
-    adx_val: float, price: float, indicators: dict, prices: list,
+    adx_val: float, rsi_val: float, price: float, indicators: dict, prices: list,
 ) -> SignalResult:
     """
-    Gera sinal via score ponderado (USE_WEIGHTED_SIGNAL=True).
+    Gera sinal via score contínuo ponderado (USE_WEIGHTED_SIGNAL=True).
 
-    Pesos: EMA cross 30% | preço vs EMA 20% | MACD 25% | momentum 15% | ADX 10%
+    Scores contínuos (-1 a +1) ao invés de binários:
+      EMA cross 30% | MACD 25% | preço vs EMA 20% | momentum 15% | ADX 10%
     """
-    ema_up    = 1.0 if ema9 > ema21       else 0.0
-    price_up  = 1.0 if price > ema9       else 0.0
-    macd_up   = 1.0 if macd_hist > 0      else 0.0
-    mom_up    = 1.0 if mom > 0            else 0.0
-    adx_norm  = min(adx_val / 40.0, 1.0)  # normalizar ADX em [0, 1]
+    eps = 1e-12
 
-    buy_score  = ema_up * 0.30 + price_up * 0.20 + macd_up * 0.25 + mom_up * 0.15 + adx_norm * 0.10
-    sell_score = (1.0 - ema_up) * 0.30 + (1.0 - price_up) * 0.20 + \
-                 (1.0 - macd_up) * 0.25 + (1.0 - mom_up) * 0.15 + adx_norm * 0.10
+    # Score EMA: distância relativa normalizada
+    ema_score = max(-1.0, min(1.0, (ema9 - ema21) / (ema21 * 0.001 + eps)))
+    # Score preço vs EMA9
+    price_score = max(-1.0, min(1.0, (price - ema9) / (ema9 * 0.001 + eps)))
+    # Score MACD histograma
+    macd_score = max(-1.0, min(1.0, macd_hist / (abs(macd_hist) + abs(ema21 * 0.0001) + eps)))
+    # Score momentum
+    mom_score = max(-1.0, min(1.0, mom / (price * 0.0005 + eps)))
+    # Score RSI contínuo
+    rsi_score = (rsi_val - 50.0) / 50.0
+    # ADX normalizado (0-1)
+    adx_norm = min(adx_val / 40.0, 1.0)
 
-    indicators["tech_score"] = round(max(buy_score, sell_score), 4)
+    # Score composto (positivo = bullish, negativo = bearish)
+    composite = (
+        ema_score * 0.25
+        + macd_score * 0.25
+        + price_score * 0.15
+        + mom_score * 0.15
+        + rsi_score * 0.10
+    ) * adx_norm  # ADX modula a confiança
 
-    if buy_score >= SIGNAL_SCORE_MIN:
+    indicators["tech_score"] = round(composite, 4)
+
+    if composite >= SIGNAL_SCORE_MIN:
         return _apply_ai_filter("BUY", prices, indicators)
-    if sell_score >= SIGNAL_SCORE_MIN:
+    if composite <= -SIGNAL_SCORE_MIN:
         return _apply_ai_filter("SELL", prices, indicators)
     return None, indicators
 
@@ -182,17 +209,22 @@ def _apply_ai_filter(
     indicators: dict,
 ) -> SignalResult:
     """
-    Pondera o sinal dos indicadores técnicos com o modelo de IA.
-
-    Se USE_AI_MODEL=False, passa o sinal sem alteração.
-    Se USE_AI_MODEL=True:
-      - IA concorda → score = AI_TECH_WEIGHT + AI_MODEL_WEIGHT * ai_conf
-      - IA diverge  → score = AI_TECH_WEIGHT - AI_MODEL_WEIGHT * (1 - ai_conf)
-      - score < AI_SCORE_MIN → sinal bloqueado
-
-    Substitui o gate duro (exigia concordância exata) por penalidade proporcional,
-    permitindo operar quando a IA diverge com baixa confiança.
+    Pondera o sinal dos indicadores técnicos com o modelo de IA e filtro PA.
     """
+    # -- Filtro Price Action: bloquear sinais contra estrutura de mercado --
+    candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+    pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
+    if pa is not None:
+        indicators["pa_sr_position"] = round(pa["pa_sr_position"], 4)
+        indicators["pa_market_structure"] = round(pa["pa_market_structure"], 4)
+
+        # Bloquear BUY perto de resistência forte sem break of structure
+        if signal == "BUY" and pa["pa_sr_position"] > 0.8 and pa["pa_bos_strength"] <= 0:
+            return None, indicators
+        # Bloquear SELL perto de suporte forte sem break of structure
+        if signal == "SELL" and pa["pa_sr_position"] < -0.8 and pa["pa_bos_strength"] >= 0:
+            return None, indicators
+
     if not USE_AI_MODEL:
         indicators["ai_confidence"] = None
         indicators["ai_score"]      = None

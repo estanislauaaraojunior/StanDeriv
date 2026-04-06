@@ -37,7 +37,40 @@ from config import (
     BB_PERIOD, BB_STD,
     TICKS_CSV, DATASET_CSV, SYMBOL,
     CANDIDATE_DURATIONS,
+    CANDLE_SIZE, PA_SR_TOLERANCE, TARGET_NOISE_THRESHOLD,
+    TARGET_LOOKFORWARD,
 )
+
+
+def _resolve_active_symbol(ticks_df: "pd.DataFrame") -> str:
+    """
+    Retorna o símbolo ativo, por ordem de prioridade:
+      1. Símbolo salvo em state.json (sessão atual do pipeline)
+      2. Símbolo mais frequente no ticks.csv (maior volume de dados)
+      3. SYMBOL de config.py (fallback)
+    """
+    # 1. state.json
+    try:
+        import json as _j
+        _state_path = os.path.join(os.path.dirname(os.path.abspath(TICKS_CSV)), "state.json")
+        if os.path.exists(_state_path):
+            with open(_state_path) as _sf:
+                _sym = _j.load(_sf).get("symbol", "")
+            if _sym and "symbol" in ticks_df.columns:
+                _count = (ticks_df["symbol"] == _sym).sum()
+                if _count >= 50:
+                    return _sym
+    except Exception:
+        pass
+    # 2. Mais frequente no CSV
+    if "symbol" in ticks_df.columns:
+        try:
+            return str(ticks_df["symbol"].value_counts().idxmax())
+        except Exception:
+            pass
+    # 3. Fallback
+    return SYMBOL
+from feature_engine import compute_feature_map
 
 # Tamanho mínimo da janela de preços para calcular todos os indicadores
 # ADX é o mais exigente: period * 2 + 1 pontos
@@ -45,96 +78,22 @@ _MIN_WINDOW = ADX_PERIOD * 2 + 1  # ≈ 29 com ADX_PERIOD=14
 
 
 def _extract_features(window: list) -> dict | None:
-    """
-    Extrai todas as features de uma janela de preços.
-
-    Retorna dict com as features ou None se dados insuficientes.
-    """
-    ema9  = ind.ema(window, EMA_FAST)
-    ema21 = ind.ema(window, EMA_SLOW)
-    rsi_v = ind.rsi(window, RSI_PERIOD)
-    macd_ = ind.macd(window, MACD_FAST, MACD_SLOW, MACD_SIGNAL)
-    adx_v = ind.adx(window, ADX_PERIOD)
-    bb_   = ind.bollinger(window, BB_PERIOD, BB_STD)
-    mom3  = ind.momentum(window, 3)
-
-    # Qualquer indicador ausente → linha descartada
-    if any(v is None for v in [ema9, ema21, rsi_v, macd_, adx_v, mom3]):
-        return None
-
-    macd_line, _macd_sig, macd_hist = macd_
-
-    price = window[-1]
-
-    # Distância relativa entre EMAs (normalizada pelo preço atual)
-    ema_cross = (ema9 - ema21) / price if price != 0 else 0.0
-
-    # Bollinger: largura e posição relativa do preço
-    bb_width    = 0.0
-    bb_position = 0.0
-    if bb_ is not None:
-        bb_upper, bb_mid, bb_lower = bb_
-        band_range = bb_upper - bb_lower
-        if band_range > 0:
-            bb_width    = band_range / bb_mid if bb_mid != 0 else 0.0
-            bb_position = (price - bb_lower) / band_range  # 0=lower, 1=upper
-
-    # Retornos simples: (price_t - price_{t-N}) / price_{t-N}
-    def _ret(n: int) -> float:
-        if len(window) <= n:
-            return 0.0
-        p_prev = window[-1 - n]
-        return (price - p_prev) / p_prev if p_prev != 0 else 0.0
-
-    # Volatilidade: desvio padrão dos retornos tick-a-tick na janela N
-    def _vol(n: int) -> float:
-        slice_ = window[-n - 1:]
-        if len(slice_) < 2:
-            return 0.0
-        rets = [(slice_[i] - slice_[i - 1]) / slice_[i - 1]
-                for i in range(1, len(slice_))
-                if slice_[i - 1] != 0]
-        if not rets:
-            return 0.0
-        mean_ = sum(rets) / len(rets)
-        var_  = sum((r - mean_) ** 2 for r in rets) / len(rets)
-        return var_ ** 0.5
-
-    # High-low spread dos últimos 5 ticks (normalizado)
-    last5 = window[-5:]
-    high5 = max(last5)
-    low5  = min(last5)
-    hl5   = (high5 - low5) / price if price != 0 else 0.0
-
-    return {
-        # Indicadores técnicos (mesmos do bot)
-        "ema9":       ema9,
-        "ema21":      ema21,
-        "ema_cross":  ema_cross,
-        "rsi":        rsi_v,
-        "macd_line":  macd_line,
-        "macd_hist":  macd_hist,
-        "adx":        adx_v,
-        "bb_width":   bb_width,
-        "bb_position": bb_position,
-        "momentum3":  mom3,
-        # Estatísticas raw
-        "return_1":     _ret(1),
-        "return_3":     _ret(3),
-        "return_5":     _ret(5),
-        "volatility_10": _vol(10),
-        "volatility_20": _vol(20),
-        "high_low_5":   hl5,
-    }
+    """Delega para feature_engine.compute_feature_map (fonte única de features)."""
+    return compute_feature_map(window)
 
 
 def build_dataset(
     ticks_path: str,
     output_path: str,
     window_size: int = 100,
+    lookforward: int = TARGET_LOOKFORWARD,
 ) -> int:
     """
     Constrói o dataset e salva em output_path.
+
+    Args:
+        lookforward: número de ticks à frente para calcular o target.
+                     1 = próximo tick (padrão). N > 1 = média dos próximos N ticks.
 
     Retorna o número de linhas geradas.
     """
@@ -148,13 +107,16 @@ def build_dataset(
     # O collector.py salva com cabeçalho: epoch, datetime, symbol, price
     df = pd.read_csv(ticks_path)
 
-    # P6: Filtrar ticks pelo símbolo configurado para evitar contaminação de dados
+    # Resolve o símbolo ativo: state.json > mais frequente no CSV > config.SYMBOL
+    active_symbol = _resolve_active_symbol(df)
+
+    # P6: Filtrar ticks pelo símbolo ativo para evitar contaminação de dados
     if "symbol" in df.columns:
         before = len(df)
-        df = df[df["symbol"] == SYMBOL]
+        df = df[df["symbol"] == active_symbol]
         dropped = before - len(df)
         if dropped > 0:
-            print(f"[DATASET] {dropped:,} ticks de outros símbolos descartados (esperado: {SYMBOL}).")
+            print(f"[DATASET] {dropped:,} ticks de outros símbolos descartados (ativo: {active_symbol}).")
 
     # Compatível também com formato antigo (sem cabeçalho, 2 colunas: epoch, price)
     if "price" in df.columns:
@@ -168,7 +130,7 @@ def build_dataset(
     n_ticks = len(prices_all)
     print(f"[DATASET] {n_ticks:,} ticks carregados.")
 
-    min_needed = window_size + 1  # +1 para o próximo tick (target)
+    min_needed = window_size + max(1, lookforward)
     if n_ticks < min_needed:
         print(
             f"[ERRO] Ticks insuficientes: {n_ticks} < {min_needed} necessários "
@@ -180,34 +142,82 @@ def build_dataset(
     rows = []
     skipped = 0
 
+    # Threshold adaptativo: auto-calibra para a volatilidade intrínseca do símbolo.
+    # Evita filtrar todos os dados em símbolos de baixa volatilidade (ex: R_10)
+    # onde o movimento típico por tick (≈0,002%) é menor que o limite padrão de 0,01%.
+    _sample_rets = [
+        abs((prices_all[j] - prices_all[j - 1]) / prices_all[j - 1])
+        for j in range(1, min(1000, len(prices_all)))
+        if prices_all[j - 1] > 0
+    ]
+    if _sample_rets:
+        _sample_rets.sort()
+        _median_abs_ret = _sample_rets[len(_sample_rets) // 2]
+        # Se o threshold configurado for maior que a mediana dos retornos reais,
+        # usa a mediana como teto — preserva filtragem relativa por símbolo
+        _adaptive_noise = min(TARGET_NOISE_THRESHOLD, _median_abs_ret * 0.5)
+    else:
+        _adaptive_noise = TARGET_NOISE_THRESHOLD
+
     # Margem para o lookahead da duração ótima (ex: 10 ticks além do tick atual)
-    _max_lookahead = max(CANDIDATE_DURATIONS)
+    _max_lookahead = max(max(CANDIDATE_DURATIONS), lookforward)
 
     for i in range(window_size, n_ticks - _max_lookahead):
         window  = prices_all[i - window_size: i + 1]  # window_size+1 preços
         current = prices_all[i]
-        next_p  = prices_all[i + 1]
+
+        # Target multi-tick: média dos próximos `lookforward` ticks
+        future_prices = prices_all[i + 1: i + 1 + lookforward]
+        if len(future_prices) < lookforward:
+            continue
+        future_mean = sum(future_prices) / len(future_prices)
+
+        # Threshold dinâmico: volatilidade recente (máximo entre noise_threshold e vol/4)
+        def _local_vol() -> float:
+            s = window[-21:]
+            if len(s) < 2:
+                return 0.0
+            rets = [(s[j] - s[j-1]) / s[j-1] for j in range(1, len(s)) if s[j-1] != 0]
+            if not rets:
+                return 0.0
+            m = sum(rets) / len(rets)
+            return (sum((r - m) ** 2 for r in rets) / len(rets)) ** 0.5
+
+        threshold = max(_adaptive_noise, _local_vol() * 0.25)
 
         features = _extract_features(window)
         if features is None:
             skipped += 1
             continue
 
-        target = 1 if next_p > current else 0
+        # Target com threshold adaptativo
+        delta_pct = (future_mean - current) / current if current != 0 else 0.0
+        if abs(delta_pct) < threshold:
+            skipped += 1
+            continue
+        target = 1 if delta_pct > 0 else 0
         features["target"] = target
 
-        # ── Duração ótima ──────────────────────────────────────────────
-        # Direção base do movimento: +1 sobe, -1 cai
-        direction = 1 if next_p > current else -1
+        # ── Duração ótima (heurística por volatilidade — sem lookahead) ──
+        def _vol_window(n: int) -> float:
+            s = window[-n - 1:]
+            if len(s) < 2:
+                return 0.0
+            rets = [(s[j] - s[j - 1]) / s[j - 1]
+                    for j in range(1, len(s)) if s[j - 1] != 0]
+            if not rets:
+                return 0.0
+            m = sum(rets) / len(rets)
+            return (sum((r - m) ** 2 for r in rets) / len(rets)) ** 0.5
 
-        best_d   = CANDIDATE_DURATIONS[0]
-        best_abs = 0.0
-        for d in CANDIDATE_DURATIONS:
-            future_p = prices_all[i + d]
-            delta    = (future_p - current) * direction   # positivo = movimento favorável
-            if delta > best_abs:
-                best_abs = delta
-                best_d   = d
+        vol = _vol_window(20)
+        n_cands = len(CANDIDATE_DURATIONS)
+        if vol > 0.002:
+            best_d = CANDIDATE_DURATIONS[0]          # alta vol → duração curta
+        elif vol < 0.0005:
+            best_d = CANDIDATE_DURATIONS[-1]         # baixa vol → duração longa
+        else:
+            best_d = CANDIDATE_DURATIONS[n_cands // 2]  # moderada
 
         features["optimal_duration"] = best_d
         rows.append(features)
@@ -219,9 +229,10 @@ def build_dataset(
     result_df = pd.DataFrame(rows)
     result_df.to_csv(output_path, index=False)
 
+    print(f"[DATASET] Horizonte target: {lookforward} tick(s)")
     print(f"[DATASET] Linhas geradas  : {len(rows):,}")
     print(f"[DATASET] Linhas ignoradas: {skipped:,} (indicadores insuficientes)")
-    print(f"[DATASET] Distribuição do target:")
+    print("[DATASET] Distribuição do target:")
     vc = result_df["target"].value_counts()
     print(f"           Sobe (1): {vc.get(1, 0):>6,} ({vc.get(1, 0)/len(rows)*100:.1f}%)")
     print(f"           Cai  (0): {vc.get(0, 0):>6,} ({vc.get(0, 0)/len(rows)*100:.1f}%)")
@@ -240,9 +251,16 @@ def main() -> None:
         "--window", type=int, default=100,
         help="Tamanho da janela deslizante de ticks para calcular features (padrão: 100)",
     )
+    parser.add_argument(
+        "--lookforward", type=int, default=TARGET_LOOKFORWARD,
+        help=(
+            "Número de ticks à frente para calcular o target "
+            f"(padrão: {TARGET_LOOKFORWARD})"
+        ),
+    )
     args = parser.parse_args()
 
-    build_dataset(args.input, args.output, args.window)
+    build_dataset(args.input, args.output, args.window, args.lookforward)
 
 
 if __name__ == "__main__":

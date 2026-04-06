@@ -26,6 +26,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier
+from sklearn.model_selection import TimeSeriesSplit, StratifiedKFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -45,6 +46,7 @@ from config import (
     TRANSFORMER_DROPOUT, TRANSFORMER_EPOCHS, TRANSFORMER_BATCH_SIZE,
     TRANSFORMER_LR, TRANSFORMER_PATIENCE,
 )
+from feature_engine import FEATURES
 
 # Importa TFT (opcional — requer torch; fallback gracioso se não instalado)
 try:
@@ -53,19 +55,8 @@ try:
 except ImportError:
     _TORCH_AVAILABLE = False
 
-# Features que o predictor em tempo real também irá calcular (deve estar em sincronia
-# com dataset_builder.py e ai_predictor.py)
-FEATURES = [
-    "ema9", "ema21", "ema_cross",
-    "rsi",
-    "macd_line", "macd_hist",
-    "adx",
-    "bb_width", "bb_position",
-    "momentum3",
-    "return_1", "return_3", "return_5",
-    "volatility_10", "volatility_20",
-    "high_low_5",
-]
+# Features importadas de feature_engine (fonte única — em sincronia com dataset_builder e ai_predictor)
+# FEATURES = [...] removido
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -120,7 +111,7 @@ def _build_stacking(scale_pos_weight: float = 1.0) -> StackingClassifier:
     return StackingClassifier(
         estimators=base_estimators,
         final_estimator=meta,
-        cv=5,
+        cv=StratifiedKFold(n_splits=5, shuffle=False),
         passthrough=False,
         n_jobs=-1,
     )
@@ -239,7 +230,7 @@ def _print_feature_importance(rf_pipeline: Pipeline) -> None:
 #  Treinamento principal
 # ─────────────────────────────────────────────────────────────────
 
-def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: float = 0.02) -> None:
+def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: float = 0.02) -> dict:
     if not os.path.exists(dataset_path):
         print(f"[ERRO] Dataset não encontrado: '{dataset_path}'")
         print("       Execute dataset_builder.py primeiro.")
@@ -312,6 +303,38 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
 
     # Importância de features (RF)
     _print_feature_importance(rf)
+
+    # Salva métricas preliminares (modelos clássicos) antes do TFT — atualiza dashboard imediatamente
+    _best_classical = max(results, key=lambda r: r["auc"])
+    try:
+        import json as _json_pre
+        from datetime import datetime as _dt_pre
+        _mpath_pre = os.path.join(os.path.dirname(os.path.abspath(output_path)), "model_metrics.json")
+        _hist_pre: list = []
+        if os.path.exists(_mpath_pre):
+            try:
+                with open(_mpath_pre) as _mf:
+                    _hist_pre = _json_pre.load(_mf)
+                if not isinstance(_hist_pre, list):
+                    _hist_pre = []
+            except Exception:
+                _hist_pre = []
+        _hist_pre.append({
+            "timestamp":  _dt_pre.now().isoformat(),
+            "stage":      "classical",
+            "best_model": _best_classical["name"],
+            "auc":        round(_best_classical["auc"], 4),
+            "accuracy":   round(_best_classical["acc"], 4),
+            "f1":         round(_best_classical.get("f1", 0.0), 4),
+            "n_train":    int(split),
+            "n_test":     int(len(X_test)),
+            "model_path": str(output_path),
+        })
+        with open(_mpath_pre, "w") as _mf:
+            _json_pre.dump(_hist_pre, _mf)
+        print(f"\n[TREINO] Métricas salvas em model_metrics.json (melhor clássico: {_best_classical['name']})")
+    except Exception:
+        pass
 
     # ── Temporal Fusion Transformer (TFT) ────────────────────────────────
     if USE_TRANSFORMER and _TORCH_AVAILABLE:
@@ -420,6 +443,45 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
 
     print(f"\n  Acurácia final: {acc:.2%} → {tier}")
     print("\n  Próximo passo: python bot.py --demo")
+
+    # Salva métricas em model_metrics.json (append)
+    try:
+        import json as _json
+        from datetime import datetime as _dt
+        metrics_path = os.path.join(os.path.dirname(os.path.abspath(output_path)), "model_metrics.json")
+        history: list = []
+        if os.path.exists(metrics_path):
+            try:
+                with open(metrics_path) as _mf:
+                    history = _json.load(_mf)
+                if not isinstance(history, list):
+                    history = []
+            except Exception:
+                history = []
+        history.append({
+            "timestamp":   _dt.now().isoformat(),
+            "stage":       "final",
+            "best_model":  best["name"],
+            "auc":         round(best["auc"], 4),
+            "accuracy":    round(best["acc"], 4),
+            "f1":          round(best.get("f1", 0.0), 4),
+            "n_train":     int(split),
+            "n_test":      int(len(X_test)),
+            "model_path":  str(output_path),
+        })
+        with open(metrics_path, "w") as _mf:
+            _json.dump(history, _mf)
+    except Exception:
+        pass
+
+    return {
+        "best_model": best["name"],
+        "auc": float(best["auc"]),
+        "accuracy": float(best["acc"]),
+        "f1": float(best.get("f1", 0.0)),
+        "n_train": int(split),
+        "n_test": int(len(X_test)),
+    }
 
 
 def main() -> None:

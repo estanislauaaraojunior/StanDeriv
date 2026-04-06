@@ -1,0 +1,619 @@
+============================================================
+  Deriv Pipeline — Orquestrador Automático
+  Modo              : DEMO
+  Símbolo           : R_100 — Volatility 100 Index
+  Ticks históricos  : 500
+  Ticks p/ treino   : 500
+  Re-treino a cada  : 10 min
+  Pressione Ctrl+C para encerrar tudo
+============================================================
+[TENDÊNCIA] ── Scan primário ──────────────────────────────
+[TENDÊNCIA] Candidatos: R_10, R_25, R_50, R_75, R_100, 1HZ10V, 1HZ25V, 1HZ50V, 1HZ75V, 1HZ100V
+  R_25         score= 30.78 ↓
+  1HZ25V       score= 33.73 ↓
+  1HZ75V       score= 41.71 ↑
+  R_100        score= 23.50 ↓
+  1HZ100V      score= 29.92 ↓
+  R_50         score= 49.79 ↑
+  1HZ50V       score= 17.49 ↑
+  1HZ10V       score= 43.75 ↓
+  R_10         score=  0.00
+  R_75         score=  0.00
+[TENDÊNCIA] ✔ Melhor índice: R_50 — Volatility 50 Index (score=49.79)
+[TENDÊNCIA] Símbolo alterado: R_100 → R_50
+[HISTÓRICO] Buscando os últimos 500 ticks de 'R_50 — Volatility 50 Index'...
+[HISTÓRICO] 500 ticks históricos gravados — total no CSV: 251,880
+[PIPELINE] Fase 1: Coletor iniciado em background (sem duplicatas).
+[PIPELINE] Fases 2-4: model.pkl encontrado — treino inicial ignorado.
+           Use --force-retrain para forçar novo treino.
+[PIPELINE] Fase 5: Re-treino automático agendado a cada 10 min.
+[PIPELINE] Fase 6: Iniciando bot de trading...
+[RISCO] Estado restaurado: consec_losses=0, saldo=1000.00
+=======================================================
+  Deriv Trading Bot — Modo: DEMO
+  Símbolo : R_50
+  Duração : 5 t
+  Saldo   : 1000.00 USD
+  Stake   : 10.00 USD (1% do saldo)
+=======================================================
+[COLETOR] Conectado | R_50 — Volatility 50 Index
+[BOT] Conectado à Deriv WebSocket API
+[COLETOR] Autorizado. Coleta iniciada...
+[BOT] Autorizado | Saldo real: 7924.63 USD
+[COLETOR] Ticks:       1 | 88.8039 @ 2026-04-06T15:42:52
+[BOT] Aquecendo... 1/50 ticks
+[COLETOR] Ticks:       2 | 88.7988 @ 2026-04-06T15:42:54
+[COLETOR] Ticks:       3 | 88.8209 @ 2026-04-06T15:42:56
+[BOT] Aquecendo... 2/50 ticks
+[COLETOR] Ticks:       4 | 88.8033 @ 2026-04-06T15:42:58
+[BOT] Aquecendo... 3/50 ticks
+[BOT] Aquecendo... 4/50 ticks
+[COLETOR] Ticks:       5 | 88.8093 @ 2026-04-06T15:43:00
+[BOT] Aquecendo... 5/50 ticks
+[COLETOR] Ticks:       6 | 88.8264 @ 2026-04-06T15:43:02
+[BOT] Aquecendo... 6/50 ticks
+[COLETOR] Ticks:       7 | 88.8505 @ 2026-04-06T15:43:04
+[BOT] Aquecendo... 7/50 ticks
+[COLETOR] Ticks:       8 | 88.8498 @ 2026-04-06T15:43:06
+[BOT] Aquecendo... 8/50 ticks
+[COLETOR] Ticks:       9 | 88.8577 @ 2026-04-06T15:43:08
+[BOT] Aquecendo... 9/50 ticks
+[COLETOR] Ticks:      10 | 88.8733 @ 2026-04-06T15:43:10
+[BOT] Aquecendo... 10/50 ticks
+[COLETOR] Ticks:      11 | 88.8495 @ 2026-04-06T15:43:12
+[BOT] Aquecendo... 11/50 ticks
+[COLETOR] Ticks:      12 | 88.8703 @ 2026-04-06T15:43:14
+[BOT] Aquecendo... 12/50 ticks
+[COLETOR] Ticks:      13 | 88.885 @ 2026-04-06T15:43:16
+[COLETOR] Ticks:      14 | 88.8976 @ 2026-04-06T15:43:18
+[BOT] Aquecendo... 13/50 ticks
+[BOT] Aquecendo... 14/50 ticks
+[COLETOR] Ticks:      15 | 88.9003 @ 2026-04-06T15:43:20
+[BOT] Aquecendo... 15/50 ticks
+[COLETOR] Ticks:      16 | 88.9042 @ 2026-04-06T15:43:22
+[BOT] Aquecendo... 16/50 ticks
+[COLETOR] Ticks:      17 | 88.9141 @ 2026-04-06T15:43:24
+[COLETOR] Ticks:      18 | 88.9224 @ 2026-04-06T15:43:26
+[BOT] Aquecendo... 17/50 ticks
+[BOT] Aquecendo... 18/50 ticks
+[COLETOR] Ticks:      19 | 88.9293 @ 2026-04-06T15:43:28
+[BOT] Aquecendo... 19/50 ticks
+[COLETOR] Ticks:      20 | 88.9244 @ 2026-04-06T15:43:30
+[BOT] Aquecendo... 20/50 ticks
+[COLETOR] Ticks:      21 | 88.9272 @ 2026-04-06T15:43:32
+[COLETOR] Ticks:      22 | 88.9253 @ 2026-04-06T15:43:34
+[BOT] Aquecendo... 21/50 ticks
+[BOT] Aquecendo... 22/50 ticks
+[COLETOR] Ticks:      23 | 88.9265 @ 2026-04-06T15:43:36
+[BOT] Aquecendo... 23/50 ticks
+[COLETOR] Ticks:      24 | 88.9246 @ 2026-04-06T15:43:38
+[BOT] Aquecendo... 24/50 ticks
+[COLETOR] Ticks:      25 | 88.9624 @ 2026-04-06T15:43:40
+[BOT] Aquecendo... 25/50 ticks
+[COLETOR] Ticks:      26 | 88.9653 @ 2026-04-06T15:43:42
+[BOT] Aquecendo... 26/50 ticks
+[COLETOR] Ticks:      27 | 88.9766 @ 2026-04-06T15:43:44
+[BOT] Aquecendo... 27/50 ticks
+[COLETOR] Ticks:      28 | 88.969 @ 2026-04-06T15:43:46
+[BOT] Aquecendo... 28/50 ticks
+[COLETOR] Ticks:      29 | 88.9669 @ 2026-04-06T15:43:48
+[COLETOR] Ticks:      30 | 88.9621 @ 2026-04-06T15:43:50
+[BOT] Aquecendo... 29/50 ticks
+[COLETOR] Ticks:      31 | 88.9667 @ 2026-04-06T15:43:52
+[BOT] Aquecendo... 30/50 ticks
+[COLETOR] Ticks:      32 | 88.9723 @ 2026-04-06T15:43:54
+[BOT] Aquecendo... 31/50 ticks
+[BOT] Aquecendo... 32/50 ticks
+[COLETOR] Ticks:      33 | 88.9894 @ 2026-04-06T15:43:56
+[BOT] Aquecendo... 33/50 ticks
+[COLETOR] Ticks:      34 | 88.9863 @ 2026-04-06T15:43:58
+[BOT] Aquecendo... 34/50 ticks
+[COLETOR] Ticks:      35 | 88.9626 @ 2026-04-06T15:44:00
+[BOT] Aquecendo... 35/50 ticks
+[COLETOR] Ticks:      36 | 88.9679 @ 2026-04-06T15:44:02
+[BOT] Aquecendo... 36/50 ticks
+[COLETOR] Ticks:      37 | 88.9697 @ 2026-04-06T15:44:04
+[COLETOR] Ticks:      38 | 88.9559 @ 2026-04-06T15:44:06
+[BOT] Aquecendo... 37/50 ticks
+[BOT] Aquecendo... 38/50 ticks
+[COLETOR] Ticks:      39 | 88.9397 @ 2026-04-06T15:44:08
+[COLETOR] Ticks:      40 | 88.929 @ 2026-04-06T15:44:10
+[BOT] Aquecendo... 39/50 ticks
+[BOT] Aquecendo... 40/50 ticks
+[COLETOR] Ticks:      41 | 88.9281 @ 2026-04-06T15:44:12
+[COLETOR] Ticks:      42 | 88.9239 @ 2026-04-06T15:44:14
+[BOT] Aquecendo... 41/50 ticks
+[COLETOR] Ticks:      43 | 88.9256 @ 2026-04-06T15:44:16
+[BOT] Aquecendo... 42/50 ticks
+[BOT] Aquecendo... 43/50 ticks
+[COLETOR] Ticks:      44 | 88.9373 @ 2026-04-06T15:44:18
+[COLETOR] Ticks:      45 | 88.9263 @ 2026-04-06T15:44:20
+[BOT] Aquecendo... 44/50 ticks
+[BOT] Aquecendo... 45/50 ticks
+[COLETOR] Ticks:      46 | 88.9497 @ 2026-04-06T15:44:22
+[BOT] Aquecendo... 46/50 ticks
+[COLETOR] Ticks:      47 | 88.9456 @ 2026-04-06T15:44:24
+[BOT] Aquecendo... 47/50 ticks
+[COLETOR] Ticks:      48 | 88.9241 @ 2026-04-06T15:44:26
+[BOT] Aquecendo... 48/50 ticks
+[COLETOR] Ticks:      49 | 88.9099 @ 2026-04-06T15:44:28
+[BOT] Aquecendo... 49/50 ticks
+[COLETOR] Ticks:      50 | 88.9138 @ 2026-04-06T15:44:30
+[TICK] 88.9294 | EMA9:88.9285 EMA21:88.9340 | RSI:50.1 ADX:34.6 MACD_H:-0.00541
+[COLETOR] Ticks:      51 | 88.9294 @ 2026-04-06T15:44:32
+[TICK] 88.9154 | EMA9:88.9259 EMA21:88.9323 | RSI:45.5 ADX:32.2 MACD_H:-0.00527
+[COLETOR] Ticks:      52 | 88.9154 @ 2026-04-06T15:44:34
+[TICK] 88.9051 | EMA9:88.9218 EMA21:88.9299 | RSI:42.4 ADX:30.6 MACD_H:-0.00559
+[COLETOR] Ticks:      53 | 88.9051 @ 2026-04-06T15:44:36
+[TICK] 88.8976 | EMA9:88.9169 EMA21:88.9269 | RSI:40.2 ADX:29.6 MACD_H:-0.00599
+[COLETOR] Ticks:      54 | 88.8976 @ 2026-04-06T15:44:38[IA] Modelo carregado: XGBoost (model.pkl)
+[COLETOR] Ticks:      55 | 88.8775 @ 2026-04-06T15:44:40[IA] Modelo TFT carregado (transformer_model.pkl)
+[TICK] 88.8775 | EMA9:88.9090 EMA21:88.9224 | RSI:35.0 ADX:29.7 MACD_H:-0.00721
+[COLETOR] Ticks:      56 | 88.8815 @ 2026-04-06T15:44:42
+[TICK] 88.8815 | EMA9:88.9035 EMA21:88.9187 | RSI:36.8 ADX:29.7 MACD_H:-0.00733
+[COLETOR] Ticks:      57 | 88.88 @ 2026-04-06T15:44:44
+[TICK] 88.8800 | EMA9:88.8988 EMA21:88.9152 | RSI:36.4 ADX:29.8 MACD_H:-0.00708
+[TICK] 88.8959 | EMA9:88.8982 EMA21:88.9134 | RSI:43.3 ADX:28.6 MACD_H:-0.00549
+[COLETOR] Ticks:      58 | 88.8959 @ 2026-04-06T15:44:46
+[TICK] 88.8894 | EMA9:88.8965 EMA21:88.9112 | RSI:41.3 ADX:27.6 MACD_H:-0.00456
+[COLETOR] Ticks:      59 | 88.8894 @ 2026-04-06T15:44:48
+[TICK] 88.8783 | EMA9:88.8928 EMA21:88.9082 | RSI:38.1 ADX:27.2 MACD_H:-0.00437
+[COLETOR] Ticks:      60 | 88.8783 @ 2026-04-06T15:44:50
+[TICK] 88.8863 | EMA9:88.8915 EMA21:88.9063 | RSI:41.6 ADX:26.9 MACD_H:-0.00343
+[COLETOR] Ticks:      61 | 88.8863 @ 2026-04-06T15:44:52
+[TICK] 88.8938 | EMA9:88.8920 EMA21:88.9051 | RSI:44.8 ADX:25.9 MACD_H:-0.00210
+[COLETOR] Ticks:      62 | 88.8938 @ 2026-04-06T15:44:54
+[COLETOR] Ticks:      63 | 88.8871 @ 2026-04-06T15:44:56
+[TICK] 88.8871 | EMA9:88.8910 EMA21:88.9035 | RSI:42.6 ADX:25.0 MACD_H:-0.00148
+[TICK] 88.8486 | EMA9:88.8825 EMA21:88.8985 | RSI:32.6 ADX:26.1 MACD_H:-0.00338
+[COLETOR] Ticks:      64 | 88.8486 @ 2026-04-06T15:44:58
+[TICK] 88.8439 | EMA9:88.8748 EMA21:88.8935 | RSI:31.6 ADX:27.2 MACD_H:-0.00459
+[COLETOR] Ticks:      65 | 88.8439 @ 2026-04-06T15:45:00
+[TICK] 88.8310 | EMA9:88.8660 EMA21:88.8879 | RSI:29.1 ADX:28.8 MACD_H:-0.00581
+[COLETOR] Ticks:      66 | 88.831 @ 2026-04-06T15:45:02
+[TICK] 88.8098 | EMA9:88.8548 EMA21:88.8808 | RSI:25.4 ADX:30.7 MACD_H:-0.00750
+[COLETOR] Ticks:      67 | 88.8098 @ 2026-04-06T15:45:04
+[COLETOR] Ticks:      68 | 88.8218 @ 2026-04-06T15:45:06
+[TICK] 88.8218 | EMA9:88.8482 EMA21:88.8754 | RSI:30.7 ADX:32.6 MACD_H:-0.00725
+[TICK] 88.8246 | EMA9:88.8435 EMA21:88.8708 | RSI:31.9 ADX:34.0 MACD_H:-0.00637
+[COLETOR] Ticks:      69 | 88.8246 @ 2026-04-06T15:45:08
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Bearish Engulfing (força: 1.00)
+  Preço: 88.8220 | Contexto: Sem contexto especial
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[TICK] 88.8220 | EMA9:88.8392 EMA21:88.8663 | RSI:31.4 ADX:35.4 MACD_H:-0.00548
+[COLETOR] Ticks:      70 | 88.822 @ 2026-04-06T15:45:10
+[TICK] 88.8308 | EMA9:88.8375 EMA21:88.8631 | RSI:35.4 ADX:36.0 MACD_H:-0.00388
+[COLETOR] Ticks:      71 | 88.8308 @ 2026-04-06T15:45:12
+[COLETOR] Ticks:      72 | 88.8406 @ 2026-04-06T15:45:14
+[TICK] 88.8406 | EMA9:88.8381 EMA21:88.8611 | RSI:39.7 ADX:35.7 MACD_H:-0.00185
+[COLETOR] Ticks:      73 | 88.8394 @ 2026-04-06T15:45:16
+[TICK] 88.8394 | EMA9:88.8384 EMA21:88.8591 | RSI:39.4 ADX:35.4 MACD_H:-0.00035
+[TICK] 88.8493 | EMA9:88.8406 EMA21:88.8582 | RSI:43.7 ADX:34.3 MACD_H:+0.00144
+[COLETOR] Ticks:      74 | 88.8493 @ 2026-04-06T15:45:18
+[TICK] 88.8553 | EMA9:88.8435 EMA21:88.8579 | RSI:46.2 ADX:32.9 MACD_H:+0.00307
+[COLETOR] Ticks:      75 | 88.8553 @ 2026-04-06T15:45:20
+[TICK] 88.8507 | EMA9:88.8449 EMA21:88.8573 | RSI:44.6 ADX:31.5 MACD_H:+0.00383
+[COLETOR] Ticks:      76 | 88.8507 @ 2026-04-06T15:45:22
+[TICK] 88.8150 | EMA9:88.8390 EMA21:88.8534 | RSI:34.4 ADX:32.0 MACD_H:+0.00201
+[COLETOR] Ticks:      77 | 88.815 @ 2026-04-06T15:45:24
+[TICK] 88.7957 | EMA9:88.8303 EMA21:88.8482 | RSI:30.3 ADX:33.1 MACD_H:-0.00028
+[COLETOR] Ticks:      78 | 88.7957 @ 2026-04-06T15:45:26
+[TICK] 88.7944 | EMA9:88.8231 EMA21:88.8433 | RSI:30.1 ADX:34.1 MACD_H:-0.00161
+[COLETOR] Ticks:      79 | 88.7944 @ 2026-04-06T15:45:28
+[COLETOR] Ticks:      80 | 88.8027 @ 2026-04-06T15:45:30
+[TICK] 88.8027 | EMA9:88.8190 EMA21:88.8396 | RSI:33.9 ADX:34.5 MACD_H:-0.00165
+[TICK] 88.8236 | EMA9:88.8200 EMA21:88.8381 | RSI:42.5 ADX:33.3 MACD_H:-0.00006
+[COLETOR] Ticks:      81 | 88.8236 @ 2026-04-06T15:45:32
+[TICK] 88.8345 | EMA9:88.8229 EMA21:88.8378 | RSI:46.4 ADX:31.6 MACD_H:+0.00182
+[COLETOR] Ticks:      82 | 88.8345 @ 2026-04-06T15:45:34
+[TICK] 88.8183 | EMA9:88.8220 EMA21:88.8361 | RSI:41.9 ADX:30.2 MACD_H:+0.00206
+[COLETOR] Ticks:      83 | 88.8183 @ 2026-04-06T15:45:36
+[COLETOR] Ticks:      84 | 88.8082 @ 2026-04-06T15:45:38
+[TICK] 88.8082 | EMA9:88.8192 EMA21:88.8335 | RSI:39.3 ADX:29.4 MACD_H:+0.00163
+[COLETOR] Ticks:      85 | 88.8 @ 2026-04-06T15:45:40
+[TICK] 88.8000 | EMA9:88.8154 EMA21:88.8305 | RSI:37.2 ADX:29.0 MACD_H:+0.00093
+[TICK] 88.7860 | EMA9:88.8095 EMA21:88.8264 | RSI:34.0 ADX:29.2 MACD_H:-0.00028
+[COLETOR] Ticks:      86 | 88.786 @ 2026-04-06T15:45:42
+[TICK] 88.7922 | EMA9:88.8060 EMA21:88.8233 | RSI:36.6 ADX:29.4 MACD_H:-0.00045
+[COLETOR] Ticks:      87 | 88.7922 @ 2026-04-06T15:45:44
+[TICK] 88.8067 | EMA9:88.8062 EMA21:88.8218 | RSI:42.4 ADX:28.6 MACD_H:+0.00056
+[COLETOR] Ticks:      88 | 88.8067 @ 2026-04-06T15:45:46
+[TICK] 88.8041 | EMA9:88.8058 EMA21:88.8202 | RSI:41.6 ADX:27.8 MACD_H:+0.00118
+[COLETOR] Ticks:      89 | 88.8041 @ 2026-04-06T15:45:48
+[TICK] 88.7990 | EMA9:88.8044 EMA21:88.8183 | RSI:40.2 ADX:27.3 MACD_H:+0.00135
+[COLETOR] Ticks:      90 | 88.799 @ 2026-04-06T15:45:50
+[TICK] 88.8042 | EMA9:88.8044 EMA21:88.8170 | RSI:42.4 ADX:26.8 MACD_H:+0.00188
+[COLETOR] Ticks:      91 | 88.8042 @ 2026-04-06T15:45:52
+[TICK] 88.7967 | EMA9:88.8028 EMA21:88.8151 | RSI:40.1 ADX:26.5 MACD_H:+0.00181
+[COLETOR] Ticks:      92 | 88.7967 @ 2026-04-06T15:45:54
+[TICK] 88.7916 | EMA9:88.8006 EMA21:88.8130 | RSI:38.6 ADX:26.5 MACD_H:+0.00150
+[COLETOR] Ticks:      93 | 88.7916 @ 2026-04-06T15:45:56
+[COLETOR] Ticks:      94 | 88.787 @ 2026-04-06T15:45:58
+[TICK] 88.7870 | EMA9:88.7979 EMA21:88.8106 | RSI:37.2 ADX:26.7 MACD_H:+0.00109
+[TICK] 88.7816 | EMA9:88.7946 EMA21:88.8080 | RSI:35.6 ADX:27.2 MACD_H:+0.00058
+[COLETOR] Ticks:      95 | 88.7816 @ 2026-04-06T15:46:00
+[TICK] 88.7797 | EMA9:88.7916 EMA21:88.8054 | RSI:35.0 ADX:27.8 MACD_H:+0.00027
+[COLETOR] Ticks:      96 | 88.7797 @ 2026-04-06T15:46:02
+[TICK] 88.7734 | EMA9:88.7880 EMA21:88.8025 | RSI:33.1 ADX:28.6 MACD_H:-0.00020
+[COLETOR] Ticks:      97 | 88.7734 @ 2026-04-06T15:46:04
+[TICK] 88.7817 | EMA9:88.7867 EMA21:88.8006 | RSI:37.9 ADX:29.1 MACD_H:+0.00021
+[COLETOR] Ticks:      98 | 88.7817 @ 2026-04-06T15:46:06
+[TICK] 88.7789 | EMA9:88.7852 EMA21:88.7986 | RSI:36.9 ADX:29.6 MACD_H:+0.00042
+[COLETOR] Ticks:      99 | 88.7789 @ 2026-04-06T15:46:08
+[TICK] 88.7797 | EMA9:88.7841 EMA21:88.7969 | RSI:37.4 ADX:30.1 MACD_H:+0.00074
+[COLETOR] Ticks:     100 | 88.7797 @ 2026-04-06T15:46:10
+[TICK] 88.7970 | EMA9:88.7867 EMA21:88.7969 | RSI:47.0 ADX:28.6 MACD_H:+0.00215
+[COLETOR] Ticks:     101 | 88.797 @ 2026-04-06T15:46:12
+[TICK] 88.7926 | EMA9:88.7878 EMA21:88.7965 | RSI:45.1 ADX:27.3 MACD_H:+0.00278
+[COLETOR] Ticks:     102 | 88.7926 @ 2026-04-06T15:46:14
+[TICK] 88.7922 | EMA9:88.7887 EMA21:88.7961 | RSI:44.9 ADX:26.0 MACD_H:+0.00315
+[COLETOR] Ticks:     103 | 88.7922 @ 2026-04-06T15:46:16
+[COLETOR] Ticks:     104 | 88.7897 @ 2026-04-06T15:46:18
+[TICK] 88.7897 | EMA9:88.7889 EMA21:88.7956 | RSI:43.8 ADX:25.1 MACD_H:+0.00318
+[TICK] 88.8056 | EMA9:88.7922 EMA21:88.7965 | RSI:52.2 ADX:23.7 MACD_H:+0.00418
+[COLETOR] Ticks:     105 | 88.8056 @ 2026-04-06T15:46:20
+[TICK] 88.8092 | EMA9:88.7956 EMA21:88.7976 | RSI:53.9 ADX:22.7 MACD_H:+0.00492
+[COLETOR] Ticks:     106 | 88.8092 @ 2026-04-06T15:46:22
+[TICK] 88.8071 | EMA9:88.7979 EMA21:88.7985 | RSI:52.7 ADX:21.8 MACD_H:+0.00510
+[COLETOR] Ticks:     107 | 88.8071 @ 2026-04-06T15:46:24
+[COLETOR] Ticks:     108 | 88.8018 @ 2026-04-06T15:46:26
+[TICK] 88.8018 | EMA9:88.7987 EMA21:88.7988 | RSI:49.8 ADX:20.4 MACD_H:+0.00470
+[TICK] 88.8010 | EMA9:88.7992 EMA21:88.7990 | RSI:49.3 ADX:19.0 MACD_H:+0.00423 [LATERAL]
+[COLETOR] Ticks:     109 | 88.801 @ 2026-04-06T15:46:28
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 Hammer (força: 1.00)
+  Preço: 88.7928 | Contexto: Sem contexto especial
+  Ação sugerida: BUY favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟡 Doji (força: 0.87)
+  Preço: 88.7928 | Contexto: Sem contexto especial
+  Ação sugerida: Aguardar
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[TICK] 88.7928 | EMA9:88.7979 EMA21:88.7984 | RSI:44.9 ADX:18.4 MACD_H:+0.00326 [LATERAL]
+[COLETOR] Ticks:     110 | 88.7928 @ 2026-04-06T15:46:30
+[TICK] 88.7939 | EMA9:88.7971 EMA21:88.7980 | RSI:45.6 ADX:17.8 MACD_H:+0.00262 [LATERAL]
+[COLETOR] Ticks:     111 | 88.7939 @ 2026-04-06T15:46:32
+[TICK] 88.7960 | EMA9:88.7969 EMA21:88.7978 | RSI:47.0 ADX:17.1 MACD_H:+0.00227 [LATERAL]
+[COLETOR] Ticks:     112 | 88.796 @ 2026-04-06T15:46:34
+[TICK] 88.7936 | EMA9:88.7962 EMA21:88.7974 | RSI:45.6 ADX:16.4 MACD_H:+0.00183 [LATERAL]
+[COLETOR] Ticks:     113 | 88.7936 @ 2026-04-06T15:46:36
+[TICK] 88.7846 | EMA9:88.7939 EMA21:88.7963 | RSI:40.5 ADX:16.6 MACD_H:+0.00093 [LATERAL]
+[COLETOR] Ticks:     114 | 88.7846 @ 2026-04-06T15:46:38
+[TICK] 88.7867 | EMA9:88.7925 EMA21:88.7954 | RSI:42.1 ADX:16.9 MACD_H:+0.00050 [LATERAL]
+[COLETOR] Ticks:     115 | 88.7867 @ 2026-04-06T15:46:40
+[TICK] 88.7858 | EMA9:88.7911 EMA21:88.7945 | RSI:41.6 ADX:17.1 MACD_H:+0.00019 [LATERAL]
+[COLETOR] Ticks:     116 | 88.7858 @ 2026-04-06T15:46:42
+[TICK] 88.7818 | EMA9:88.7893 EMA21:88.7934 | RSI:39.3 ADX:17.8 MACD_H:-0.00022 [LATERAL]
+[COLETOR] Ticks:     117 | 88.7818 @ 2026-04-06T15:46:44
+[TICK] 88.7861 | EMA9:88.7886 EMA21:88.7927 | RSI:43.0 ADX:18.3 MACD_H:-0.00015 [LATERAL]
+[COLETOR] Ticks:     118 | 88.7861 @ 2026-04-06T15:46:46
+[TICK] 88.7961 | EMA9:88.7901 EMA21:88.7930 | RSI:50.5 ADX:17.3 MACD_H:+0.00058 [LATERAL]
+[COLETOR] Ticks:     119 | 88.7961 @ 2026-04-06T15:46:48
+[TICK] 88.7893 | EMA9:88.7900 EMA21:88.7927 | RSI:46.0 ADX:16.3 MACD_H:+0.00062 [LATERAL]
+[COLETOR] Ticks:     120 | 88.7893 @ 2026-04-06T15:46:50
+[TICK] 88.7782 | EMA9:88.7876 EMA21:88.7914 | RSI:39.9 ADX:16.7 MACD_H:-0.00005 [LATERAL]
+[COLETOR] Ticks:     121 | 88.7782 @ 2026-04-06T15:46:52
+[TICK] 88.7703 | EMA9:88.7841 EMA21:88.7895 | RSI:36.2 ADX:17.7 MACD_H:-0.00093 [LATERAL]
+[COLETOR] Ticks:     122 | 88.7703 @ 2026-04-06T15:46:54
+[TICK] 88.7552 | EMA9:88.7784 EMA21:88.7863 | RSI:30.4 ADX:19.6 MACD_H:-0.00235 [LATERAL]
+[COLETOR] Ticks:     123 | 88.7552 @ 2026-04-06T15:46:56
+[TICK] 88.7771 | EMA9:88.7781 EMA21:88.7855 | RSI:44.3 ADX:20.5 MACD_H:-0.00167
+[COLETOR] Ticks:     124 | 88.7771 @ 2026-04-06T15:46:58
+[TICK] 88.7935 | EMA9:88.7812 EMA21:88.7862 | RSI:52.1 ADX:19.5 MACD_H:-0.00006 [LATERAL]
+[COLETOR] Ticks:     125 | 88.7935 @ 2026-04-06T15:47:00
+[TICK] 88.7944 | EMA9:88.7838 EMA21:88.7870 | RSI:52.5 ADX:18.6 MACD_H:+0.00107 [LATERAL]
+[COLETOR] Ticks:     126 | 88.7944 @ 2026-04-06T15:47:02
+[TICK] 88.8010 | EMA9:88.7873 EMA21:88.7883 | RSI:55.4 ADX:17.4 MACD_H:+0.00219 [LATERAL]
+[COLETOR] Ticks:     127 | 88.801 @ 2026-04-06T15:47:04
+[TICK] 88.8008 | EMA9:88.7900 EMA21:88.7894 | RSI:55.2 ADX:16.3 MACD_H:+0.00281 [LATERAL]
+[COLETOR] Ticks:     128 | 88.8008 @ 2026-04-06T15:47:06
+[COLETOR] Ticks:     129 | 88.7868 @ 2026-04-06T15:47:08
+[TICK] 88.7868 | EMA9:88.7893 EMA21:88.7892 | RSI:48.1 ADX:16.2 MACD_H:+0.00220 [LATERAL]
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Bearish Engulfing (força: 1.00)
+  Preço: 88.7810 | Contexto: Sem contexto especial
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[TICK] 88.7810 | EMA9:88.7877 EMA21:88.7884 | RSI:45.5 ADX:16.5 MACD_H:+0.00137 [LATERAL]
+[COLETOR] Ticks:     130 | 88.781 @ 2026-04-06T15:47:10
+[TICK] 88.8129 | EMA9:88.7927 EMA21:88.7906 | RSI:58.8 ADX:16.0 MACD_H:+0.00284 [LATERAL]
+[COLETOR] Ticks:     131 | 88.8129 @ 2026-04-06T15:47:12
+[TICK] 88.8306 | EMA9:88.8003 EMA21:88.7943 | RSI:64.0 ADX:16.5 MACD_H:+0.00477 [LATERAL]
+[COLETOR] Ticks:     132 | 88.8306 @ 2026-04-06T15:47:14
+[TICK] 88.8238 | EMA9:88.8050 EMA21:88.7969 | RSI:60.8 ADX:17.0 MACD_H:+0.00531 [LATERAL]
+[COLETOR] Ticks:     133 | 88.8238 @ 2026-04-06T15:47:16
+[TICK] 88.8266 | EMA9:88.8093 EMA21:88.7996 | RSI:61.7 ADX:17.5 MACD_H:+0.00555 [LATERAL]
+[COLETOR] Ticks:     134 | 88.8266 @ 2026-04-06T15:47:18
+[TICK] 88.8271 | EMA9:88.8129 EMA21:88.8021 | RSI:61.8 ADX:17.9 MACD_H:+0.00544 [LATERAL]
+[COLETOR] Ticks:     135 | 88.8271 @ 2026-04-06T15:47:20
+[COLETOR] Ticks:     136 | 88.8443 @ 2026-04-06T15:47:22
+[TICK] 88.8443 | EMA9:88.8192 EMA21:88.8060 | RSI:66.9 ADX:19.2 MACD_H:+0.00615 [LATERAL]
+[TICK] 88.8637 | EMA9:88.8281 EMA21:88.8112 | RSI:71.5 ADX:21.2 MACD_H:+0.00748
+[COLETOR] Ticks:     137 | 88.8637 @ 2026-04-06T15:47:24
+[TICK] 88.8807 | EMA9:88.8386 EMA21:88.8175 | RSI:74.9 ADX:23.6 MACD_H:+0.00895
+[COLETOR] Ticks:     138 | 88.8807 @ 2026-04-06T15:47:26
+[TICK] 88.8831 | EMA9:88.8475 EMA21:88.8235 | RSI:75.3 ADX:25.9 MACD_H:+0.00948 [→ BUY]
+[COLETOR] Ticks:     139 | 88.8831 @ 2026-04-06T15:47:28[IA] Modelo de duração carregado (duration_model.pkl)
+[BOT] → BUY | Stake: 79.25 USD | Duração: 10t | ADX:25.9 RSI:75.3
+[BOT] Contrato aberto | ID: 311064422208
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 Bullish Engulfing (força: 0.70)
+  Preço: 88.8746 | Contexto: Sem contexto especial
+  Ação sugerida: BUY favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:     140 | 88.8746 @ 2026-04-06T15:47:30
+[COLETOR] Ticks:     141 | 88.8723 @ 2026-04-06T15:47:32
+[COLETOR] Ticks:     142 | 88.862 @ 2026-04-06T15:47:34
+[COLETOR] Ticks:     143 | 88.877 @ 2026-04-06T15:47:36
+[COLETOR] Ticks:     144 | 88.867 @ 2026-04-06T15:47:38
+[COLETOR] Ticks:     145 | 88.8583 @ 2026-04-06T15:47:40
+[BOT] Poll de resultado para contrato 311064422208 (tentativa 1)...
+[COLETOR] Ticks:     146 | 88.8376 @ 2026-04-06T15:47:42
+[COLETOR] Ticks:     147 | 88.8327 @ 2026-04-06T15:47:44
+[BOT] Poll de resultado para contrato 311064422208 (tentativa 2)...
+[COLETOR] Ticks:     148 | 88.8344 @ 2026-04-06T15:47:46
+[COLETOR] Ticks:     149 | 88.8413 @ 2026-04-06T15:47:48
+[COLETOR] Ticks:     150 | 88.8384 @ 2026-04-06T15:47:50
+[BOT] Poll de resultado para contrato 311064422208 (tentativa 3)...
+[COLETOR] Ticks:     151 | 88.8637 @ 2026-04-06T15:47:52
+[COLETOR] Ticks:     152 | 88.8601 @ 2026-04-06T15:47:54
+[BOT] Poll de resultado para contrato 311064422208 (tentativa 4)...
+[COLETOR] Ticks:     153 | 88.8506 @ 2026-04-06T15:47:56
+[COLETOR] Ticks:     154 | 88.8282 @ 2026-04-06T15:47:58
+[COLETOR] Ticks:     155 | 88.812 @ 2026-04-06T15:48:00
+[BOT] Poll de resultado para contrato 311064422208 (tentativa 5)...
+[COLETOR] Ticks:     156 | 88.8389 @ 2026-04-06T15:48:02
+[COLETOR] Ticks:     157 | 88.8376 @ 2026-04-06T15:48:04
+[BOT] Poll de resultado para contrato 311064422208 (tentativa 6)...
+[TRADE] LOSS | Profit: -79.25 USD | Saldo: 7845.38 | PnL hoje: -79.25
+[COLETOR] Ticks:     158 | 88.8249 @ 2026-04-06T15:48:06
+[BOT] 88.8249 | Próxima entrada em 81 ticks
+[BOT] 88.8288 | Próxima entrada em 80 ticks
+[COLETOR] Ticks:     159 | 88.8288 @ 2026-04-06T15:48:08
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟡 Doji (força: 0.62)
+  Preço: 88.8380 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: Aguardar
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BOT] 88.8380 | Próxima entrada em 79 ticks
+[COLETOR] Ticks:     160 | 88.838 @ 2026-04-06T15:48:10
+[BOT] 88.8544 | Próxima entrada em 78 ticks
+[COLETOR] Ticks:     161 | 88.8544 @ 2026-04-06T15:48:12
+[BOT] 88.8628 | Próxima entrada em 77 ticks
+[COLETOR] Ticks:     162 | 88.8628 @ 2026-04-06T15:48:14
+[BOT] 88.8645 | Próxima entrada em 76 ticks
+[COLETOR] Ticks:     163 | 88.8645 @ 2026-04-06T15:48:16
+[BOT] 88.8971 | Próxima entrada em 75 ticks
+[COLETOR] Ticks:     164 | 88.8971 @ 2026-04-06T15:48:18
+[BOT] 88.9057 | Próxima entrada em 74 ticks
+[COLETOR] Ticks:     165 | 88.9057 @ 2026-04-06T15:48:20
+[BOT] 88.9088 | Próxima entrada em 73 ticks
+[COLETOR] Ticks:     166 | 88.9088 @ 2026-04-06T15:48:22
+[BOT] 88.9129 | Próxima entrada em 72 ticks
+[COLETOR] Ticks:     167 | 88.9129 @ 2026-04-06T15:48:24
+[BOT] 88.9047 | Próxima entrada em 71 ticks
+[COLETOR] Ticks:     168 | 88.9047 @ 2026-04-06T15:48:26
+[COLETOR] Ticks:     169 | 88.9147 @ 2026-04-06T15:48:28
+[BOT] 88.9147 | Próxima entrada em 70 ticks
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Bearish Engulfing (força: 1.00)
+  Preço: 88.9095 | Contexto: Demand Zone + Supply Zone + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 Hammer (força: 1.00)
+  Preço: 88.9095 | Contexto: Demand Zone + Supply Zone + FVG Bullish
+  Ação sugerida: BUY favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BOT] 88.9095 | Próxima entrada em 69 ticks
+[COLETOR] Ticks:     170 | 88.9095 @ 2026-04-06T15:48:30
+[BOT] 88.8998 | Próxima entrada em 68 ticks
+[COLETOR] Ticks:     171 | 88.8998 @ 2026-04-06T15:48:32
+[BOT] 88.8961 | Próxima entrada em 67 ticks
+[COLETOR] Ticks:     172 | 88.8961 @ 2026-04-06T15:48:34
+[BOT] 88.8908 | Próxima entrada em 66 ticks
+[COLETOR] Ticks:     173 | 88.8908 @ 2026-04-06T15:48:36
+[BOT] 88.8590 | Próxima entrada em 65 ticks
+[COLETOR] Ticks:     174 | 88.859 @ 2026-04-06T15:48:38
+[BOT] 88.8629 | Próxima entrada em 64 ticks
+[COLETOR] Ticks:     175 | 88.8629 @ 2026-04-06T15:48:40
+[BOT] 88.8850 | Próxima entrada em 63 ticks
+[COLETOR] Ticks:     176 | 88.885 @ 2026-04-06T15:48:42
+[BOT] 88.8901 | Próxima entrada em 62 ticks
+[COLETOR] Ticks:     177 | 88.8901 @ 2026-04-06T15:48:44
+[BOT] 88.8762 | Próxima entrada em 61 ticks
+[COLETOR] Ticks:     178 | 88.8762 @ 2026-04-06T15:48:46
+[BOT] 88.8698 | Próxima entrada em 60 ticks
+[COLETOR] Ticks:     179 | 88.8698 @ 2026-04-06T15:48:48
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 Bullish Engulfing (força: 1.00)
+  Preço: 88.8595 | Contexto: Demand Zone + Supply Zone + FVG Bearish
+  Ação sugerida: BUY favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BOT] 88.8595 | Próxima entrada em 59 ticks
+[COLETOR] Ticks:     180 | 88.8595 @ 2026-04-06T15:48:50
+[BOT] 88.8703 | Próxima entrada em 58 ticks
+[COLETOR] Ticks:     181 | 88.8703 @ 2026-04-06T15:48:52
+[COLETOR] Ticks:     182 | 88.8717 @ 2026-04-06T15:48:54
+[BOT] 88.8717 | Próxima entrada em 57 ticks
+[BOT] 88.8944 | Próxima entrada em 56 ticks
+[COLETOR] Ticks:     183 | 88.8944 @ 2026-04-06T15:48:56
+[BOT] 88.8881 | Próxima entrada em 55 ticks
+[COLETOR] Ticks:     184 | 88.8881 @ 2026-04-06T15:48:58
+[BOT] 88.9080 | Próxima entrada em 54 ticks
+[COLETOR] Ticks:     185 | 88.908 @ 2026-04-06T15:49:00
+[BOT] 88.9130 | Próxima entrada em 53 ticks
+[COLETOR] Ticks:     186 | 88.913 @ 2026-04-06T15:49:02
+[BOT] 88.9248 | Próxima entrada em 52 ticks
+[COLETOR] Ticks:     187 | 88.9248 @ 2026-04-06T15:49:04
+[BOT] 88.9339 | Próxima entrada em 51 ticks
+[COLETOR] Ticks:     188 | 88.9339 @ 2026-04-06T15:49:06
+[BOT] 88.9347 | Próxima entrada em 50 ticks
+[COLETOR] Ticks:     189 | 88.9347 @ 2026-04-06T15:49:08
+[BOT] 88.9302 | Próxima entrada em 49 ticks
+[COLETOR] Ticks:     190 | 88.9302 @ 2026-04-06T15:49:10
+[BOT] 88.9244 | Próxima entrada em 48 ticks
+[COLETOR] Ticks:     191 | 88.9244 @ 2026-04-06T15:49:12
+[BOT] 88.9426 | Próxima entrada em 47 ticks
+[COLETOR] Ticks:     192 | 88.9426 @ 2026-04-06T15:49:14
+[BOT] 88.9459 | Próxima entrada em 46 ticks
+[COLETOR] Ticks:     193 | 88.9459 @ 2026-04-06T15:49:16
+[BOT] 88.9460 | Próxima entrada em 45 ticks
+[COLETOR] Ticks:     194 | 88.946 @ 2026-04-06T15:49:18
+[COLETOR] Ticks:     195 | 88.9444 @ 2026-04-06T15:49:20
+[BOT] 88.9444 | Próxima entrada em 44 ticks
+[BOT] 88.9344 | Próxima entrada em 43 ticks
+[COLETOR] Ticks:     196 | 88.9344 @ 2026-04-06T15:49:22
+[BOT] 88.9374 | Próxima entrada em 42 ticks
+[COLETOR] Ticks:     197 | 88.9374 @ 2026-04-06T15:49:24
+[BOT] 88.9374 | Próxima entrada em 41 ticks
+[COLETOR] Ticks:     198 | 88.9374 @ 2026-04-06T15:49:26
+[BOT] 88.9344 | Próxima entrada em 40 ticks
+[COLETOR] Ticks:     199 | 88.9344 @ 2026-04-06T15:49:28
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 Bullish Engulfing (força: 0.52)
+  Preço: 88.9219 | Contexto: Demand Zone + Supply Zone + Resistência próxima + FVG Bearish
+  Ação sugerida: BUY favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[BOT] 88.9219 | Próxima entrada em 39 ticks
+[COLETOR] Ticks:     200 | 88.9219 @ 2026-04-06T15:49:30
+[BOT] 88.9277 | Próxima entrada em 38 ticks
+[COLETOR] Ticks:     201 | 88.9277 @ 2026-04-06T15:49:32
+[BOT] 88.9176 | Próxima entrada em 37 ticks
+[COLETOR] Ticks:     202 | 88.9176 @ 2026-04-06T15:49:34
+[BOT] 88.9077 | Próxima entrada em 36 ticks
+[COLETOR] Ticks:     203 | 88.9077 @ 2026-04-06T15:49:36
+[BOT] 88.9180 | Próxima entrada em 35 ticks
+[COLETOR] Ticks:     204 | 88.918 @ 2026-04-06T15:49:38
+[BOT] 88.9157 | Próxima entrada em 34 ticks
+[COLETOR] Ticks:     205 | 88.9157 @ 2026-04-06T15:49:40
+[BOT] 88.9142 | Próxima entrada em 33 ticks
+[COLETOR] Ticks:     206 | 88.9142 @ 2026-04-06T15:49:42
+[BOT] 88.9117 | Próxima entrada em 32 ticks
+[COLETOR] Ticks:     207 | 88.9117 @ 2026-04-06T15:49:44
+[BOT] 88.9053 | Próxima entrada em 31 ticks
+[COLETOR] Ticks:     208 | 88.9053 @ 2026-04-06T15:49:46
+[BOT] 88.9044 | Próxima entrada em 30 ticks
+[COLETOR] Ticks:     209 | 88.9044 @ 2026-04-06T15:49:48
+[BOT] 88.9198 | Próxima entrada em 29 ticks
+[COLETOR] Ticks:     210 | 88.9198 @ 2026-04-06T15:49:50
+[BOT] 88.9275 | Próxima entrada em 28 ticks
+[COLETOR] Ticks:     211 | 88.9275 @ 2026-04-06T15:49:52
+[BOT] 88.9130 | Próxima entrada em 27 ticks
+[COLETOR] Ticks:     212 | 88.913 @ 2026-04-06T15:49:54
+[BOT] 88.8869 | Próxima entrada em 26 ticks
+[COLETOR] Ticks:     213 | 88.8869 @ 2026-04-06T15:49:56
+[COLETOR] Ticks:     214 | 88.8868 @ 2026-04-06T15:49:58
+[BOT] 88.8868 | Próxima entrada em 25 ticks
+[BOT] 88.8848 | Próxima entrada em 24 ticks
+[COLETOR] Ticks:     215 | 88.8848 @ 2026-04-06T15:50:00
+[BOT] 88.8856 | Próxima entrada em 23 ticks
+[COLETOR] Ticks:     216 | 88.8856 @ 2026-04-06T15:50:02
+[BOT] 88.9113 | Próxima entrada em 22 ticks
+[COLETOR] Ticks:     217 | 88.9113 @ 2026-04-06T15:50:04
+[BOT] 88.9068 | Próxima entrada em 21 ticks
+[COLETOR] Ticks:     218 | 88.9068 @ 2026-04-06T15:50:06
+[COLETOR] Ticks:     219 | 88.8965 @ 2026-04-06T15:50:08
+[BOT] 88.8965 | Próxima entrada em 20 ticks
+[BOT] 88.9163 | Próxima entrada em 19 ticks
+[COLETOR] Ticks:     220 | 88.9163 @ 2026-04-06T15:50:10
+[BOT] 88.9323 | Próxima entrada em 18 ticks
+[COLETOR] Ticks:     221 | 88.9323 @ 2026-04-06T15:50:12
+[BOT] 88.9188 | Próxima entrada em 17 ticks
+[COLETOR] Ticks:     222 | 88.9188 @ 2026-04-06T15:50:14
+[BOT] 88.9265 | Próxima entrada em 16 ticks
+[COLETOR] Ticks:     223 | 88.9265 @ 2026-04-06T15:50:16
+[BOT] 88.9130 | Próxima entrada em 15 ticks
+[COLETOR] Ticks:     224 | 88.913 @ 2026-04-06T15:50:18
+[BOT] 88.9180 | Próxima entrada em 14 ticks
+[COLETOR] Ticks:     225 | 88.918 @ 2026-04-06T15:50:20
+[BOT] 88.9245 | Próxima entrada em 13 ticks
+[COLETOR] Ticks:     226 | 88.9245 @ 2026-04-06T15:50:22
+[COLETOR] Ticks:     227 | 88.9098 @ 2026-04-06T15:50:24
+[BOT] 88.9098 | Próxima entrada em 12 ticks
+[BOT] 88.9008 | Próxima entrada em 11 ticks
+[COLETOR] Ticks:     228 | 88.9008 @ 2026-04-06T15:50:26
+[BOT] 88.8895 | Próxima entrada em 10 ticks
+[COLETOR] Ticks:     229 | 88.8895 @ 2026-04-06T15:50:28
+[BOT] 88.8948 | Próxima entrada em 9 ticks
+[COLETOR] Ticks:     230 | 88.8948 @ 2026-04-06T15:50:30
+[BOT] 88.8946 | Próxima entrada em 8 ticks
+[COLETOR] Ticks:     231 | 88.8946 @ 2026-04-06T15:50:32
+[BOT] 88.8978 | Próxima entrada em 7 ticks
+[COLETOR] Ticks:     232 | 88.8978 @ 2026-04-06T15:50:34
+[BOT] 88.8873 | Próxima entrada em 6 ticks
+[COLETOR] Ticks:     233 | 88.8873 @ 2026-04-06T15:50:36
+[BOT] 88.8854 | Próxima entrada em 5 ticks
+[COLETOR] Ticks:     234 | 88.8854 @ 2026-04-06T15:50:38
+[BOT] 88.9059 | Próxima entrada em 4 ticks
+[COLETOR] Ticks:     235 | 88.9059 @ 2026-04-06T15:50:40
+[BOT] 88.9011 | Próxima entrada em 3 ticks
+[COLETOR] Ticks:     236 | 88.9011 @ 2026-04-06T15:50:42
+[BOT] 88.8943 | Próxima entrada em 2 ticks
+[COLETOR] Ticks:     237 | 88.8943 @ 2026-04-06T15:50:44
+[BOT] 88.8800 | Próxima entrada em 1 ticks
+[COLETOR] Ticks:     238 | 88.88 @ 2026-04-06T15:50:46
+[COLETOR] Ticks:     239 | 88.8911 @ 2026-04-06T15:50:48
+[COLETOR] Ticks:     240 | 88.8882 @ 2026-04-06T15:50:50
+[COLETOR] Ticks:     241 | 88.8845 @ 2026-04-06T15:50:52
+[TICK] 88.8911 | EMA9:88.8937 EMA21:88.8995 | RSI:45.8 ADX:13.8 MACD_H:-0.00128 [LATERAL]
+[TICK] 88.8882 | EMA9:88.8926 EMA21:88.8984 | RSI:44.7 ADX:14.2 MACD_H:-0.00117 [LATERAL]
+[TICK] 88.8845 | EMA9:88.8910 EMA21:88.8972 | RSI:43.3 ADX:14.9 MACD_H:-0.00123 [LATERAL]
+[TICK] 88.8754 | EMA9:88.8879 EMA21:88.8952 | RSI:40.0 ADX:16.1 MACD_H:-0.00174 [LATERAL]
+[COLETOR] Ticks:     242 | 88.8754 @ 2026-04-06T15:50:54
+[TICK] 88.8806 | EMA9:88.8864 EMA21:88.8939 | RSI:42.7 ADX:17.2 MACD_H:-0.00159 [LATERAL]
+[COLETOR] Ticks:     243 | 88.8806 @ 2026-04-06T15:50:56
+[TICK] 88.8704 | EMA9:88.8832 EMA21:88.8917 | RSI:39.0 ADX:18.6 MACD_H:-0.00201 [LATERAL]
+[COLETOR] Ticks:     244 | 88.8704 @ 2026-04-06T15:50:58
+[TICK] 88.8620 | EMA9:88.8790 EMA21:88.8890 | RSI:36.1 ADX:20.4 MACD_H:-0.00265
+[COLETOR] Ticks:     245 | 88.862 @ 2026-04-06T15:51:00
+[TICK] 88.8818 | EMA9:88.8795 EMA21:88.8884 | RSI:46.0 ADX:20.6 MACD_H:-0.00159
+[COLETOR] Ticks:     246 | 88.8818 @ 2026-04-06T15:51:02
+[TICK] 88.8734 | EMA9:88.8783 EMA21:88.8870 | RSI:43.0 ADX:20.9 MACD_H:-0.00131
+[COLETOR] Ticks:     247 | 88.8734 @ 2026-04-06T15:51:04
+[TICK] 88.8673 | EMA9:88.8761 EMA21:88.8852 | RSI:40.9 ADX:21.5 MACD_H:-0.00139
+[COLETOR] Ticks:     248 | 88.8673 @ 2026-04-06T15:51:06
+[TICK] 88.8823 | EMA9:88.8773 EMA21:88.8850 | RSI:47.7 ADX:21.1 MACD_H:-0.00034
+[COLETOR] Ticks:     249 | 88.8823 @ 2026-04-06T15:51:08
+[COLETOR] Ticks:     250 | 88.8876 @ 2026-04-06T15:51:10
+[TICK] 88.8876 | EMA9:88.8794 EMA21:88.8852 | RSI:49.9 ADX:20.2 MACD_H:+0.00075
+[TICK] 88.8975 | EMA9:88.8830 EMA21:88.8863 | RSI:53.8 ADX:19.0 MACD_H:+0.00210 [LATERAL]
+[COLETOR] Ticks:     251 | 88.8975 @ 2026-04-06T15:51:12
+[TICK] 88.8913 | EMA9:88.8847 EMA21:88.8868 | RSI:51.1 ADX:18.0 MACD_H:+0.00250 [LATERAL]
+[COLETOR] Ticks:     252 | 88.8913 @ 2026-04-06T15:51:14
+[TICK] 88.8901 | EMA9:88.8858 EMA21:88.8871 | RSI:50.5 ADX:16.9 MACD_H:+0.00261 [LATERAL]
+[COLETOR] Ticks:     253 | 88.8901 @ 2026-04-06T15:51:16
+[TICK] 88.8753 | EMA9:88.8837 EMA21:88.8860 | RSI:44.5 ADX:16.8 MACD_H:+0.00164 [LATERAL]
+[COLETOR] Ticks:     254 | 88.8753 @ 2026-04-06T15:51:18
+[TICK] 88.8781 | EMA9:88.8825 EMA21:88.8853 | RSI:45.8 ADX:16.7 MACD_H:+0.00118 [LATERAL]
+[COLETOR] Ticks:     255 | 88.8781 @ 2026-04-06T15:51:20
+[TICK] 88.8852 | EMA9:88.8831 EMA21:88.8853 | RSI:49.1 ADX:15.8 MACD_H:+0.00133 [LATERAL]
+[COLETOR] Ticks:     256 | 88.8852 @ 2026-04-06T15:51:22
+[TICK] 88.8709 | EMA9:88.8807 EMA21:88.8840 | RSI:43.4 ADX:15.7 MACD_H:+0.00049 [LATERAL]
+[COLETOR] Ticks:     257 | 88.8709 @ 2026-04-06T15:51:24
+[TICK] 88.8520 | EMA9:88.8749 EMA21:88.8811 | RSI:37.2 ADX:16.8 MACD_H:-0.00123 [LATERAL]
+[COLETOR] Ticks:     258 | 88.852 @ 2026-04-06T15:51:26
+[TICK] 88.8633 | EMA9:88.8726 EMA21:88.8794 | RSI:42.5 ADX:17.8 MACD_H:-0.00147 [LATERAL]
+[COLETOR] Ticks:     259 | 88.8633 @ 2026-04-06T15:51:28
+[TICK] 88.8498 | EMA9:88.8680 EMA21:88.8768 | RSI:38.3 ADX:18.8 MACD_H:-0.00236 [LATERAL]
+[COLETOR] Ticks:     260 | 88.8498 @ 2026-04-06T15:51:30
+[COLETOR] Ticks:     261 | 88.8346 @ 2026-04-06T15:51:32
+[TICK] 88.8346 | EMA9:88.8614 EMA21:88.8729 | RSI:34.2 ADX:20.6 MACD_H:-0.00371
+[TICK] 88.8362 | EMA9:88.8563 EMA21:88.8696 | RSI:35.0 ADX:22.2 MACD_H:-0.00419
+[COLETOR] Ticks:     262 | 88.8362 @ 2026-04-06T15:51:34
+[COLETOR] Ticks:     263 | 88.8087 @ 2026-04-06T15:51:36
+[TICK] 88.8087 | EMA9:88.8468 EMA21:88.8641 | RSI:28.7 ADX:24.8 MACD_H:-0.00596
+[TICK] 88.8102 | EMA9:88.8395 EMA21:88.8591 | RSI:29.5 ADX:27.1 MACD_H:-0.00657
+[COLETOR] Ticks:     264 | 88.8102 @ 2026-04-06T15:51:38
+[COLETOR] Ticks:     265 | 88.8171 @ 2026-04-06T15:51:40
+[TICK] 88.8171 | EMA9:88.8350 EMA21:88.8553 | RSI:32.9 ADX:28.5 MACD_H:-0.00607
+[TICK] 88.8241 | EMA9:88.8328 EMA21:88.8525 | RSI:36.4 ADX:29.0 MACD_H:-0.00487
+[COLETOR] Ticks:     266 | 88.8241 @ 2026-04-06T15:51:42
+[TICK] 88.8068 | EMA9:88.8276 EMA21:88.8483 | RSI:32.0 ADX:29.9 MACD_H:-0.00485
+[COLETOR] Ticks:     267 | 88.8068 @ 2026-04-06T15:51:44
+[TICK] 88.7914 | EMA9:88.8204 EMA21:88.8432 | RSI:28.7 ADX:31.4 MACD_H:-0.00542
+[COLETOR] Ticks:     268 | 88.7914 @ 2026-04-06T15:51:46
+[TICK] 88.8042 | EMA9:88.8171 EMA21:88.8396 | RSI:34.7 ADX:32.8 MACD_H:-0.00453
