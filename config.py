@@ -34,7 +34,7 @@ def set_active_symbol(symbol: str) -> None:
     global _active_symbol
     _active_symbol = symbol
 DURATION      = 5        # duração de fallback (usada quando o modelo ainda não existe)
-DURATION_UNIT = "t"      # "t" = ticks | "s" = segundos | "m" = minutos
+DURATION_UNIT = "m"      # "t" = ticks | "s" = segundos | "m" = minutos
 BASIS         = "stake"  # base do contrato
 CURRENCY      = "USD"
 
@@ -78,9 +78,9 @@ ADX_ADAPTIVE_PERCENTILE = 40   # percentil do histórico de ADX; piso = 15
 
 # ----- Gestão de risco -----
 STAKE_PCT         = 0.01   # 1% do saldo por operação
-STOP_LOSS_PCT     = 0.25   # -25% do saldo diário → para o dia
-TAKE_PROFIT_PCT   = 0.50   # +50% do saldo diário → para o dia
-MAX_CONSEC_LOSSES = 3      # losses consecutivos antes de pausar
+STOP_LOSS_PCT     = 1.00   # -100% do saldo diário → para o dia
+TAKE_PROFIT_PCT   = 1.00   # +100% do saldo diário → para o dia
+MAX_CONSEC_LOSSES = 10      # losses consecutivos antes de pausar
 
 # Pausa escalável: base * scale_factor^(losses_extras) — cap de 2h (P8)
 PAUSE_BASE_SEC     = 600   # 10 min de pausa base (1º gatilho)
@@ -88,15 +88,15 @@ PAUSE_SCALE_FACTOR = 2     # dobra a pausa a cada loss além do limite
 RESUME_ON_WIN      = True  # retoma pausa imediatamente após 1 win
 
 # ----- Aquecimento -----
-MIN_TICKS = 50  # ticks mínimos antes de operar (garante indicadores estáveis)
+MIN_TICKS = 500  # ticks mínimos antes de operar (garante indicadores estáveis)
 
 # ----- Buffer de preços (P12) -----
-PRICE_BUFFER_SIZE = 500  # ticks mantidos em memória para indicadores e IA
+PRICE_BUFFER_SIZE = 1000  # ticks mantidos em memória para indicadores e IA
 
 # ----- Cadência de entradas -----
 # Primeira entrada: imediata após MIN_TICKS (modelo já treinado com histórico).
 # Entradas seguintes: somente após acumular ENTRY_TICK_INTERVAL novos ticks.
-ENTRY_TICK_INTERVAL = 100  # ticks entre entradas
+ENTRY_TICK_INTERVAL = 500 # ticks entre entradas
 
 # ----- Timeout de operações (P1, P7) -----
 PROPOSAL_TIMEOUT_SEC = 10   # segundos sem resposta da API antes de cancelar proposal
