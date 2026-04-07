@@ -24,11 +24,12 @@ import websocket
 from config import (
     APP_ID, TOKEN, SYMBOL,
     DURATION, DURATION_UNIT, BASIS, CURRENCY,
-    MIN_TICKS, ENTRY_TICK_INTERVAL,
+    MIN_TICKS, MIN_CANDLES, ENTRY_TICK_INTERVAL, ENTRY_CANDLE_INTERVAL,
     PRICE_BUFFER_SIZE,
     PROPOSAL_TIMEOUT_SEC,
     HEARTBEAT_TIMEOUT_SEC,
     CANDLE_SIZE, CANDLE_NOTIFY, PA_SR_TOLERANCE,
+    CANDLE_TIMEFRAME_SEC,
 )
 from risk_manager import RiskManager
 from strategy import get_signal, get_adaptive_adx_min
@@ -54,8 +55,24 @@ class DerivBot:
         self.demo = demo
         self._ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
-        # P12: Buffer maior para indicadores mais estáveis (500 ticks)
+        # P12: Buffer de ticks brutos (usado internamente para montar candles)
         self._prices: deque = deque(maxlen=PRICE_BUFFER_SIZE)
+
+        # ── Buffer de candles de tempo (CANDLE_TIMEFRAME_SEC) ──────────────────
+        # _candle_closes: série de closes das velas fechadas (alimenta indicadores)
+        # _candle_epochs: epoch de abertura de cada vela fechada
+        self._candle_closes: deque = deque(maxlen=500)
+        self._candle_epochs: deque = deque(maxlen=500)
+        # Vela em construção (corrente)
+        self._cur_candle_open: Optional[float] = None
+        self._cur_candle_high: float = 0.0
+        self._cur_candle_low: float = 0.0
+        self._cur_candle_close: float = 0.0
+        self._cur_candle_epoch: int = 0   # epoch de abertura da vela corrente
+        # Sinaliza que uma nova vela acabou de ser fechada neste tick
+        self._new_candle_closed: bool = False
+        # Contador de velas fechadas desde a última entrada
+        self._candles_since_last_entry: int = ENTRY_CANDLE_INTERVAL
 
         # P10: Histórico de ADX para cálculo adaptativo do limiar
         self._adx_history: deque = deque(maxlen=500)
@@ -88,8 +105,7 @@ class DerivBot:
         # P9: Watchdog de heartbeat (alerta se nenhum tick chegar em N segundos)
         self._watchdog: Optional[threading.Timer] = None
 
-        # Cadência de entradas: começa já no limite para disparar na 1ª oportunidade
-        # após o aquecimento (aprendizado dos 500 candles históricos já aplicado).
+        # Cadência de entradas: começa já no limite para disparar na 1ª oportunidade.
         self._ticks_since_last_entry: int = ENTRY_TICK_INTERVAL
 
         self._ws: Optional[websocket.WebSocketApp] = None
@@ -208,24 +224,53 @@ class DerivBot:
         except Exception:
             self._last_tick_epoch = 0
         self._prices.append(price)
+        epoch = self._last_tick_epoch
 
         # P9: Reiniciar watchdog a cada tick recebido
         self._reset_watchdog()
 
-        # Aguardar acúmulo de ticks para indicadores estáveis
-        n = len(self._prices)
-        if n < MIN_TICKS:
-            print(f"\r[BOT] Aquecendo... {n}/{MIN_TICKS} ticks", end="", flush=True)
+        # ── Montar vela de tempo (CANDLE_TIMEFRAME_SEC) ─────────────────────
+        self._new_candle_closed = False
+        if self._cur_candle_open is None and epoch > 0:
+            # Primeira vela: alinha ao início da janela
+            self._cur_candle_epoch = (epoch // CANDLE_TIMEFRAME_SEC) * CANDLE_TIMEFRAME_SEC
+            self._cur_candle_open  = price
+            self._cur_candle_high  = price
+            self._cur_candle_low   = price
+            self._cur_candle_close = price
+        elif epoch > 0 and self._cur_candle_open is not None:
+            if epoch < self._cur_candle_epoch + CANDLE_TIMEFRAME_SEC:
+                # Tick dentro da vela corrente
+                self._cur_candle_high  = max(self._cur_candle_high, price)
+                self._cur_candle_low   = min(self._cur_candle_low, price)
+                self._cur_candle_close = price
+            else:
+                # Fechar vela corrente e iniciar nova
+                self._candle_closes.append(self._cur_candle_close)
+                self._candle_epochs.append(self._cur_candle_epoch)
+                self._new_candle_closed = True
+                self._candle_tick_counter = 0  # reinicia o contador de padrões
+
+                # Inicia nova vela alinhada
+                self._cur_candle_epoch = (epoch // CANDLE_TIMEFRAME_SEC) * CANDLE_TIMEFRAME_SEC
+                self._cur_candle_open  = price
+                self._cur_candle_high  = price
+                self._cur_candle_low   = price
+                self._cur_candle_close = price
+
+                # Verificar padrões de vela ao fechar cada vela
+                self._check_candle_patterns(price)
+
+        # Aquecimento: aguarda MIN_CANDLES velas fechadas
+        n_candles = len(self._candle_closes)
+        if n_candles < MIN_CANDLES:
+            remain_sec = (MIN_CANDLES - n_candles) * CANDLE_TIMEFRAME_SEC // 60
+            print(
+                f"\r[BOT] Aquecendo... {n_candles}/{MIN_CANDLES} velas"
+                f" (~{remain_sec} min restantes)",
+                end="", flush=True,
+            )
             return
-
-        # Verificar padrões de vela a cada CANDLE_SIZE ticks
-        self._candle_tick_counter += 1
-        if self._candle_tick_counter >= CANDLE_SIZE:
-            self._candle_tick_counter = 0
-            self._check_candle_patterns(price)
-
-        # Incrementa o contador de ticks desde a última entrada
-        self._ticks_since_last_entry += 1
 
         # P1: Verificar timeout de proposal sem resposta da API
         if self._in_trade and self._pending_timestamp > 0 and self._open_contract_id is None:
@@ -236,13 +281,12 @@ class DerivBot:
 
         # P7: Verificar timeout de contrato aberto sem resultado
         if self._in_trade and self._open_contract_id and self._buy_timestamp > 0:
-            contract_timeout = max(self._pending_duration * 3, 60)
+            contract_timeout = max(self._pending_duration * 60 * 3, 180)
             if time.time() - self._buy_timestamp > contract_timeout:
                 print(
                     f"\n[BOT] Contrato {self._open_contract_id} sem resultado "
                     f"após {contract_timeout}s — resetando estado"
                 )
-                # P13: cancelar poll ativo junto com o reset
                 if self._contract_poll_timer is not None:
                     self._contract_poll_timer.cancel()
                     self._contract_poll_timer = None
@@ -260,26 +304,37 @@ class DerivBot:
         if not self.risk_manager.can_trade():
             return
 
-        # Cadência adaptativa: ajustar intervalo com base no desempenho
-        adaptive_interval = ENTRY_TICK_INTERVAL
+        # Cadência: só avalia sinal quando uma nova vela fechou
+        if self._new_candle_closed:
+            self._candles_since_last_entry += 1
+
+        # Intervalo adaptativo: mais cauteloso após perdas consecutivas
+        adaptive_interval = ENTRY_CANDLE_INTERVAL
         if hasattr(self.risk_manager, "consecutive_losses"):
             if self.risk_manager.consecutive_losses >= 2:
-                adaptive_interval = int(ENTRY_TICK_INTERVAL * 1.5)
+                adaptive_interval = ENTRY_CANDLE_INTERVAL + 1  # aguarda 1 vela extra
 
-        if self._ticks_since_last_entry < adaptive_interval:
-            remaining = adaptive_interval - self._ticks_since_last_entry
-            print(
-                f"\r[BOT] {price:.4f} | Próxima entrada em {remaining} ticks   ",
-                end="", flush=True,
-            )
+        if self._candles_since_last_entry < adaptive_interval or not self._new_candle_closed:
+            remain = max(0, adaptive_interval - self._candles_since_last_entry)
+            if not self._new_candle_closed:
+                print(
+                    f"\r[BOT] {price:.4f} | Aguardando fechamento da vela... "
+                    f"(candles ok: {n_candles})   ",
+                    end="", flush=True,
+                )
+            else:
+                print(
+                    f"\r[BOT] {price:.4f} | Próxima entrada em {remain} vela(s)   ",
+                    end="", flush=True,
+                )
             return
 
-        # P10: Calcular ADX mínimo adaptativo e armazenar histórico
-        prices_list = list(self._prices)
+        # P10: Calcular ADX mínimo adaptativo usando closes das velas
+        candle_closes = list(self._candle_closes)
         adx_min = get_adaptive_adx_min(list(self._adx_history))
-        signal, indicators = get_signal(prices_list, adx_min=adx_min, adx_history=list(self._adx_history))
+        signal, indicators = get_signal(candle_closes, adx_min=adx_min, adx_history=list(self._adx_history))
 
-        # Atualizar histórico de ADX para próximas chamadas
+        # Atualizar histórico de ADX
         if indicators.get("adx"):
             self._adx_history.append(indicators["adx"])
 
@@ -287,14 +342,14 @@ class DerivBot:
 
         if signal in ("BUY", "SELL"):
             self._send_proposal(ws, signal, indicators)
-            self._ticks_since_last_entry = 0  # reinicia contagem após entrada
+            self._candles_since_last_entry = 0  # reinicia após entrada
 
     def _send_proposal(self, ws, direction: str, indicators: dict) -> None:
         contract_type = "CALL" if direction == "BUY" else "PUT"
         stake = self.risk_manager.get_stake()
 
-        # Duração escolhida pela IA (fallback para DURATION se modelo não existir)
-        duration = ai_predictor.predict_duration(list(self._prices))
+        # Duração escolhida pela IA a partir dos closes das velas (em minutos)
+        duration = ai_predictor.predict_duration(list(self._candle_closes))
 
         # Salva estado da operação pendente
         self._pending_direction   = direction
@@ -315,8 +370,8 @@ class DerivBot:
         }
         ws.send(json.dumps(proposal))
         print(
-            f"\n[BOT] → {direction} | Stake: {stake:.2f} USD | Duração: {duration}t | "
-            f"ADX:{indicators.get('adx', '?'):.1f} RSI:{indicators.get('rsi', '?'):.1f}"
+            f"\n[BOT] → {direction} | Stake: {stake:.2f} USD | Duração: {duration}m | "
+            f"ADX:{indicators.get('adx', 0):.1f} RSI:{indicators.get('rsi', 0):.1f}"
         )
 
     def _handle_proposal(self, ws, proposal: dict) -> None:
@@ -438,12 +493,17 @@ class DerivBot:
     # ─────────────────────────────────────────────────────────
 
     def _check_candle_patterns(self, current_price: float) -> None:
-        """Verifica padrões de vela e exibe notificação no terminal."""
+        """Verifica padrões de vela ao fechar cada vela de tempo."""
         if not CANDLE_NOTIFY:
             return
 
-        prices_list = list(self._prices)
-        candles = ind.ticks_to_candles(prices_list, CANDLE_SIZE)
+        # Usa os closes das velas de tempo para construir candles OHLC
+        closes = list(self._candle_closes)
+        if len(closes) < 4:
+            return
+
+        # Monta pseudo-candles a partir dos closes (para detecção de padrões)
+        candles = ind.ticks_to_candles(closes, 1) if len(closes) >= 4 else []
         if len(candles) < 4:
             return
 

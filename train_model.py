@@ -252,7 +252,8 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
     split = int(n * (1 - test_ratio))
 
     # P11: Gap temporal entre treino e teste para evitar vazamento de dados
-    gap = max(50, int(n * gap_ratio))
+    # Limita o gap a no máximo 5% do dataset para não eliminar todas as amostras de teste
+    gap = min(max(5, int(n * gap_ratio)), int(n * 0.05))
     X_train, X_test = X[:split], X[split + gap:]
     y_train, y_test = y[:split], y[split + gap:]
 

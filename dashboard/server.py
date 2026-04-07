@@ -422,8 +422,8 @@ def api_bot_start():
     skip_collect = bool(data.get("skip_collect", False))
     no_scan = bool(data.get("no_scan", False))
     retrain_interval = int(data.get("retrain_interval", 10))
-    min_ticks = int(data.get("min_ticks", 500))
-    history_count = int(data.get("history_count", 500))
+    min_ticks = int(data.get("min_ticks", 200))
+    history_count = int(data.get("history_count", 2000))
     force_retrain = bool(data.get("force_retrain", False))
 
     cmd = [sys.executable, "-u", str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]
@@ -850,15 +850,15 @@ def api_contract_active():
 
 @app.route("/api/indicator-series")
 def api_indicator_series():
-    """Calcula indicadores para os últimos N candles (1 candle = CANDLE_SIZE ticks)."""
+    """Calcula indicadores para os últimos N candles de tempo."""
     n_candles = min(int(request.args.get("n", 60)), 300)
     try:
         from feature_engine import compute_feature_map
-        from config import CANDLE_SIZE
+        from config import CANDLE_SIZE, CANDLE_TIMEFRAME_SEC
+        import indicators as ind
 
-        # Precisamos de (n_candles + janela_mínima) * CANDLE_SIZE ticks
-        window_size = 100
-        ticks_needed = (n_candles + window_size // CANDLE_SIZE + 5) * CANDLE_SIZE
+        window_size = 50  # mínimo de candles para indicadores
+        ticks_needed = (n_candles + window_size + 5) * max(CANDLE_TIMEFRAME_SEC, CANDLE_SIZE)
         df = _tail_csv(TICKS_CSV, ticks_needed)
 
         if df.empty:
@@ -867,21 +867,35 @@ def api_indicator_series():
         if "price" not in df.columns and df.shape[1] >= 2:
             df.columns = ["epoch", "price"] if df.shape[1] == 2 else list(df.columns)
 
-        prices = df["price"].astype(float).tolist() if "price" in df.columns else []
-        epochs = df["epoch"].astype(int).tolist() if "epoch" in df.columns else list(range(len(prices)))
+        prices_raw = df["price"].astype(float).tolist() if "price" in df.columns else []
+        epochs_raw = df["epoch"].astype(int).tolist() if "epoch" in df.columns else list(range(len(prices_raw)))
+
+        # Determina se dados são ticks brutos ou closes de candles
+        if len(epochs_raw) >= 2:
+            avg_gap = (epochs_raw[-1] - epochs_raw[0]) / max(len(epochs_raw) - 1, 1)
+            if avg_gap >= CANDLE_TIMEFRAME_SEC * 0.8:
+                prices = prices_raw
+                epochs = epochs_raw
+            else:
+                ticks_list = [{"epoch": e, "price": p} for e, p in zip(epochs_raw, prices_raw)]
+                candles_agg = ind.ticks_to_candles_by_time(ticks_list, CANDLE_TIMEFRAME_SEC)
+                prices = [c["close"] for c in candles_agg]
+                epochs = [c["epoch"] for c in candles_agg]
+        else:
+            prices = prices_raw
+            epochs = epochs_raw
 
         if len(prices) < window_size + 1:
             return jsonify([])
 
         result = []
-        step = CANDLE_SIZE
-        for end in range(window_size, len(prices), step):
+        for end in range(window_size, len(prices)):
             window = prices[max(0, end - window_size):end]
             fm = compute_feature_map(window)
             if fm is None:
                 continue
             result.append({
-                "epoch":     epochs[end - 1],
+                "epoch":     epochs[end - 1] if end - 1 < len(epochs) else 0,
                 "rsi":       round(fm["rsi"], 2),
                 "adx":       round(fm["adx"], 2),
                 "macd_hist": round(fm["macd_hist"], 6),
@@ -889,7 +903,6 @@ def api_indicator_series():
                 "ema21":     round(fm["ema21"], 5),
             })
 
-        # Retorna apenas os últimos n_candles pontos
         return jsonify(result[-n_candles:])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1038,10 +1051,12 @@ def api_candles():
         except (TypeError, ValueError):
             from_epoch = None
     try:
-        from config import CANDLE_SIZE
+        from config import CANDLE_SIZE, CANDLE_TIMEFRAME_SEC
         import indicators as ind
 
-        ticks_needed = n * CANDLE_SIZE + CANDLE_SIZE
+        # Para candles por tempo precisamos de (n + margem) * max_ticks_por_candle
+        # Estimativa: 1 tick/s × CANDLE_TIMEFRAME_SEC por vela
+        ticks_needed = (n + 5) * max(CANDLE_TIMEFRAME_SEC, CANDLE_SIZE)
         df = _tail_csv(TICKS_CSV, ticks_needed)
         if df.empty:
             return jsonify([])
@@ -1061,21 +1076,48 @@ def api_candles():
         if df.empty:
             return jsonify([])
 
+        epochs = df["epoch"].astype(int).tolist() if "epoch" in df.columns else list(range(len(df)))
         prices = df["price"].astype(float).tolist() if "price" in df.columns else []
-        epochs = df["epoch"].astype(int).tolist() if "epoch" in df.columns else list(range(len(prices)))
 
-        candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
-        # Associa epoch do primeiro tick de cada vela
+        # Tenta candles por tempo primeiro (quando há epoch e dados consistentes)
+        candles = []
+        if "epoch" in df.columns and len(epochs) >= 2:
+            avg_gap = (epochs[-1] - epochs[0]) / max(len(epochs) - 1, 1)
+            if avg_gap >= CANDLE_TIMEFRAME_SEC * 0.8:
+                # Dados já são closes de candles — formata diretamente
+                result = []
+                for i, (ep, pr) in enumerate(zip(epochs[-n:], prices[-n:])):
+                    result.append({
+                        "t": ep * 1000,
+                        "o": round(pr, 5), "h": round(pr, 5),
+                        "l": round(pr, 5), "c": round(pr, 5),
+                    })
+                return jsonify(result)
+            else:
+                # Agrega ticks em candles de tempo
+                ticks_list = [{"epoch": e, "price": p} for e, p in zip(epochs, prices)]
+                candles = ind.ticks_to_candles_by_time(ticks_list, CANDLE_TIMEFRAME_SEC)
+
+        # Fallback: candles por contagem de ticks
+        if not candles:
+            candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+            result = []
+            for idx, c in enumerate(candles[-n:]):
+                tick_idx = idx * CANDLE_SIZE
+                epoch = epochs[tick_idx] if tick_idx < len(epochs) else 0
+                result.append({
+                    "t": epoch * 1000,
+                    "o": round(c["open"],  5), "h": round(c["high"],  5),
+                    "l": round(c["low"],   5), "c": round(c["close"], 5),
+                })
+            return jsonify(result)
+
         result = []
-        for idx, c in enumerate(candles[-n:]):
-            tick_idx = idx * CANDLE_SIZE
-            epoch = epochs[tick_idx] if tick_idx < len(epochs) else 0
+        for c in candles[-n:]:
             result.append({
-                "t": epoch * 1000,  # ms para Chart.js
-                "o": round(c["open"],  5),
-                "h": round(c["high"],  5),
-                "l": round(c["low"],   5),
-                "c": round(c["close"], 5),
+                "t": int(c["epoch"]) * 1000,
+                "o": round(c["open"],  5), "h": round(c["high"],  5),
+                "l": round(c["low"],   5), "c": round(c["close"], 5),
             })
         return jsonify(result)
     except Exception as e:

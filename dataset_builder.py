@@ -38,7 +38,7 @@ from config import (
     TICKS_CSV, DATASET_CSV, SYMBOL,
     CANDIDATE_DURATIONS,
     CANDLE_SIZE, PA_SR_TOLERANCE, TARGET_NOISE_THRESHOLD,
-    TARGET_LOOKFORWARD,
+    TARGET_LOOKFORWARD, CANDLE_TIMEFRAME_SEC,
 )
 
 
@@ -120,15 +120,56 @@ def build_dataset(
 
     # Compatível também com formato antigo (sem cabeçalho, 2 colunas: epoch, price)
     if "price" in df.columns:
-        prices_all = df["price"].astype(float).tolist()
+        prices_raw = df["price"].astype(float).tolist()
     elif df.shape[1] == 2:
-        prices_all = df.iloc[:, 1].astype(float).tolist()
+        prices_raw = df.iloc[:, 1].astype(float).tolist()
     else:
         # Tenta a 4ª coluna (formato coletor atual: epoch, datetime, symbol, price)
-        prices_all = df.iloc[:, 3].astype(float).tolist()
+        prices_raw = df.iloc[:, 3].astype(float).tolist()
+
+    # Extrai epochs para agregar em candles de tempo
+    epochs_raw = None
+    if "epoch" in df.columns:
+        try:
+            epochs_raw = df["epoch"].astype(int).tolist()
+        except Exception:
+            epochs_raw = None
+
+    # ── Agregar ticks em candles de CANDLE_TIMEFRAME_SEC segundos ────────────
+    # Quando há dados misturados (ticks antigos + closes históricos recentes),
+    # o avg_gap global pode ser enganoso. Verifica primeiro os dados mais recentes:
+    # se os últimos ~500 pontos têm frequência de candles, usa-os diretamente.
+    if epochs_raw is not None and len(epochs_raw) >= 2:
+        # Ordena por epoch para garantir ordem cronológica
+        if len(epochs_raw) > 1 and epochs_raw[-1] < epochs_raw[0]:
+            sorted_pairs = sorted(zip(epochs_raw, prices_raw), key=lambda x: x[0])
+            epochs_raw = [e for e, _ in sorted_pairs]
+            prices_raw = [p for _, p in sorted_pairs]
+
+        # Verifica avg_gap do segmento recente (últimos 500 pontos)
+        recent_slice = min(500, len(epochs_raw))
+        recent_epochs = epochs_raw[-recent_slice:]
+        recent_avg_gap = (recent_epochs[-1] - recent_epochs[0]) / max(len(recent_epochs) - 1, 1)
+
+        if recent_avg_gap >= CANDLE_TIMEFRAME_SEC * 0.8:
+            # Os dados recentes já estão em frequência de candles — usa-os diretamente
+            prices_all = prices_raw[-recent_slice:]
+            print(f"[DATASET] Dados recentes em frequência de candles (~{recent_avg_gap:.0f}s/ponto), usando {len(prices_all)} pontos.")
+        else:
+            # Agrega todos os ticks em candles de tempo
+            ticks_list = [{"epoch": e, "price": p} for e, p in zip(epochs_raw, prices_raw)]
+            candles_agg = ind.ticks_to_candles_by_time(ticks_list, CANDLE_TIMEFRAME_SEC)
+            prices_all = [c["close"] for c in candles_agg]
+            print(
+                f"[DATASET] {len(prices_raw):,} ticks → {len(prices_all):,} candles "
+                f"de {CANDLE_TIMEFRAME_SEC}s ({CANDLE_TIMEFRAME_SEC // 60} min)."
+            )
+    else:
+        prices_all = prices_raw
+        print(f"[DATASET] Sem epochs — usando {len(prices_all):,} preços diretamente.")
 
     n_ticks = len(prices_all)
-    print(f"[DATASET] {n_ticks:,} ticks carregados.")
+    print(f"[DATASET] {n_ticks:,} pontos de preço para features.")
 
     min_needed = window_size + max(1, lookforward)
     if n_ticks < min_needed:
@@ -159,8 +200,9 @@ def build_dataset(
     else:
         _adaptive_noise = TARGET_NOISE_THRESHOLD
 
-    # Margem para o lookahead da duração ótima (ex: 10 ticks além do tick atual)
-    _max_lookahead = max(max(CANDIDATE_DURATIONS), lookforward)
+    # Margem de lookahead: apenas o lookforward real (CANDIDATE_DURATIONS são minutos,
+    # não contagem de candles — a duração ótima é calculada por volatilidade sem lookahead)
+    _max_lookahead = max(1, lookforward)
 
     for i in range(window_size, n_ticks - _max_lookahead):
         window  = prices_all[i - window_size: i + 1]  # window_size+1 preços
@@ -212,12 +254,13 @@ def build_dataset(
 
         vol = _vol_window(20)
         n_cands = len(CANDIDATE_DURATIONS)
-        if vol > 0.002:
-            best_d = CANDIDATE_DURATIONS[0]          # alta vol → duração curta
-        elif vol < 0.0005:
-            best_d = CANDIDATE_DURATIONS[-1]         # baixa vol → duração longa
+        # Limiares calibrados para volatilidade de candles de tempo (maior que de ticks)
+        if vol > 0.005:
+            best_d = CANDIDATE_DURATIONS[0]          # alta vol → duração curta (5m)
+        elif vol < 0.001:
+            best_d = CANDIDATE_DURATIONS[-1]         # baixa vol → duração longa (30m)
         else:
-            best_d = CANDIDATE_DURATIONS[n_cands // 2]  # moderada
+            best_d = CANDIDATE_DURATIONS[n_cands // 2]  # moderada (15m)
 
         features["optimal_duration"] = best_d
         rows.append(features)

@@ -46,6 +46,7 @@ from config import (
     MODEL_PROMOTION_MAX_ACC_DROP,
     MODEL_PROMOTION_MAX_F1_DROP,
     DEMO_MODE,
+    CANDLE_TIMEFRAME_SEC, MIN_CANDLES,
 )
 from executor import DerivBot
 from risk_manager import RiskManager
@@ -54,8 +55,8 @@ from risk_manager import RiskManager
 #  Defaults do pipeline
 # ─────────────────────────────────────────────────────────────────
 
-_DEFAULT_HISTORY_COUNT = 500  # ticks históricos baixados da API ao iniciar
-_DEFAULT_MIN_TICKS     = 500  # mín. no CSV antes do 1º treino (igual ao histórico)
+_DEFAULT_HISTORY_COUNT = 500  # candles históricos baixados da API ao iniciar
+_DEFAULT_MIN_TICKS     = 100  # mín. no CSV (candles) antes do 1º treino
 _DEFAULT_RETRAIN_MIN   = 10   # intervalo de re-treino em minutos
 _WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
@@ -297,25 +298,29 @@ def _detect_trending_symbol(no_scan: bool = False) -> str:
 
 def _fetch_historical_ticks(count: int) -> int:
     """
-    Baixa os últimos `count` ticks do histórico via ticks_history da API Deriv
-    e os grava em ticks.csv em ordem cronológica.
+    Baixa os últimos `count` candles de CANDLE_TIMEFRAME_SEC segundos via API Deriv
+    e grava os closes em ticks.csv em ordem cronológica.
 
     Epochs já presentes no arquivo são ignorados (deduplicação) para não
     conflitar com o coletor ao vivo que inicia logo em seguida.
 
-    Retorna o número de ticks efetivamente gravados.
+    Retorna o número de candles (closes) efetivamente gravados.
     """
-    print(f"\n[HISTÓRICO] Buscando os últimos {count:,} ticks de '{_symbol_display(SYMBOL)}'...")
+    tf_min = CANDLE_TIMEFRAME_SEC // 60
+    print(
+        f"\n[HISTÓRICO] Buscando os últimos {count:,} candles de {tf_min} min "
+        f"de '{_symbol_display(SYMBOL)}'..."
+    )
 
     _ensure_ticks_header()
 
-    # Carrega epochs já existentes para deduplicação
+    # Carrega (epoch, symbol) já existentes para deduplicação por símbolo
     existing_epochs: set = set()
     if os.path.exists(TICKS_CSV) and os.path.getsize(TICKS_CSV) > 0:
         with open(TICKS_CSV, "r") as f:
             for row in csv.DictReader(f):
                 try:
-                    existing_epochs.add(int(row["epoch"]))
+                    existing_epochs.add((int(row["epoch"]), row.get("symbol", "")))
                 except (KeyError, ValueError):
                     pass
 
@@ -336,20 +341,20 @@ def _fetch_historical_ticks(count: int) -> int:
 
         if data.get("msg_type") == "authorize":
             ws.send(json.dumps({
-                "ticks_history":     SYMBOL,
-                "end":               "latest",
-                "count":             count,
-                "style":             "ticks",
+                "ticks_history": SYMBOL,
+                "end":           "latest",
+                "count":         count,
+                "style":         "candles",
+                "granularity":   CANDLE_TIMEFRAME_SEC,
                 "adjust_start_time": 1,
             }))
             return
 
-        if data.get("msg_type") == "history":
-            hist   = data.get("history", {})
-            prices = hist.get("prices", [])
-            times  = hist.get("times",  [])
-            for epoch, price in zip(times, prices):
-                received.append((int(epoch), float(price)))
+        if data.get("msg_type") == "candles":
+            for candle in data.get("candles", []):
+                epoch = int(candle.get("epoch", 0))
+                close = float(candle.get("close", candle.get("open", 0)))
+                received.append((epoch, close))
             ws.close()
 
     def _on_error(ws, err):
@@ -375,22 +380,22 @@ def _fetch_historical_ticks(count: int) -> int:
         return 0
 
     if not received:
-        print("[HISTÓRICO] Nenhum tick histórico recebido.")
+        print("[HISTÓRICO] Nenhum candle histórico recebido.")
         return 0
 
     # Grava em ordem cronológica, pulando epochs já existentes
     written = 0
     with open(TICKS_CSV, "a", newline="") as f:
         writer = csv.writer(f)
-        for epoch, price in received:          # API retorna ordem crescente
-            if epoch not in existing_epochs:
+        for epoch, close in received:
+            if (epoch, SYMBOL) not in existing_epochs:
                 dt_str = datetime.fromtimestamp(epoch).isoformat()
-                writer.writerow([epoch, dt_str, SYMBOL, price])
-                existing_epochs.add(epoch)
+                writer.writerow([epoch, dt_str, SYMBOL, close])
+                existing_epochs.add((epoch, SYMBOL))
                 written += 1
 
     print(
-        f"[HISTÓRICO] {written:,} ticks históricos gravados — "
+        f"[HISTÓRICO] {written:,} candles de {tf_min}min gravados — "
         f"total no CSV: {_count_ticks():,}"
     )
     return written
@@ -398,12 +403,13 @@ def _fetch_historical_ticks(count: int) -> int:
 
 def _banner(history_count: int, min_ticks: int, retrain_min: int, demo: bool) -> None:
     mode = "DEMO" if demo else "REAL 💸"
+    tf_min = CANDLE_TIMEFRAME_SEC // 60
     print("=" * 60)
     print("  Deriv Pipeline — Orquestrador Automático")
     print(f"  Modo              : {mode}")
     print(f"  Símbolo           : {_symbol_display(SYMBOL)}")
-    print(f"  Ticks históricos  : {history_count:,}")
-    print(f"  Ticks p/ treino   : {min_ticks:,}")
+    print(f"  Candles históricos : {history_count:,} × {tf_min} min")
+    print(f"  Candles p/ treino  : {min_ticks:,}")
     print(f"  Re-treino a cada  : {retrain_min} min")
     print("  Pressione Ctrl+C para encerrar tudo")
     print("=" * 60)
@@ -515,21 +521,21 @@ class _CollectorThread(threading.Thread):
 # ─────────────────────────────────────────────────────────────────
 
 def _wait_for_ticks(min_ticks: int, poll_sec: int = 10) -> None:
-    """Bloqueia até ticks.csv conter pelo menos min_ticks linhas de dados."""
+    """Bloqueia até ticks.csv conter pelo menos min_ticks linhas de dados (candles)."""
     current = _count_ticks()
     if current >= min_ticks:
-        print(f"[PIPELINE] {current:,} ticks já disponíveis — pronto para treino.")
+        print(f"[PIPELINE] {current:,} candles já disponíveis — pronto para treino.")
         return
 
     print(
-        f"\n[PIPELINE] Aguardando {min_ticks:,} ticks para o primeiro treino "
+        f"\n[PIPELINE] Aguardando {min_ticks:,} candles para o primeiro treino "
         f"(atual: {current:,})..."
     )
     while not _shutdown.is_set():
         time.sleep(poll_sec)
         current = _count_ticks()
         print(
-            f"\r[PIPELINE] Ticks: {current:,} / {min_ticks:,}   ",
+            f"\r[PIPELINE] Candles: {current:,} / {min_ticks:,}   ",
             end="", flush=True,
         )
         if current >= min_ticks:
@@ -654,10 +660,10 @@ def _run_training(
         n = dataset_builder.build_dataset(
             tmp_ticks,
             dataset_path,
-            window_size=100,
+            window_size=50,
             lookforward=TARGET_LOOKFORWARD,
         )
-        if n < 50:
+        if n < 30:
             print(f"[PIPELINE] Dataset muito pequeno ({n} linhas). Colete mais ticks.")
             return False, None
     except SystemExit:
@@ -870,6 +876,8 @@ def main() -> None:
         for _mod in (_cfg, executor, strategy, dataset_builder, train_model):
             if hasattr(_mod, "SYMBOL"):
                 setattr(_mod, "SYMBOL", detected)
+        # Atualiza o getter de símbolo ativo em config
+        _cfg.set_active_symbol(detected)
         # Atualiza a variável deste módulo (importada com 'from config import SYMBOL')
         globals()["SYMBOL"] = detected
 
