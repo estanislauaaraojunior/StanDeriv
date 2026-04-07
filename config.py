@@ -58,7 +58,7 @@ BB_STD       = 2.0
 # ----- Candles baseados em tempo -----
 # Duração de cada vela em segundos (agrupamento interno de ticks por janela de tempo).
 # 60   = 1 minuto   (mais candles, dataset maior, avaliações mais frequentes)
-# 300  = 5 minutos  (bom equilíbrio entre sinal e ruído)
+# 300  = 5 minutos  (bom equilíbrio entre sinal e ruído) ← RECOMENDADO
 # 900  = 15 minutos (mais seletivo, menos entradas por dia)
 CANDLE_TIMEFRAME_SEC = 60
 
@@ -69,19 +69,19 @@ PA_SR_TOLERANCE        = 0.001   # tolerância % para clustering S/R
 TARGET_NOISE_THRESHOLD = 0.0001  # variação mínima para classificar target
 # Horizonte do target no dataset em candles (1 = candle seguinte).
 # Valores maiores capturam movimentos de médio prazo.
-TARGET_LOOKFORWARD     = 1
+TARGET_LOOKFORWARD     = 2
 CANDLE_NOTIFY          = True    # notificações de padrões de vela no terminal
 
 # ----- Filtros de entrada -----
-RSI_OVERSOLD    = 35   # abaixo → sobrevendido (não abre SELL aqui)
-RSI_OVERBOUGHT  = 65   # acima → sobrecomprado (não abre BUY aqui)
-ADX_MIN         = 15   # abaixo → mercado lateral → sem entrada
+RSI_OVERSOLD    = 38   # abaixo → sobrevendido (não abre SELL aqui)
+RSI_OVERBOUGHT  = 62   # acima → sobrecomprado (não abre BUY aqui)
+ADX_MIN         = 18   # abaixo → mercado lateral → sem entrada
 
 # ----- ADX adaptativo (P10) -----
 # True  → ADX_MIN ajustado ao percentil do histórico recente (mais preciso por símbolo)
 # False → usa ADX_MIN fixo acima
 ADX_ADAPTIVE            = True
-ADX_ADAPTIVE_PERCENTILE = 40   # percentil do histórico de ADX; piso = 15
+ADX_ADAPTIVE_PERCENTILE = 50   # percentil do histórico de ADX; piso = 15
 
 # ----- Gestão de risco -----
 STAKE_PCT         = 0.01   # 1% do saldo por operação
@@ -96,8 +96,8 @@ RESUME_ON_WIN      = True  # retoma pausa imediatamente após 1 win
 
 # ----- Aquecimento -----
 MIN_TICKS   = 50   # (legado) ticks mínimos — mantido para compatibilidade
-MIN_CANDLES = 10   # velas de tempo mínimas antes de operar
-                   # (10 × CANDLE_TIMEFRAME_SEC = 10 min para 1min candles)
+MIN_CANDLES = 50   # velas de tempo mínimas antes de operar (≥ MACD_SLOW+MACD_SIGNAL=35)
+                   # (20 × CANDLE_TIMEFRAME_SEC = 100 min para 5min candles)
 
 # ----- Buffer de preços (P12) -----
 PRICE_BUFFER_SIZE = 500  # ticks mantidos em memória para indicadores e IA
@@ -122,18 +122,18 @@ TICK_SPIKE_THRESHOLD = 0.05  # rejeitar ticks com variação > 5% em relação a
 # USE_AI_MODEL = True   → IA pondera o sinal dos indicadores antes de operar
 USE_AI_MODEL       = True
 AI_MODEL_PATH      = "model.pkl"
-AI_CONFIDENCE_MIN  = 0.50   # limiar mínimo realista para modelo com ~52% de acurácia
+AI_CONFIDENCE_MIN  = 0.55   # limiar mínimo — exige mais certeza do modelo
 
 # Ponderação IA vs técnico (P4) — substitui gate duro por score suavizado
-AI_TECH_WEIGHT  = 0.60   # peso do sinal técnico no score final
-AI_MODEL_WEIGHT = 0.40   # peso do sinal da IA no score final
-AI_SCORE_MIN    = 0.48   # score mínimo ponderado para aceitar a operação
+AI_TECH_WEIGHT  = 0.55   # peso do sinal técnico no score final
+AI_MODEL_WEIGHT = 0.45   # peso do sinal da IA no score final
+AI_SCORE_MIN    = 0.30   # score mínimo ponderado para aceitar a operação
 
 # ----- Sinal ponderado (P14) -----
 # False = comportamento original (AND rígido — menos entradas, mais seletivo)
 # True  = score ponderado por indicador (mais entradas, requer ajuste fino)
 USE_WEIGHTED_SIGNAL = True
-SIGNAL_SCORE_MIN    = 0.25  # limiar mínimo do score técnico ponderado
+SIGNAL_SCORE_MIN    = 0.05  # limiar mínimo do score técnico ponderado
 
 # ----- Detecção de drift (P13) -----
 DRIFT_WINDOW       = 20    # janela de trades para calcular win rate recente

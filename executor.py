@@ -29,7 +29,7 @@ from config import (
     PROPOSAL_TIMEOUT_SEC,
     HEARTBEAT_TIMEOUT_SEC,
     CANDLE_SIZE, CANDLE_NOTIFY, PA_SR_TOLERANCE,
-    CANDLE_TIMEFRAME_SEC,
+    CANDLE_TIMEFRAME_SEC, TICKS_CSV,
 )
 from risk_manager import RiskManager
 from strategy import get_signal, get_adaptive_adx_min
@@ -108,6 +108,9 @@ class DerivBot:
         # Cadência de entradas: começa já no limite para disparar na 1ª oportunidade.
         self._ticks_since_last_entry: int = ENTRY_TICK_INTERVAL
 
+        # Flag: histórico de candles já carregado via API (evita re-request na reconexão)
+        self._api_history_loaded: bool = False
+
         self._ws: Optional[websocket.WebSocketApp] = None
 
     def _set_active_contract_state(self, clear: bool = False) -> None:
@@ -144,6 +147,7 @@ class DerivBot:
     def run(self) -> None:
         """Inicia o bot. Bloqueia até encerramento."""
         self._set_active_contract_state(clear=True)
+        self._preload_candles_from_csv()  # evita warmup de 50 min
         mode = "DEMO" if self.demo else "REAL 💸"
         print(f"\n{'=' * 55}")
         print(f"  Deriv Trading Bot — Modo: {mode}")
@@ -162,6 +166,56 @@ class DerivBot:
         )
         self._ws = ws
         ws.run_forever(reconnect=5)
+
+    def _preload_candles_from_csv(self) -> None:
+        """
+        Pré-carrega closes de candles históricos do ticks.csv para o símbolo ativo,
+        eliminando o período de aquecimento (MIN_CANDLES velas ao vivo).
+        """
+        try:
+            import csv as _csv
+            ticks_path = Path(TICKS_CSV)
+            if not ticks_path.exists() or ticks_path.stat().st_size == 0:
+                return
+
+            ticks_list = []
+            with ticks_path.open("r") as f:
+                reader = _csv.DictReader(f)
+                for row in reader:
+                    try:
+                        sym = row.get("symbol", "")
+                        if sym != SYMBOL:
+                            continue
+                        ticks_list.append({
+                            "epoch": int(row["epoch"]),
+                            "price": float(row["price"]),
+                        })
+                    except (KeyError, ValueError):
+                        continue
+
+            if len(ticks_list) < 60:
+                return
+
+            candles = ind.ticks_to_candles_by_time(ticks_list, CANDLE_TIMEFRAME_SEC)
+            if not candles:
+                return
+
+            # Carregar apenas os últimos 490 candles (maxlen=500, deixar margem)
+            for c in candles[-490:]:
+                self._candle_closes.append(c["close"])
+                self._candle_epochs.append(c["epoch"])
+
+            # Pré-aquecer histórico de ADX
+            closes = list(self._candle_closes)
+            for i in range(14, len(closes)):
+                adx_v = ind.adx(closes[max(0, i - 50):i], 14)
+                if adx_v:
+                    self._adx_history.append(adx_v)
+
+            n = len(self._candle_closes)
+            print(f"[BOT] Pré-carregados {n} candles históricos de {SYMBOL} — aquecimento instantâneo.")
+        except Exception as exc:
+            print(f"[BOT] Aviso: pré-carga de candles falhou ({exc}) — aguardando ao vivo.")
 
     # ─────────────────────────────────────────────────────────
     #  Handlers WebSocket
@@ -188,6 +242,8 @@ class DerivBot:
             self._handle_proposal(ws, data["proposal"])
         elif msg_type == "buy":
             self._handle_buy(ws, data["buy"])
+        elif msg_type == "candles":
+            self._handle_api_candles(ws, data.get("candles", []))
         elif msg_type == "proposal_open_contract":
             self._handle_contract_update(data["proposal_open_contract"])
 
@@ -205,7 +261,6 @@ class DerivBot:
         balance = float(auth.get("balance", self.risk_manager.balance))
         self.risk_manager.balance = balance
         print(f"[BOT] Autorizado | Saldo real: {balance:.2f} USD")
-        ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
 
         # Re-subscrever ao contrato ativo em caso de reconexão
         if self._in_trade and self._open_contract_id:
@@ -215,6 +270,54 @@ class DerivBot:
                 "subscribe":             1,
             }))
             print(f"[BOT] Re-subscrevendo ao contrato ativo: {self._open_contract_id}")
+
+        # Reconexão: candles já estão em memória, subscreve ticks direto
+        if self._api_history_loaded:
+            ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
+            return
+
+        # Primeira conexão: solicita 100 candles históricos antes de subscrever ticks
+        print(f"[BOT] Baixando 100 candles históricos de {SYMBOL} ({CANDLE_TIMEFRAME_SEC}s)...")
+        ws.send(json.dumps({
+            "ticks_history": SYMBOL,
+            "adjust_start_time": 1,
+            "count": 100,
+            "end": "latest",
+            "granularity": CANDLE_TIMEFRAME_SEC,
+            "style": "candles",
+        }))
+
+    def _handle_api_candles(self, ws, candles: list) -> None:
+        """Processa histórico de candles OHLC recebido da API Deriv."""
+        if not candles:
+            print("[BOT] Histórico de candles vazio — subscrevendo ticks direto.")
+            self._api_history_loaded = True
+            ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
+            return
+
+        # Popula _candle_closes e _candle_epochs com os candles históricos
+        # (exceto o último, que pode estar ainda aberto)
+        loaded = 0
+        for c in candles[:-1]:
+            try:
+                self._candle_closes.append(float(c["close"]))
+                self._candle_epochs.append(int(c["epoch"]))
+                loaded += 1
+            except (KeyError, ValueError):
+                continue
+
+        # Pré-aquecer histórico de ADX com os closes carregados
+        closes = list(self._candle_closes)
+        for i in range(14, len(closes)):
+            adx_v = ind.adx(closes[max(0, i - 50):i], 14)
+            if adx_v:
+                self._adx_history.append(adx_v)
+
+        self._api_history_loaded = True
+        print(f"[BOT] {loaded} candles históricos carregados via API — aquecimento instantâneo.")
+
+        # Subscreve ticks ao vivo
+        ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
 
     def _handle_tick(self, ws, tick: dict) -> None:
         price = float(tick["quote"])

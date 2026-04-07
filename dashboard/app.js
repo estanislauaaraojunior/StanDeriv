@@ -216,7 +216,18 @@ function initPriceChart() {
       options: {
         ...baseChartOptions,
         scales: {
-          x: { ...baseChartOptions.scales.x, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+          x: {
+            type: 'linear',
+            ...baseChartOptions.scales.x,
+            ticks: {
+              maxTicksLimit: 8,
+              maxRotation: 0,
+              callback: v => {
+                const d = new Date(v * 1000);
+                return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              },
+            },
+          },
           y: { ...baseChartOptions.scales.y, position: 'right' },
         },
       },
@@ -295,7 +306,18 @@ function initRtContractChart() {
     options: {
       ...baseChartOptions,
       scales: {
-        x: { ...baseChartOptions.scales.x, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        x: {
+          type: 'linear',
+          ...baseChartOptions.scales.x,
+          ticks: {
+            maxTicksLimit: 8,
+            maxRotation: 0,
+            callback: v => {
+              const d = new Date(v * 1000);
+              return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            },
+          },
+        },
         y: { ...baseChartOptions.scales.y, position: 'right' },
       },
     },
@@ -330,7 +352,7 @@ function updateRtContractChart(ticks, contract) {
   const chart = state.charts.rtContract;
   if (!chart) return;
 
-  if (!contract || !Array.isArray(ticks) || !ticks.length) {
+  if (!contract && (!Array.isArray(ticks) || !ticks.length)) {
     chart.data.datasets[0].data = [];
     chart.data.datasets[1].data = [];
     chart.update('none');
@@ -338,15 +360,18 @@ function updateRtContractChart(ticks, contract) {
     return;
   }
 
-  const series = ticks.map(t => ({ x: t.epoch, y: t.price }));
+  const series = ticks.map(t => ({ x: Number(t.epoch), y: Number(t.price) }));
   chart.data.datasets[0].data = series;
 
-  let entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
-  if (!entryTick && ticks.length) entryTick = ticks[0];
-  chart.data.datasets[1].data = entryTick ? [{ x: entryTick.epoch, y: entryTick.price }] : [];
+  let entryTick = null;
+  if (contract && contract.entry_epoch) {
+    entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
+    if (!entryTick && ticks.length) entryTick = ticks[0];
+  }
+  chart.data.datasets[1].data = entryTick ? [{ x: Number(entryTick.epoch), y: Number(entryTick.price) }] : [];
 
-  chart.update('none');
-  _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
+  chart.update('active');
+  if (contract) _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
 }
 
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
@@ -364,7 +389,7 @@ function initRsiChart() {
     options: {
       ...baseChartOptions,
       scales: {
-        x: { ...baseChartOptions.scales.x, display: false },
+        x: { type: 'linear', ...baseChartOptions.scales.x, display: false },
         y: { ...baseChartOptions.scales.y, min: 0, max: 100,
              ticks: { values: [35, 50, 65] },
              afterDataLimits: () => {},
@@ -394,7 +419,7 @@ function initMacdChart() {
     options: {
       ...baseChartOptions,
       scales: {
-        x: { ...baseChartOptions.scales.x, display: false },
+        x: { type: 'linear', ...baseChartOptions.scales.x, display: false },
         y: { ...baseChartOptions.scales.y, ticks: { maxTicksLimit: 4 } },
       },
     },
@@ -811,7 +836,27 @@ async function pollContractRealtime() {
     const c = await resp.json();
 
     if (!c || !c.has_active) {
+      // Sem contrato ativo: mostra últimos 150 ticks do símbolo atual (modo monitor)
       state.activeContract = null;
+      const activeSymbol = el('activeSymbol')?.textContent?.trim();
+      const params = new URLSearchParams({ n: '150' });
+      if (activeSymbol) params.set('symbol', activeSymbol);
+      try {
+        const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
+        const ticks = await rTicks.json();
+        if (Array.isArray(ticks) && ticks.length) {
+          updateRtContractChart(ticks, null);
+          // Exibe mensagem de monitor mas não limpa o gráfico
+          const statusEl = el('rtContractStatus');
+          const metaEl = el('rtContractMeta');
+          if (statusEl) { statusEl.textContent = 'Monitor de preço (sem contrato ativo)'; statusEl.style.color = '#8b949e'; }
+          if (metaEl && ticks.length) {
+            const last = ticks[ticks.length - 1];
+            metaEl.textContent = `Último tick: ${fmt(last.price, 5)} — ${new Date(last.epoch * 1000).toLocaleTimeString('pt-BR')}`;
+          }
+          return;
+        }
+      } catch (_) {}
       updateRtContractChart([], null);
       return;
     }
@@ -819,12 +864,14 @@ async function pollContractRealtime() {
     state.activeContract = c;
     const params = new URLSearchParams({ n: '600' });
     if (c.symbol) params.set('symbol', c.symbol);
-    if (c.entry_epoch) params.set('from_epoch', String(c.entry_epoch));
+    if (c.entry_epoch && c.entry_epoch > 0) params.set('from_epoch', String(c.entry_epoch));
 
     const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
     const ticks = await rTicks.json();
     updateRtContractChart(Array.isArray(ticks) ? ticks : [], c);
-  } catch (_) {}
+  } catch (e) {
+    console.warn('[rtContract]', e);
+  }
 }
 
 // ─── Polling: Equity ─────────────────────────────────────────────────────────
