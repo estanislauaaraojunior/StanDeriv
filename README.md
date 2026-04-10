@@ -152,13 +152,34 @@ python train_model.py             # treinar modelos
 ## Configurações Avançadas
 
 ### ADX Adaptativo
-`ADX_ADAPTIVE = True` ajusta automaticamente `ADX_MIN` ao percentil 40 do histórico recente do símbolo ativo (piso: 15), tornando o filtro de tendência mais preciso do que um valor fixo.
+`ADX_ADAPTIVE = True` ajusta automaticamente `ADX_MIN` ao percentil 50 do histórico recente do símbolo ativo (piso: 15), tornando o filtro de tendência mais preciso do que um valor fixo. O percentil é configurável em `ADX_ADAPTIVE_PERCENTILE`.
 
 ### Duração Dinâmica
-O modelo de duração (`duration_model.pkl`) prevê o melhor prazo de expiração entre os candidatos definidos em `CANDIDATE_DURATIONS = [1, 3, 5, 10]` (ticks). Treinado em conjunto com os demais modelos pelo `train_model.py`.
+O modelo de duração (`duration_model.pkl`) prevê o melhor prazo de expiração entre os candidatos definidos em `CANDIDATE_DURATIONS = [5, 15, 30]` (minutos). Treinado em conjunto com os demais modelos pelo `train_model.py`.
 
 ### Score Ponderado
-`AI_TECH_WEIGHT = 0.60` e `AI_MODEL_WEIGHT = 0.40` definem o peso do sinal técnico e da IA no score final. Apenas operações com `score ≥ AI_SCORE_MIN (0.55)` são abertas.
+`AI_TECH_WEIGHT = 0.55` e `AI_MODEL_WEIGHT = 0.45` definem o peso do sinal técnico e da IA no score final. Apenas operações com `score ≥ AI_SCORE_MIN (0.30)` são abertas.
+
+### Sinal Ponderado por Indicador
+`USE_WEIGHTED_SIGNAL = True` substitui o AND rígido dos indicadores por um score contínuo ponderado. `SIGNAL_SCORE_MIN = 0.05` define o limiar mínimo do score técnico para aceitar a operação.
+
+### Target Lookforward
+`TARGET_LOOKFORWARD = 2` define quantas velas à frente o dataset_builder usa para rotular o target de treino. Valores maiores capturam movimentos de médio prazo.
+
+### Candles Baseados em Tempo
+`CANDLE_TIMEFRAME_SEC = 60` define a duração de cada vela em segundos (substituindo o modelo de ticks fixos). Recomendado: 60s (1min) para mais entradas, 300s (5min) para mais seletividade.
+
+### Buffer de Preços
+`PRICE_BUFFER_SIZE = 500` define quantos ticks são mantidos em memória para cálculo de indicadores e inferência do TFT.
+
+### Cadência de Entradas
+`ENTRY_CANDLE_INTERVAL = 1` controla o intervalo mínimo entre entradas em velas fechadas (1 = avalia a cada nova vela).
+
+### Promoção de Modelo (Champion-Challenger)
+O challenger só substitui o champion quando superar os critérios mínimos:
+- `MODEL_PROMOTION_MIN_AUC_DELTA = 0.001` — AUC do novo modelo deve ser ≥ AUC atual + delta
+- `MODEL_PROMOTION_MAX_ACC_DROP = 0.02` — queda máxima tolerada de acurácia
+- `MODEL_PROMOTION_MAX_F1_DROP = 0.05` — queda máxima tolerada de F1
 
 ### Filtro Anti-Spike
 `TICK_SPIKE_THRESHOLD = 0.05` rejeita ticks com variação > 5% em relação ao anterior, protegendo os indicadores de dados ruins.
@@ -179,9 +200,19 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `MAX_CONSEC_LOSSES` | 3 | Losses consecutivos antes de pausar |
 | `PAUSE_BASE_SEC` | 600 | Pausa base (10 min) no 1º gatilho |
 | `PAUSE_SCALE_FACTOR` | 2 | Fator de escala da pausa (dobra a cada loss extra) |
-| `RESUME_ON_WIN` | True | Retoma imediatamente após 1 win durante pausa |
+| `RESUME_ON_WIN` | True | Retoma pausa imediatamente após 1 win |
 | `DRIFT_WINDOW` | 20 | Janela de trades para calcular win rate recente |
 | `DRIFT_WIN_RATE_MIN` | 40% | Alerta se win rate dos últimos N trades cair abaixo |
+| `AI_TECH_WEIGHT` | 0.55 | Peso do sinal técnico no score final |
+| `AI_MODEL_WEIGHT` | 0.45 | Peso do sinal da IA no score final |
+| `AI_SCORE_MIN` | 0.30 | Score mínimo ponderado (IA + técnico) para abrir operação |
+| `SIGNAL_SCORE_MIN` | 0.05 | Limiar mínimo do score técnico ponderado |
+| `CANDLE_TIMEFRAME_SEC` | 60 | Duração de cada vela de tempo em segundos |
+| `PRICE_BUFFER_SIZE` | 500 | Ticks mantidos em memória para indicadores |
+| `ENTRY_CANDLE_INTERVAL` | 1 | Intervalo mínimo entre entradas (em velas) |
+| `CANDIDATE_DURATIONS` | [5,15,30] | Durações (min) candidatas para o modelo de duração |
+| `ADX_ADAPTIVE_PERCENTILE` | 50 | Percentil do histórico de ADX usado como piso adaptativo |
+| `TARGET_LOOKFORWARD` | 2 | Velas à frente usadas para rotular o target no dataset |
 
 ## Histórico de Mudanças
 
@@ -193,7 +224,15 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 - Filtro anti-spike no coletor (`TICK_SPIKE_THRESHOLD`)
 - Heartbeat watchdog contra desconexão silenciosa
 - Dashboard com autenticação por token (`DASHBOARD_TOKEN`)
-- Score ponderado IA vs técnico (`AI_TECH_WEIGHT`, `AI_MODEL_WEIGHT`, `AI_SCORE_MIN`)
+- Score ponderado IA vs técnico (`AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45`, `AI_SCORE_MIN=0.30`)
+- Sinal ponderado por indicador (`USE_WEIGHTED_SIGNAL`, `SIGNAL_SCORE_MIN=0.05`)
+- Target lookforward configurável (`TARGET_LOOKFORWARD=2`)
+- Velas baseadas em tempo com `CANDLE_TIMEFRAME_SEC` (substitui modelo de ticks fixos)
+- Buffer de preços configurável (`PRICE_BUFFER_SIZE=500`)
+- Cadência de entradas por velas fechadas (`ENTRY_CANDLE_INTERVAL`)
+- Promoção de modelo champion-challenger com critérios de AUC/acurácia/F1
+- Durações candidatas atualizadas para minutos: `CANDIDATE_DURATIONS=[5, 15, 30]`
+- ADX adaptativo atualizado para percentil 50 (`ADX_ADAPTIVE_PERCENTILE=50`)
 - Adicionadas 11 features de Price Action (estrutura de mercado, S/R, supply/demand, FVG)
 - Detecção de 6 padrões de vela com notificações em tempo real
 - Scores contínuos (-1 a +1) na estratégia ponderada

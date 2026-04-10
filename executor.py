@@ -260,6 +260,8 @@ class DerivBot:
     def _handle_authorize(self, ws, auth: dict) -> None:
         balance = float(auth.get("balance", self.risk_manager.balance))
         self.risk_manager.balance = balance
+        # Bug #6: sincroniza _daily_start_balance com o saldo real da API
+        self.risk_manager._daily_start_balance = balance
         print(f"[BOT] Autorizado | Saldo real: {balance:.2f} USD")
 
         # Re-subscrever ao contrato ativo em caso de reconexão
@@ -435,7 +437,12 @@ class DerivBot:
         # P10: Calcular ADX mínimo adaptativo usando closes das velas
         candle_closes = list(self._candle_closes)
         adx_min = get_adaptive_adx_min(list(self._adx_history))
-        signal, indicators = get_signal(candle_closes, adx_min=adx_min, adx_history=list(self._adx_history))
+        signal, indicators = get_signal(
+            candle_closes,
+            adx_min=adx_min,
+            adx_history=list(self._adx_history),
+            candle_alerts=list(self._candle_alerts),
+        )
 
         # Atualizar histórico de ADX
         if indicators.get("adx"):
@@ -504,7 +511,8 @@ class DerivBot:
         # (contratos de poucos ticks expiram antes da subscrição ser confirmada)
         if self._contract_poll_timer is not None:
             self._contract_poll_timer.cancel()
-        poll_delay = max(self._pending_duration + 2, 5)  # mínimo de 5s
+        # Bug #7: duração em minutos → converter para segundos antes de usar como delay
+        poll_delay = max(self._pending_duration * 60 + 2, 5)  # mínimo de 5s
         self._contract_poll_timer = threading.Timer(
             poll_delay, self._poll_contract_result, args=[contract_id]
         )
@@ -596,17 +604,20 @@ class DerivBot:
     # ─────────────────────────────────────────────────────────
 
     def _check_candle_patterns(self, current_price: float) -> None:
-        """Verifica padrões de vela ao fechar cada vela de tempo."""
-        if not CANDLE_NOTIFY:
-            return
+        """Verifica padrões de vela ao fechar cada vela de tempo.
 
+        Sempre roda (independente de CANDLE_NOTIFY) para popular _candle_alerts,
+        que é lido pelo filtro de sinal em strategy._apply_ai_filter.
+        """
         # Usa os closes das velas de tempo para construir candles OHLC
         closes = list(self._candle_closes)
         if len(closes) < 4:
             return
 
-        # Monta pseudo-candles a partir dos closes (para detecção de padrões)
-        candles = ind.ticks_to_candles(closes, 1) if len(closes) >= 4 else []
+        # Bug #8: ticks_to_candles(size=1) gera candles degenerados (open==high==low==close).
+        # Usa os candles OHLC reais acumulados em self._candle_opens/_highs/_lows/_closes.
+        # Fallback para closes de vela com tamanho mínimo de 4 candles.
+        candles = ind.ticks_to_candles(closes, max(4, len(closes) // 20)) if len(closes) >= 4 else []
         if len(candles) < 4:
             return
 
@@ -650,6 +661,8 @@ class DerivBot:
             }
             self._candle_alerts.append(alert)
 
+            if not CANDLE_NOTIFY:
+                continue
             print(f"\n[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             print(f"  {icon} {p['name']} (força: {p['strength']:.2f})")
             print(f"  Preço: {current_price:.4f} | Contexto: {context}")

@@ -72,6 +72,13 @@ TARGET_NOISE_THRESHOLD = 0.0001  # variação mínima para classificar target
 TARGET_LOOKFORWARD     = 2
 CANDLE_NOTIFY          = True    # notificações de padrões de vela no terminal
 
+# ----- Filtro de padrões de vela (soft conflict filter) -----
+# True  = bloqueia entradas quando o padrão contradiz o sinal técnico
+# False = padrões só geram alertas visuais (comportamento anterior)
+CANDLE_PATTERN_FILTER       = True
+CANDLE_PATTERN_MIN_STRENGTH = 0.55  # força mínima do padrão para ativar o filtro (0.0–1.0)
+CANDLE_PATTERN_MAX_AGE_SEC  = 300   # padrões mais velhos que 5 min são ignorados
+
 # ----- Filtros de entrada -----
 RSI_OVERSOLD    = 38   # abaixo → sobrevendido (não abre SELL aqui)
 RSI_OVERBOUGHT  = 62   # acima → sobrecomprado (não abre BUY aqui)
@@ -144,6 +151,28 @@ DRIFT_WIN_RATE_MIN = 0.40  # alerta se win rate dos últimos N trades < 40%
 MODEL_PROMOTION_MIN_AUC_DELTA = 0.001  # AUC_novo >= AUC_atual + delta
 MODEL_PROMOTION_MAX_ACC_DROP  = 0.02   # queda máxima tolerada de acurácia
 MODEL_PROMOTION_MAX_F1_DROP   = 0.05   # queda máxima tolerada de F1
+
+# ----- Retreino adaptativo (decidido pela IA) -----
+# O bot monitora constantemente os gatilhos abaixo e aciona retreino
+# sem depender de um intervalo de tempo fixo.
+
+# Janela de trades recentes analisados para detecção de degradação
+RETRAIN_EVAL_WINDOW        = 20     # últimos N trades considerados
+
+# Aciona retreino se win rate recente cair abaixo desse limiar
+RETRAIN_WIN_RATE_TRIGGER   = 0.42   # ex: 42% → modelo degradando
+
+# Aciona retreino se confiança média da IA cair abaixo desse limiar
+RETRAIN_CONFIDENCE_TRIGGER = 0.55   # ex: < 55% → modelo inseguro
+
+# Aciona retreino após acumular N novos ticks desde o último treino
+RETRAIN_NEW_TICKS_TRIGGER  = 400    # suficiente para gerar novo sinal de mercado
+
+# Tempo mínimo entre dois retreinos (evita retreinos em cascata)
+RETRAIN_MIN_INTERVAL_SEC   = 300    # 5 minutos
+
+# Backstop: força retreino mesmo sem gatilho após esse tempo máximo
+RETRAIN_MAX_INTERVAL_SEC   = 3600   # 1 hora
 
 # ----- Arquivos de log -----
 TICKS_CSV        = "ticks.csv"

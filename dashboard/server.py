@@ -1,4 +1,4 @@
-#!/home/stanis/Repositorios/Binary/.venv/bin/python3
+#!/home/stanis/.venv/bin/python3
 """
 dashboard/server.py — Backend Flask do Dashboard do Bot Deriv.
 
@@ -46,10 +46,15 @@ def _require_token(f):
     """Decorator: exige 'X-Auth-Token' correto para rotas de controle do bot."""
     @wraps(f)
     def wrapper(*args, **kwargs):
+        # Permite requisições sem token apenas de localhost (sem token configurado)
+        is_local = request.remote_addr in ("127.0.0.1", "::1")
         if _DASHBOARD_TOKEN:
             token = request.headers.get("X-Auth-Token", "")
             if token != _DASHBOARD_TOKEN:
                 return jsonify({"ok": False, "msg": "Unauthorized"}), 401
+        elif not is_local:
+            # Sem token configurado: bloqueia qualquer origem não-local
+            return jsonify({"ok": False, "msg": "Unauthorized — configure DASHBOARD_TOKEN"}), 401
         return f(*args, **kwargs)
     return wrapper
 
@@ -72,7 +77,33 @@ PIPELINE_LOG_TXT = _ROOT / "pipeline.log"
 # ─── Flask App ────────────────────────────────────────────────────────────────
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
-CORS(app)
+CORS(app, origins=["http://localhost:*", "http://127.0.0.1:*"])
+
+# Serializa NaN/Inf como null para produzir JSON válido no browser
+import math as _math
+
+class _SafeJSONProvider(app.json_provider_class):  # type: ignore[name-defined]
+    def dumps(self, obj, **kw):
+        import json as _json
+        class _Enc(_json.JSONEncoder):
+            def iterencode(self, o, _one_shot=False):
+                return super().iterencode(self._clean(o), _one_shot)
+            def _clean(self, o):
+                if isinstance(o, float):
+                    if _math.isnan(o) or _math.isinf(o):
+                        return None
+                    return o
+                if isinstance(o, dict):
+                    return {k: self._clean(v) for k, v in o.items()}
+                if isinstance(o, (list, tuple)):
+                    return [self._clean(v) for v in o]
+                return o
+            def default(self, o):
+                return super().default(o)
+        return _json.dumps(obj, cls=_Enc, **kw)
+
+app.json_provider_class = _SafeJSONProvider
+app.json = _SafeJSONProvider(app)
 
 # ─── Log buffer do pipeline ──────────────────────────────────────────────────
 
@@ -421,14 +452,12 @@ def api_bot_start():
         return jsonify({"ok": False, "msg": "balance deve ser um número positivo"}), 400
     skip_collect = bool(data.get("skip_collect", False))
     no_scan = bool(data.get("no_scan", False))
-    retrain_interval = int(data.get("retrain_interval", 10))
     min_ticks = int(data.get("min_ticks", 200))
     history_count = int(data.get("history_count", 2000))
     force_retrain = bool(data.get("force_retrain", False))
 
     cmd = [sys.executable, "-u", str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]
     cmd += ["--balance", str(balance)]
-    cmd += ["--retrain-interval", str(max(1, retrain_interval))]
     min_ticks_target = max(50, min_ticks)
     cmd += ["--min-ticks", str(min_ticks_target)]
     cmd += ["--history-count", str(max(0, history_count))]
@@ -924,7 +953,13 @@ def api_model_history():
 @app.route("/api/model-metrics")
 def api_model_metrics():
     data = _read_json_safe(MODEL_METRICS_JSON)
-    resp = jsonify(data[-1]) if isinstance(data, list) and data else jsonify({})
+    if not isinstance(data, list) or not data:
+        return jsonify({})
+    # Prefere a última entrada com stage "final" (que contém models_comparison).
+    # Fallback para a última entrada disponível.
+    final_entries = [e for e in data if e.get("stage") == "final"]
+    entry = final_entries[-1] if final_entries else data[-1]
+    resp = jsonify(entry)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     return resp

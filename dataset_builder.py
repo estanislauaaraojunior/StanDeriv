@@ -146,15 +146,20 @@ def build_dataset(
             epochs_raw = [e for e, _ in sorted_pairs]
             prices_raw = [p for _, p in sorted_pairs]
 
-        # Verifica avg_gap do segmento recente (últimos 500 pontos)
-        recent_slice = min(500, len(epochs_raw))
+        # Verifica avg_gap do segmento recente (todo o dataset — sem cap arbitrário)
+        recent_slice = len(epochs_raw)
         recent_epochs = epochs_raw[-recent_slice:]
         recent_avg_gap = (recent_epochs[-1] - recent_epochs[0]) / max(len(recent_epochs) - 1, 1)
 
         if recent_avg_gap >= CANDLE_TIMEFRAME_SEC * 0.8:
-            # Os dados recentes já estão em frequência de candles — usa-os diretamente
+            # Os dados recentes já estão em frequência de candles — usa-os diretamente.
+            # Bug #11: o cap anterior era silencioso e fixo em 500 pontos, podendo descartar
+            # dados valiosos. Agora usa todos os pontos disponíveis neste segmento.
             prices_all = prices_raw[-recent_slice:]
-            print(f"[DATASET] Dados recentes em frequência de candles (~{recent_avg_gap:.0f}s/ponto), usando {len(prices_all)} pontos.")
+            print(
+                f"[DATASET] Dados recentes em frequência de candles (~{recent_avg_gap:.0f}s/ponto), "
+                f"usando {len(prices_all):,} pontos (de {len(prices_raw):,} disponíveis)."
+            )
         else:
             # Agrega todos os ticks em candles de tempo
             ticks_list = [{"epoch": e, "price": p} for e, p in zip(epochs_raw, prices_raw)]

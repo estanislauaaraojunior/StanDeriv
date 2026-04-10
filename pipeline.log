@@ -1,0 +1,439 @@
+============================================================
+  Deriv Pipeline — Orquestrador Automático
+  Modo              : DEMO
+  Símbolo           : R_100 — Volatility 100 Index
+  Candles históricos : 10,000 × 1 min
+  Candles p/ treino  : 10,000
+  Re-treino         : adaptativo (IA decide automaticamente)
+    › WinRate < 42% | Conf < 55% | +400 ticks | backstop 60min
+  Pressione Ctrl+C para encerrar tudo
+============================================================
+[TENDÊNCIA] ── Scan primário ──────────────────────────────
+[TENDÊNCIA] Candidatos: R_10, R_25, R_50, R_75, R_100, 1HZ10V, 1HZ25V, 1HZ50V, 1HZ75V, 1HZ100V
+  R_10         score= 35.78 ↑
+  1HZ25V       score= 12.57 ↑
+  1HZ50V       score= 20.54 ↑
+  R_25         score= 40.26 ↓
+  1HZ75V       score= 53.88 ↑
+  R_50         score= 32.47 ↑
+  R_75         score= 24.48 ↓
+  R_100        score= 58.41 ↑
+  1HZ100V      score= 47.66 ↑
+  1HZ10V       score=  0.00
+[TENDÊNCIA] ✔ Melhor índice: R_100 — Volatility 100 Index (score=58.41)
+[HISTÓRICO] Buscando os últimos 10,000 candles de 1 min de 'R_100 — Volatility 100 Index'...
+[HISTÓRICO] 4,004 candles de 1min gravados — total no CSV: 574,363
+[PIPELINE] Fase 1: Coletor iniciado em background (sem duplicatas).
+[PIPELINE] Fases 2-4: model.pkl encontrado — treino inicial ignorado.
+           Use --force-retrain para forçar novo treino.
+[PIPELINE] Fase 5: Re-treino adaptativo iniciado (IA decide quando retreinar — backstop: 60 min).
+[PIPELINE] Fase 6: Iniciando bot de trading...
+[RISCO] Estado restaurado: consec_losses=0, saldo=1000.00
+[COLETOR] Conectado | R_100 — Volatility 100 Index
+[COLETOR] Autorizado. Coleta iniciada...
+[COLETOR] Ticks:       1 | 696.95 @ 2026-04-10T17:02:22[BOT] Pré-carregados 490 candles históricos de R_100 — aquecimento instantâneo.
+=======================================================
+  Deriv Trading Bot — Modo: DEMO
+  Símbolo : R_100
+  Duração : 5 m
+  Saldo   : 1000.00 USD
+  Stake   : 10.00 USD (1% do saldo)
+=======================================================
+[BOT] Conectado à Deriv WebSocket API
+[BOT] Autorizado | Saldo real: 7310.27 USD
+[BOT] Baixando 100 candles históricos de R_100 (60s)...
+[BOT] 99 candles históricos carregados via API — aquecimento instantâneo.
+[COLETOR] Ticks:       2 | 696.93 @ 2026-04-10T17:02:24
+[BOT] 697.1200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:       3 | 697.12 @ 2026-04-10T17:02:26
+[BOT] 697.2500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:       4 | 697.25 @ 2026-04-10T17:02:28
+[COLETOR] Ticks:       5 | 697.24 @ 2026-04-10T17:02:30
+[BOT] 697.2400 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.0700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:       6 | 697.07 @ 2026-04-10T17:02:32
+[BOT] 696.9000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:       7 | 696.9 @ 2026-04-10T17:02:34
+[BOT] 696.7700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:       8 | 696.77 @ 2026-04-10T17:02:36
+[BOT] 696.6900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:       9 | 696.69 @ 2026-04-10T17:02:38
+[COLETOR] Ticks:      10 | 696.78 @ 2026-04-10T17:02:40
+[BOT] 696.7800 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 696.5100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      11 | 696.51 @ 2026-04-10T17:02:42
+[BOT] 696.7300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      12 | 696.73 @ 2026-04-10T17:02:44
+[BOT] 697.0400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      13 | 697.04 @ 2026-04-10T17:02:46
+[COLETOR] Ticks:      14 | 697.14 @ 2026-04-10T17:02:48
+[BOT] 697.1400 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.0200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      15 | 697.02 @ 2026-04-10T17:02:50
+[COLETOR] Ticks:      16 | 696.93 @ 2026-04-10T17:02:52
+[BOT] 696.9300 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 696.9300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      17 | 696.93 @ 2026-04-10T17:02:54
+[BOT] 697.1300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      18 | 697.13 @ 2026-04-10T17:02:56
+[BOT] 697.3800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      19 | 697.38 @ 2026-04-10T17:02:58
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🟢 Hammer (força: 1.00)
+  Preço: 697.3400 | Contexto: Sem contexto especial
+  Ação sugerida: BUY favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[TICK] 697.3400 | EMA9:696.3752 EMA21:696.5154 | RSI:53.9 ADX:15.7 MACD_H:-0.15021 [LATERAL]
+[COLETOR] Ticks:      20 | 697.34 @ 2026-04-10T17:03:00
+[BOT] 697.3200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      21 | 697.32 @ 2026-04-10T17:03:02
+[BOT] 697.6900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      22 | 697.69 @ 2026-04-10T17:03:04
+[COLETOR] Ticks:      23 | 697.68 @ 2026-04-10T17:03:06
+[BOT] 697.6800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      24 | 697.83 @ 2026-04-10T17:03:08
+[BOT] 697.8300 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.9900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      25 | 697.99 @ 2026-04-10T17:03:10
+[BOT] 698.2100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      26 | 698.21 @ 2026-04-10T17:03:12
+[BOT] 698.0900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      27 | 698.09 @ 2026-04-10T17:03:14
+[BOT] 698.2500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      28 | 698.25 @ 2026-04-10T17:03:16
+[BOT] 698.0000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      29 | 698.0 @ 2026-04-10T17:03:18
+[BOT] 697.9400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      30 | 697.94 @ 2026-04-10T17:03:20
+[BOT] 697.8900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      31 | 697.89 @ 2026-04-10T17:03:22
+[BOT] 697.8100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      32 | 697.81 @ 2026-04-10T17:03:24
+[COLETOR] Ticks:      33 | 697.75 @ 2026-04-10T17:03:26
+[BOT] 697.7500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      34 | 697.92 @ 2026-04-10T17:03:28
+[BOT] 697.9200 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.9300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      35 | 697.93 @ 2026-04-10T17:03:30
+[COLETOR] Ticks:      36 | 697.71 @ 2026-04-10T17:03:32
+[BOT] 697.7100 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.8900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      37 | 697.89 @ 2026-04-10T17:03:34
+[BOT] 698.1300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      38 | 698.13 @ 2026-04-10T17:03:36
+[COLETOR] Ticks:      39 | 698.4 @ 2026-04-10T17:03:38
+[BOT] 698.4000 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.3800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      40 | 698.38 @ 2026-04-10T17:03:40
+[BOT] 698.6100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      41 | 698.61 @ 2026-04-10T17:03:42
+[COLETOR] Ticks:      42 | 698.58 @ 2026-04-10T17:03:44
+[BOT] 698.5800 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.2800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      43 | 698.28 @ 2026-04-10T17:03:46
+[BOT] 698.6000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      44 | 698.6 @ 2026-04-10T17:03:48
+[BOT] 698.2200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      45 | 698.22 @ 2026-04-10T17:03:50
+[COLETOR] Ticks:      46 | 698.1 @ 2026-04-10T17:03:52
+[BOT] 698.1000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      47 | 698.26 @ 2026-04-10T17:03:54
+[BOT] 698.2600 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.9800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      48 | 697.98 @ 2026-04-10T17:03:56
+[BOT] 697.8400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      49 | 697.84 @ 2026-04-10T17:03:58
+[COLETOR] Ticks:      50 | 697.74 @ 2026-04-10T17:04:00
+[TICK] 697.7400 | EMA9:696.6681 EMA21:696.6358 | RSI:55.6 ADX:15.3 MACD_H:-0.03135 [LATERAL]
+[BOT] 697.3800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      51 | 697.38 @ 2026-04-10T17:04:02
+[BOT] 697.1800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      52 | 697.18 @ 2026-04-10T17:04:04
+[BOT] 696.7900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      53 | 696.79 @ 2026-04-10T17:04:06
+[BOT] 696.9500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      54 | 696.95 @ 2026-04-10T17:04:08
+[BOT] 696.9400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      55 | 696.94 @ 2026-04-10T17:04:10
+[COLETOR] Ticks:      56 | 697.12 @ 2026-04-10T17:04:12
+[BOT] 697.1200 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.1400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      57 | 697.14 @ 2026-04-10T17:04:14
+[COLETOR] Ticks:      58 | 697.25 @ 2026-04-10T17:04:16
+[BOT] 697.2500 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.2400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      59 | 697.24 @ 2026-04-10T17:04:18
+[COLETOR] Ticks:      60 | 697.45 @ 2026-04-10T17:04:20
+[BOT] 697.4500 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.2000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      61 | 697.2 @ 2026-04-10T17:04:22
+[BOT] 697.3000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      62 | 697.3 @ 2026-04-10T17:04:24
+[BOT] 697.1500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      63 | 697.15 @ 2026-04-10T17:04:26
+[COLETOR] Ticks:      64 | 697.19 @ 2026-04-10T17:04:28
+[BOT] 697.1900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      65 | 697.07 @ 2026-04-10T17:04:30
+[BOT] 697.0700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      66 | 696.94 @ 2026-04-10T17:04:32
+[BOT] 696.9400 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.0100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      67 | 697.01 @ 2026-04-10T17:04:34
+[COLETOR] Ticks:      68 | 697.29 @ 2026-04-10T17:04:36
+[BOT] 697.2900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      69 | 697.27 @ 2026-04-10T17:04:38
+[BOT] 697.2700 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 697.7100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      70 | 697.71 @ 2026-04-10T17:04:40
+[BOT] 697.9300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      71 | 697.93 @ 2026-04-10T17:04:42
+[COLETOR] Ticks:      72 | 698.07 @ 2026-04-10T17:04:44
+[BOT] 698.0700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      73 | 698.11 @ 2026-04-10T17:04:46
+[BOT] 698.1100 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.0800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      74 | 698.08 @ 2026-04-10T17:04:48
+[BOT] 698.2400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      75 | 698.24 @ 2026-04-10T17:04:50
+[BOT] 698.1500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      76 | 698.15 @ 2026-04-10T17:04:52
+[BOT] 698.1300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      77 | 698.13 @ 2026-04-10T17:04:54
+[COLETOR] Ticks:      78 | 698.04 @ 2026-04-10T17:04:56
+[BOT] 698.0400 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.1000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      79 | 698.1 @ 2026-04-10T17:04:58
+[COLETOR] Ticks:      80 | 698.16 @ 2026-04-10T17:05:00
+[TICK] 698.1600 | EMA9:696.9545 EMA21:696.7689 | RSI:56.5 ADX:15.2 MACD_H:+0.06002 [LATERAL]
+[BOT] 698.2000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      81 | 698.2 @ 2026-04-10T17:05:02
+[BOT] 698.3500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      82 | 698.35 @ 2026-04-10T17:05:04
+[BOT] 698.1600 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      83 | 698.16 @ 2026-04-10T17:05:06
+[BOT] 698.0900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      84 | 698.09 @ 2026-04-10T17:05:08
+[BOT] 698.1300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      85 | 698.13 @ 2026-04-10T17:05:10
+[BOT] 698.3100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      86 | 698.31 @ 2026-04-10T17:05:12
+[COLETOR] Ticks:      87 | 698.5 @ 2026-04-10T17:05:14
+[BOT] 698.5000 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.8100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      88 | 698.81 @ 2026-04-10T17:05:16
+[BOT] 698.8800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      89 | 698.88 @ 2026-04-10T17:05:18
+[BOT] 698.8700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      90 | 698.87 @ 2026-04-10T17:05:20
+[BOT] 698.4700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      91 | 698.47 @ 2026-04-10T17:05:22
+[BOT] 698.6400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      92 | 698.64 @ 2026-04-10T17:05:24
+[BOT] 698.8500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      93 | 698.85 @ 2026-04-10T17:05:26
+[BOT] 698.9500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      94 | 698.95 @ 2026-04-10T17:05:28
+[BOT] 699.1000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      95 | 699.1 @ 2026-04-10T17:05:30
+[COLETOR] Ticks:      96 | 698.8 @ 2026-04-10T17:05:32
+[BOT] 698.8000 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.6900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      97 | 698.69 @ 2026-04-10T17:05:34
+[BOT] 698.5600 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:      98 | 698.56 @ 2026-04-10T17:05:36
+[COLETOR] Ticks:      99 | 698.43 @ 2026-04-10T17:05:38
+[BOT] 698.4300 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.6500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     100 | 698.65 @ 2026-04-10T17:05:40
+[COLETOR] Ticks:     101 | 698.83 @ 2026-04-10T17:05:42
+[BOT] 698.8300 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.9200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     102 | 698.92 @ 2026-04-10T17:05:44
+[COLETOR] Ticks:     103 | 698.85 @ 2026-04-10T17:05:46
+[BOT] 698.8500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     104 | 698.46 @ 2026-04-10T17:05:48
+[BOT] 698.4600 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.6200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     105 | 698.62 @ 2026-04-10T17:05:50
+[BOT] 698.5600 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     106 | 698.56 @ 2026-04-10T17:05:52
+[COLETOR] Ticks:     107 | 698.81 @ 2026-04-10T17:05:54
+[BOT] 698.8100 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.7400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     108 | 698.74 @ 2026-04-10T17:05:56
+[BOT] 698.5400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     109 | 698.54 @ 2026-04-10T17:05:58
+[COLETOR] Ticks:     110 | 698.61 @ 2026-04-10T17:06:00
+[TICK] 698.6100 | EMA9:697.2716 EMA21:696.9299 | RSI:58.1 ADX:15.4 MACD_H:+0.14073 [LATERAL]
+[BOT] 698.8300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     111 | 698.83 @ 2026-04-10T17:06:02
+[BOT] 699.0100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     112 | 699.01 @ 2026-04-10T17:06:04
+[BOT] 698.8800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     113 | 698.88 @ 2026-04-10T17:06:06
+[COLETOR] Ticks:     114 | 698.96 @ 2026-04-10T17:06:08
+[BOT] 698.9600 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.1400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     115 | 699.14 @ 2026-04-10T17:06:10
+[COLETOR] Ticks:     116 | 699.21 @ 2026-04-10T17:06:12
+[BOT] 699.2100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     117 | 699.16 @ 2026-04-10T17:06:14
+[BOT] 699.1600 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.3300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     118 | 699.33 @ 2026-04-10T17:06:16
+[BOT] 699.0900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     119 | 699.09 @ 2026-04-10T17:06:18
+[BOT] 699.2000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     120 | 699.2 @ 2026-04-10T17:06:20
+[COLETOR] Ticks:     121 | 699.2 @ 2026-04-10T17:06:22
+[BOT] 699.2000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     122 | 699.21 @ 2026-04-10T17:06:24
+[BOT] 699.2100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     123 | 698.98 @ 2026-04-10T17:06:26
+[BOT] 698.9800 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.4900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     124 | 699.49 @ 2026-04-10T17:06:28
+[BOT] 699.5100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     125 | 699.51 @ 2026-04-10T17:06:30
+[BOT] 699.7200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     126 | 699.72 @ 2026-04-10T17:06:32
+[COLETOR] Ticks:     127 | 699.91 @ 2026-04-10T17:06:34
+[BOT] 699.9100 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 700.0300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     128 | 700.03 @ 2026-04-10T17:06:36
+[BOT] 700.3200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     129 | 700.32 @ 2026-04-10T17:06:38
+[BOT] 700.7300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     130 | 700.73 @ 2026-04-10T17:06:40
+[BOT] 700.9000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     131 | 700.9 @ 2026-04-10T17:06:42
+[BOT] 700.8800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     132 | 700.88 @ 2026-04-10T17:06:44
+[COLETOR] Ticks:     133 | 700.84 @ 2026-04-10T17:06:46
+[BOT] 700.8400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     134 | 700.61 @ 2026-04-10T17:06:48
+[BOT] 700.6100 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 700.1800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     135 | 700.18 @ 2026-04-10T17:06:50
+[BOT] 700.0200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     136 | 700.02 @ 2026-04-10T17:06:52
+[BOT] 699.9300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     137 | 699.93 @ 2026-04-10T17:06:54
+[BOT] 699.9800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     138 | 699.98 @ 2026-04-10T17:06:56
+[COLETOR] Ticks:     139 | 700.11 @ 2026-04-10T17:06:58
+[BOT] 700.1100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     140 | 700.01 @ 2026-04-10T17:07:00
+[TICK] 700.0100 | EMA9:697.8393 EMA21:697.2190 | RSI:63.4 ADX:16.4 MACD_H:+0.28232 [LATERAL]
+[COLETOR] Ticks:     141 | 699.85 @ 2026-04-10T17:07:02
+[BOT] 699.8500 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.4900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     142 | 699.49 @ 2026-04-10T17:07:04
+[BOT] 699.3200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     143 | 699.32 @ 2026-04-10T17:07:06
+[COLETOR] Ticks:     144 | 699.14 @ 2026-04-10T17:07:08
+[BOT] 699.1400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     145 | 699.13 @ 2026-04-10T17:07:10
+[BOT] 699.1300 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.2400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     146 | 699.24 @ 2026-04-10T17:07:12
+[BOT] 699.3400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     147 | 699.34 @ 2026-04-10T17:07:14
+[BOT] 699.1300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     148 | 699.13 @ 2026-04-10T17:07:16
+[COLETOR] Ticks:     149 | 699.33 @ 2026-04-10T17:07:18
+[BOT] 699.3300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     150 | 699.39 @ 2026-04-10T17:07:20
+[BOT] 699.3900 | Aguardando fechamento da vela... (candles ok: 500)
+[RE-TREINO] Gatilho: confiança média 0.52 < limiar 0.55 (574,513 ticks disponíveis). Iniciando re-treino...
+[PIPELINE] ── Fase 3: Construindo dataset ──
+[COLETOR] Ticks:     151 | 699.37 @ 2026-04-10T17:07:22
+[BOT] 699.3700 | Aguardando fechamento da vela... (candles ok: 500)   [PIPELINE] Snapshot filtrado para 'R_100': 49,899 ticks (524,614 de outros símbolos removidos)
+[DATASET] Lendo ticks de 'ticks.csv.train_snapshot'...
+[COLETOR] Ticks:     152 | 699.13 @ 2026-04-10T17:07:24
+[BOT] 699.1300 | Aguardando fechamento da vela... (candles ok: 500)   [DATASET] 49,899 ticks → 6,089 candles de 60s (1 min).
+[DATASET] 6,089 pontos de preço para features.
+[BOT] 699.3200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     153 | 699.32 @ 2026-04-10T17:07:26
+[BOT] 699.2100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     154 | 699.21 @ 2026-04-10T17:07:28[DATASET] Horizonte target: 2 tick(s)
+[DATASET] Linhas geradas  : 4,862
+[DATASET] Linhas ignoradas: 1,175 (indicadores insuficientes)
+[DATASET] Distribuição do target:
+           Sobe (1):  2,458 (50.6%)
+           Cai  (0):  2,404 (49.4%)
+[DATASET] Salvo em 'dataset.csv.tmp'
+[PIPELINE] ── Fase 4: Treinando modelo ──
+[TREINO] Lendo dataset de 'dataset.csv.tmp'...
+[TREINO] Total de amostras : 4,862
+[TREINO] Treino            : 3,889 (80%)
+[TREINO] Gap temporal      : 97 amostras
+[TREINO] Teste             : 876 (18.0%)
+[TREINO] Classe 1 (sobe): 1,965 | Classe 0 (cai): 1,924 | SPW=0.98
+[TREINO] Treinando modelos...
+  → RandomForest...
+[BOT] 699.0100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     155 | 699.01 @ 2026-04-10T17:07:30
+[BOT] 699.1000 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     156 | 699.1 @ 2026-04-10T17:07:32
+[COLETOR] Ticks:     157 | 699.11 @ 2026-04-10T17:07:34
+[BOT] 699.1100 | Aguardando fechamento da vela... (candles ok: 500)   OK
+  → XGBoost...
+[BOT] 699.1200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     158 | 699.12 @ 2026-04-10T17:07:36
+[COLETOR] Ticks:     159 | 699.17 @ 2026-04-10T17:07:38
+[BOT] 699.1700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     160 | 698.96 @ 2026-04-10T17:07:40
+[BOT] 698.9600 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     161 | 699.15 @ 2026-04-10T17:07:42
+[BOT] 699.1500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     162 | 698.88 @ 2026-04-10T17:07:44
+[BOT] 698.8800 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.7900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     163 | 698.79 @ 2026-04-10T17:07:46
+[BOT] 698.8200 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     164 | 698.82 @ 2026-04-10T17:07:48
+[COLETOR] Ticks:     165 | 698.74 @ 2026-04-10T17:07:50
+[BOT] 698.7400 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 698.6400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     166 | 698.64 @ 2026-04-10T17:07:52
+[COLETOR] Ticks:     167 | 699.17 @ 2026-04-10T17:07:54
+[BOT] 699.1700 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.2700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     168 | 699.27 @ 2026-04-10T17:07:56
+[BOT] 699.2400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     169 | 699.24 @ 2026-04-10T17:07:58
+[TICK] 699.5100 | EMA9:698.1194 EMA21:697.4027 | RSI:59.0 ADX:17.4 MACD_H:+0.29828 [LATERAL]
+[COLETOR] Ticks:     170 | 699.51 @ 2026-04-10T17:08:00
+[BOT] 699.6900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     171 | 699.69 @ 2026-04-10T17:08:02
+[COLETOR] Ticks:     172 | 699.64 @ 2026-04-10T17:08:04
+[BOT] 699.6400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     173 | 699.7 @ 2026-04-10T17:08:06
+[BOT] 699.7000 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.7400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     174 | 699.74 @ 2026-04-10T17:08:08
+[COLETOR] Ticks:     175 | 699.78 @ 2026-04-10T17:08:10
+[BOT] 699.7800 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 699.8400 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     176 | 699.84 @ 2026-04-10T17:08:12
+[BOT] 699.8900 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     177 | 699.89 @ 2026-04-10T17:08:14
+[BOT] 699.9800 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     178 | 699.98 @ 2026-04-10T17:08:16
+[BOT] 700.2500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     179 | 700.25 @ 2026-04-10T17:08:18
+[BOT] 700.4700 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     180 | 700.47 @ 2026-04-10T17:08:20
+[BOT] 700.6100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     181 | 700.61 @ 2026-04-10T17:08:22
+[COLETOR] Ticks:     182 | 700.53 @ 2026-04-10T17:08:24
+[BOT] 700.5300 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     183 | 700.81 @ 2026-04-10T17:08:26
+[BOT] 700.8100 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     184 | 700.54 @ 2026-04-10T17:08:28
+[BOT] 700.5400 | Aguardando fechamento da vela... (candles ok: 500)
+[BOT] 700.6500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     185 | 700.65 @ 2026-04-10T17:08:30
+[BOT] 700.8500 | Aguardando fechamento da vela... (candles ok: 500)
+[COLETOR] Ticks:     186 | 700.85 @ 2026-04-10T17:08:32
