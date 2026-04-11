@@ -250,6 +250,66 @@ def ticks_to_candles(prices: list, candle_size: int = 10) -> List[Dict[str, floa
     return candles
 
 
+def ticks_to_candles_by_time(
+    ticks: List[Dict],
+    timeframe_sec: int = 300,
+) -> List[Dict[str, float]]:
+    """
+    Converte lista de ticks com timestamp em velas OHLC por janela de tempo.
+
+    Args:
+        ticks: lista de dicts com keys 'epoch' (int) e 'price' (float),
+               ou listas/tuplas (epoch, price) em ordem cronológica.
+        timeframe_sec: tamanho de cada vela em segundos (ex: 300 = 5 min).
+
+    Retorna lista de dicts com keys: epoch (abertura), open, high, low, close.
+    Velas incompletas (a última vela em curso) são descartadas.
+    """
+    if not ticks:
+        return []
+
+    candles: List[Dict[str, float]] = []
+    candle_open = None
+    candle_open_epoch = 0
+    c_high = c_low = 0.0
+
+    for tick in ticks:
+        if isinstance(tick, dict):
+            epoch = int(tick["epoch"])
+            price = float(tick["price"])
+        else:
+            epoch, price = int(tick[0]), float(tick[1])
+
+        if candle_open is None:
+            # Alinha a janela ao início do período (ex: 09:00:00, 09:05:00 …)
+            candle_open_epoch = (epoch // timeframe_sec) * timeframe_sec
+            candle_open = price
+            c_high = price
+            c_low = price
+            candle_close = price
+        elif epoch < candle_open_epoch + timeframe_sec:
+            c_high = max(c_high, price)
+            c_low = min(c_low, price)
+            candle_close = price
+        else:
+            # Fecha vela corrente
+            candles.append({
+                "epoch": candle_open_epoch,
+                "open":  candle_open,
+                "high":  c_high,
+                "low":   c_low,
+                "close": candle_close,
+            })
+            # Inicia nova vela alinhada
+            candle_open_epoch = (epoch // timeframe_sec) * timeframe_sec
+            candle_open = price
+            c_high = price
+            c_low = price
+            candle_close = price
+
+    return candles
+
+
 def _find_swing_points(
     candles: List[Dict[str, float]], lookback: int = 3
 ) -> Tuple[List[Tuple[int, float]], List[Tuple[int, float]]]:

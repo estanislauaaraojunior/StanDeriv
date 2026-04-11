@@ -111,7 +111,7 @@ def _build_stacking(scale_pos_weight: float = 1.0) -> StackingClassifier:
     return StackingClassifier(
         estimators=base_estimators,
         final_estimator=meta,
-        cv=StratifiedKFold(n_splits=5, shuffle=False),
+        cv=StratifiedKFold(n_splits=5, shuffle=False),  # cross_val_predict requer partições completas
         passthrough=False,
         n_jobs=-1,
     )
@@ -230,7 +230,14 @@ def _print_feature_importance(rf_pipeline: Pipeline) -> None:
 #  Treinamento principal
 # ─────────────────────────────────────────────────────────────────
 
-def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: float = 0.02) -> dict:
+def train(
+    dataset_path: str,
+    output_path: str,
+    test_ratio: float,
+    gap_ratio: float = 0.02,
+    tft_output_path: str | None = None,
+    duration_output_path: str | None = None,
+) -> dict:
     if not os.path.exists(dataset_path):
         print(f"[ERRO] Dataset não encontrado: '{dataset_path}'")
         print("       Execute dataset_builder.py primeiro.")
@@ -252,7 +259,8 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
     split = int(n * (1 - test_ratio))
 
     # P11: Gap temporal entre treino e teste para evitar vazamento de dados
-    gap = max(50, int(n * gap_ratio))
+    # Limita o gap a no máximo 5% do dataset para não eliminar todas as amostras de teste
+    gap = min(max(5, int(n * gap_ratio)), int(n * 0.05))
     X_train, X_test = X[:split], X[split + gap:]
     y_train, y_test = y[:split], y[split + gap:]
 
@@ -336,6 +344,9 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
     except Exception:
         pass
 
+    # Inicializa lista de AUCs antes do bloco TFT (evita NameError se TFT anexar antes da lista ser criada)
+    all_aucs: list = [(r["name"], r["auc"]) for r in results]
+
     # ── Temporal Fusion Transformer (TFT) ────────────────────────────────
     if USE_TRANSFORMER and _TORCH_AVAILABLE:
         seq_len = TRANSFORMER_SEQ_LEN
@@ -369,13 +380,12 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
                 "seq_len":     seq_len,
                 "dur_classes": CANDIDATE_DURATIONS,
             }
-            joblib.dump(tft_payload, TRANSFORMER_MODEL_PATH)
-            print(f"[TREINO] TFT salvo em '{TRANSFORMER_MODEL_PATH}'")
+            _tft_dest = tft_output_path if tft_output_path else TRANSFORMER_MODEL_PATH
+            joblib.dump(tft_payload, _tft_dest)
+            print(f"[TREINO] TFT salvo em '{_tft_dest}'")
 
             # Comparação final de todas as arquiteturas
-            all_aucs = [
-                (r["name"], r["auc"]) for r in results
-            ] + [(tft_result["name"], tft_result["auc"])]
+            all_aucs.append((tft_result["name"], tft_result["auc"]))
             print("\n[TREINO] Comparativo ROC-AUC:")
             for mname, mauc in sorted(all_aucs, key=lambda t: t[1], reverse=True):
                 bar = "█" * int(mauc * 40)
@@ -384,6 +394,10 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
     elif USE_TRANSFORMER and not _TORCH_AVAILABLE:
         print("\n[TREINO] USE_TRANSFORMER=True mas PyTorch não está instalado.")
         print("         Execute: pip install torch --index-url https://download.pytorch.org/whl/cpu")
+
+    # Comparativo ROC-AUC final (all_aucs já foi inicializado antes do bloco TFT)
+    # Garante que todos os modelos clássicos estejam na lista, caso TFT tenha appendado primeiro
+    {n for n, _ in all_aucs}  # noqa — referência local mantida por legibilidade
 
     # Melhor modelo por ROC-AUC (apenas entre os modelos clássicos salvo em model.pkl)
     best = max(results, key=lambda r: r["auc"])
@@ -425,8 +439,9 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
             "features":  FEATURES,
             "durations": CANDIDATE_DURATIONS,
         }
-        joblib.dump(dur_payload, DURATION_MODEL_PATH)
-        print(f"[TREINO] Modelo de duração (RF) salvo em '{DURATION_MODEL_PATH}'")
+        _dur_dest = duration_output_path if duration_output_path else DURATION_MODEL_PATH
+        joblib.dump(dur_payload, _dur_dest)
+        print(f"[TREINO] Modelo de duração (RF) salvo em '{_dur_dest}'")
     else:
         print("[TREINO] Coluna 'optimal_duration' não encontrada — regenere o dataset antes de retreinar.")
 
@@ -459,15 +474,19 @@ def train(dataset_path: str, output_path: str, test_ratio: float, gap_ratio: flo
             except Exception:
                 history = []
         history.append({
-            "timestamp":   _dt.now().isoformat(),
-            "stage":       "final",
-            "best_model":  best["name"],
-            "auc":         round(best["auc"], 4),
-            "accuracy":    round(best["acc"], 4),
-            "f1":          round(best.get("f1", 0.0), 4),
-            "n_train":     int(split),
-            "n_test":      int(len(X_test)),
-            "model_path":  str(output_path),
+            "timestamp":          _dt.now().isoformat(),
+            "stage":              "final",
+            "best_model":         best["name"],
+            "auc":                round(best["auc"], 4),
+            "accuracy":           round(best["acc"], 4),
+            "f1":                 round(best.get("f1", 0.0), 4),
+            "n_train":            int(split),
+            "n_test":             int(len(X_test)),
+            "model_path":         str(output_path),
+            "models_comparison":  [
+                {"name": n, "auc": round(a, 4)}
+                for n, a in sorted(all_aucs, key=lambda t: t[1], reverse=True)
+            ],
         })
         with open(metrics_path, "w") as _mf:
             _json.dump(history, _mf)

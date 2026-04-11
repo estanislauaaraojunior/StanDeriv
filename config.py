@@ -34,14 +34,14 @@ def set_active_symbol(symbol: str) -> None:
     global _active_symbol
     _active_symbol = symbol
 DURATION      = 5        # duração de fallback (usada quando o modelo ainda não existe)
-DURATION_UNIT = "t"      # "t" = ticks | "s" = segundos | "m" = minutos
+DURATION_UNIT = "m"      # "t" = ticks | "s" = segundos | "m" = minutos
 BASIS         = "stake"  # base do contrato
 CURRENCY      = "USD"
 
 # ----- Duração dinâmica (escolhida pela IA) -----
-# Durações candidatas (em ticks) que o modelo de duração pode prever.
-# Adicione ou remova valores para ampliar/restringir o leque de opções.
-CANDIDATE_DURATIONS = [1, 3, 5, 10]
+# Durações candidatas (em minutos) que o modelo de duração pode prever.
+# A IA aprende qual duração é mais lucrativa para cada condição de mercado.
+CANDIDATE_DURATIONS = [5, 15, 30]
 DURATION_MODEL_PATH = "duration_model.pkl"
 
 # ----- Parâmetros dos indicadores -----
@@ -55,26 +55,40 @@ ADX_PERIOD   = 14
 BB_PERIOD    = 20
 BB_STD       = 2.0
 
+# ----- Candles baseados em tempo -----
+# Duração de cada vela em segundos (agrupamento interno de ticks por janela de tempo).
+# 60   = 1 minuto   (mais candles, dataset maior, avaliações mais frequentes)
+# 300  = 5 minutos  (bom equilíbrio entre sinal e ruído) ← RECOMENDADO
+# 900  = 15 minutos (mais seletivo, menos entradas por dia)
+CANDLE_TIMEFRAME_SEC = 60
+
 # ----- Price Action -----
-CANDLE_SIZE            = 10      # ticks por vela sintética
+CANDLE_SIZE            = 10      # ticks por vela sintética (legado — usado no dashboard)
 CANDLE_LOOKBACK        = 5       # velas mínimas para padrões
 PA_SR_TOLERANCE        = 0.001   # tolerância % para clustering S/R
 TARGET_NOISE_THRESHOLD = 0.0001  # variação mínima para classificar target
-# Horizonte padrão do target no dataset: 1=próximo tick, N>1=média dos próximos N ticks.
-# Valores maiores tendem a reduzir ruído de microestrutura.
-TARGET_LOOKFORWARD     = 5
+# Horizonte do target no dataset em candles (1 = candle seguinte).
+# Valores maiores capturam movimentos de médio prazo.
+TARGET_LOOKFORWARD     = 2
 CANDLE_NOTIFY          = True    # notificações de padrões de vela no terminal
 
+# ----- Filtro de padrões de vela (soft conflict filter) -----
+# True  = bloqueia entradas quando o padrão contradiz o sinal técnico
+# False = padrões só geram alertas visuais (comportamento anterior)
+CANDLE_PATTERN_FILTER       = True
+CANDLE_PATTERN_MIN_STRENGTH = 0.55  # força mínima do padrão para ativar o filtro (0.0–1.0)
+CANDLE_PATTERN_MAX_AGE_SEC  = 300   # padrões mais velhos que 5 min são ignorados
+
 # ----- Filtros de entrada -----
-RSI_OVERSOLD    = 35   # abaixo → sobrevendido (não abre SELL aqui)
-RSI_OVERBOUGHT  = 65   # acima → sobrecomprado (não abre BUY aqui)
-ADX_MIN         = 20   # abaixo → mercado lateral → sem entrada
+RSI_OVERSOLD    = 38   # abaixo → sobrevendido (não abre SELL aqui)
+RSI_OVERBOUGHT  = 62   # acima → sobrecomprado (não abre BUY aqui)
+ADX_MIN         = 18   # abaixo → mercado lateral → sem entrada
 
 # ----- ADX adaptativo (P10) -----
 # True  → ADX_MIN ajustado ao percentil do histórico recente (mais preciso por símbolo)
 # False → usa ADX_MIN fixo acima
 ADX_ADAPTIVE            = True
-ADX_ADAPTIVE_PERCENTILE = 40   # percentil do histórico de ADX; piso = 15
+ADX_ADAPTIVE_PERCENTILE = 50   # percentil do histórico de ADX; piso = 15
 
 # ----- Gestão de risco -----
 STAKE_PCT         = 0.01   # 1% do saldo por operação
@@ -88,15 +102,18 @@ PAUSE_SCALE_FACTOR = 2     # dobra a pausa a cada loss além do limite
 RESUME_ON_WIN      = True  # retoma pausa imediatamente após 1 win
 
 # ----- Aquecimento -----
-MIN_TICKS = 50  # ticks mínimos antes de operar (garante indicadores estáveis)
+MIN_TICKS   = 50   # (legado) ticks mínimos — mantido para compatibilidade
+MIN_CANDLES = 50   # velas de tempo mínimas antes de operar (≥ MACD_SLOW+MACD_SIGNAL=35)
+                   # (20 × CANDLE_TIMEFRAME_SEC = 100 min para 5min candles)
 
 # ----- Buffer de preços (P12) -----
 PRICE_BUFFER_SIZE = 500  # ticks mantidos em memória para indicadores e IA
 
 # ----- Cadência de entradas -----
-# Primeira entrada: imediata após MIN_TICKS (modelo já treinado com histórico).
-# Entradas seguintes: somente após acumular ENTRY_TICK_INTERVAL novos ticks.
-ENTRY_TICK_INTERVAL = 100  # ticks entre entradas
+# Primeira entrada: imediata após MIN_CANDLES candles fechados.
+# Entradas seguintes: somente após fechar ENTRY_CANDLE_INTERVAL nova(s) vela(s).
+ENTRY_TICK_INTERVAL  = 100  # (legado) mantido para compatibilidade
+ENTRY_CANDLE_INTERVAL = 1   # 1 = entra em cada nova vela fechada (se houver sinal)
 
 # ----- Timeout de operações (P1, P7) -----
 PROPOSAL_TIMEOUT_SEC = 10   # segundos sem resposta da API antes de cancelar proposal
@@ -112,18 +129,18 @@ TICK_SPIKE_THRESHOLD = 0.05  # rejeitar ticks com variação > 5% em relação a
 # USE_AI_MODEL = True   → IA pondera o sinal dos indicadores antes de operar
 USE_AI_MODEL       = True
 AI_MODEL_PATH      = "model.pkl"
-AI_CONFIDENCE_MIN  = 0.50   # limiar mínimo realista para modelo com ~52% de acurácia
+AI_CONFIDENCE_MIN  = 0.55   # limiar mínimo — exige mais certeza do modelo
 
 # Ponderação IA vs técnico (P4) — substitui gate duro por score suavizado
-AI_TECH_WEIGHT  = 0.60   # peso do sinal técnico no score final
-AI_MODEL_WEIGHT = 0.40   # peso do sinal da IA no score final
-AI_SCORE_MIN    = 0.52   # score mínimo ponderado para aceitar a operação
+AI_TECH_WEIGHT  = 0.55   # peso do sinal técnico no score final
+AI_MODEL_WEIGHT = 0.45   # peso do sinal da IA no score final
+AI_SCORE_MIN    = 0.30   # score mínimo ponderado para aceitar a operação
 
 # ----- Sinal ponderado (P14) -----
 # False = comportamento original (AND rígido — menos entradas, mais seletivo)
 # True  = score ponderado por indicador (mais entradas, requer ajuste fino)
-USE_WEIGHTED_SIGNAL = False
-SIGNAL_SCORE_MIN    = 0.65  # limiar mínimo do score técnico ponderado
+USE_WEIGHTED_SIGNAL = True
+SIGNAL_SCORE_MIN    = 0.05  # limiar mínimo do score técnico ponderado
 
 # ----- Detecção de drift (P13) -----
 DRIFT_WINDOW       = 20    # janela de trades para calcular win rate recente
@@ -131,9 +148,31 @@ DRIFT_WIN_RATE_MIN = 0.40  # alerta se win rate dos últimos N trades < 40%
 
 # ----- Promoção de modelo (champion-challenger) -----
 # Challenger só substitui o champion quando superar esses critérios mínimos.
-MODEL_PROMOTION_MIN_AUC_DELTA = 0.002  # AUC_novo >= AUC_atual + delta
-MODEL_PROMOTION_MAX_ACC_DROP  = 0.005  # queda máxima tolerada de acurácia
-MODEL_PROMOTION_MAX_F1_DROP   = 0.005  # queda máxima tolerada de F1
+MODEL_PROMOTION_MIN_AUC_DELTA = 0.001  # AUC_novo >= AUC_atual + delta
+MODEL_PROMOTION_MAX_ACC_DROP  = 0.02   # queda máxima tolerada de acurácia
+MODEL_PROMOTION_MAX_F1_DROP   = 0.05   # queda máxima tolerada de F1
+
+# ----- Retreino adaptativo (decidido pela IA) -----
+# O bot monitora constantemente os gatilhos abaixo e aciona retreino
+# sem depender de um intervalo de tempo fixo.
+
+# Janela de trades recentes analisados para detecção de degradação
+RETRAIN_EVAL_WINDOW        = 20     # últimos N trades considerados
+
+# Aciona retreino se win rate recente cair abaixo desse limiar
+RETRAIN_WIN_RATE_TRIGGER   = 0.42   # ex: 42% → modelo degradando
+
+# Aciona retreino se confiança média da IA cair abaixo desse limiar
+RETRAIN_CONFIDENCE_TRIGGER = 0.55   # ex: < 55% → modelo inseguro
+
+# Aciona retreino após acumular N novos ticks desde o último treino
+RETRAIN_NEW_TICKS_TRIGGER  = 400    # suficiente para gerar novo sinal de mercado
+
+# Tempo mínimo entre dois retreinos (evita retreinos em cascata)
+RETRAIN_MIN_INTERVAL_SEC   = 300    # 5 minutos
+
+# Backstop: força retreino mesmo sem gatilho após esse tempo máximo
+RETRAIN_MAX_INTERVAL_SEC   = 3600   # 1 hora
 
 # ----- Arquivos de log -----
 TICKS_CSV        = "ticks.csv"

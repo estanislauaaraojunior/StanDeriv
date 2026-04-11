@@ -1,1 +1,1 @@
-{"symbol": "R_25", "session_start": "2026-04-06T19:11:49.319496", "active_contract": null, "min_ticks_target": 500}
+{"symbol": "R_25", "session_start": "2026-04-10T21:29:20.818019", "active_contract": {"has_active": true, "contract_id": "311462664328", "symbol": "R_25", "direction": "BUY", "duration": 30, "buy_timestamp": 1775913541.432948, "entry_epoch": 1775913540, "entry_price": 3175.335}, "min_ticks_target": 200}

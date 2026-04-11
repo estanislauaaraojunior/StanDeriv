@@ -130,6 +130,13 @@
         Contrato em Tempo Real
         <span id="rtContractStatus" class="legend-item">Aguardando contrato</span>
       </div>
+      <div id="rtContractInfo" style="display:flex;align-items:center;gap:14px;padding:6px 4px 2px;flex-wrap:wrap;">
+        <span id="rtContractDirection" style="font-size:1.1rem;font-weight:700;padding:3px 12px;border-radius:6px;letter-spacing:1px;background:#21262d;color:#8b949e;">—</span>
+        <span id="rtContractTimer" style="font-size:0.95rem;color:#8b949e;">—</span>
+        <div id="rtContractProgressWrap" style="flex:1;min-width:120px;height:6px;background:#21262d;border-radius:4px;overflow:hidden;">
+          <div id="rtContractProgress" style="height:100%;width:0%;background:#58a6ff;transition:width 0.5s;border-radius:4px;"></div>
+        </div>
+      </div>
       <div class="trade-dots-legend" id="rtContractMeta">Sem contrato ativo no momento.</div>
       <div class="chart-wrap chart-tall"><canvas id="rtContractChart"></canvas></div>
     </div>
@@ -341,6 +348,14 @@
           <span class="mm-label">Data do treino</span>
           <span class="mm-value" id="mmTimestamp">—</span>
         </div>
+      </div>
+    </div>
+
+    <!-- Comparativo ROC-AUC entre modelos -->
+    <div class="chart-card full-width" style="margin-top:16px">
+      <div class="chart-title">Comparativo ROC-AUC — Último Treino</div>
+      <div id="rocComparisonWrap" class="roc-comparison-wrap">
+        <span class="mm-value" style="opacity:.5">Aguardando treino...</span>
       </div>
     </div>
 
