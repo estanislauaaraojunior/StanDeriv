@@ -14,8 +14,21 @@ load_dotenv()  # carrega variáveis de .env (ignorado se não existir)
 DEMO_MODE = True
 
 # ----- Conexão -----
-APP_ID = os.environ.get("DERIV_APP_ID", "1089")
-TOKEN  = os.environ["DERIV_TOKEN"]    # defina em .env — crie em: developers.deriv.com
+_RAW_APP_ID = os.environ.get("DERIV_APP_ID", "1089").strip()
+_RAW_TOKEN  = os.environ["DERIV_TOKEN"].strip()    # defina em .env — crie em: developers.deriv.com
+DERIV_AUTH_MODE = os.environ.get("DERIV_AUTH_MODE", "auto").strip().lower()
+_TOKEN_PREFIXES = ("pat_", "ory_at_")
+
+# Protege contra inversão acidental no .env:
+#   DERIV_APP_ID=pat_...
+#   DERIV_TOKEN=<app_id>
+if _RAW_APP_ID.startswith(_TOKEN_PREFIXES) and not _RAW_TOKEN.startswith(_TOKEN_PREFIXES):
+    APP_ID = _RAW_TOKEN
+    TOKEN  = _RAW_APP_ID
+    print("[CONFIG] Aviso: DERIV_APP_ID e DERIV_TOKEN parecem invertidos no .env; usando troca automática.")
+else:
+    APP_ID = _RAW_APP_ID
+    TOKEN  = _RAW_TOKEN
 
 # ----- Instrumento -----
 SYMBOL        = "R_100"  # índice sintético 24/7 (sem impacto de notícias)

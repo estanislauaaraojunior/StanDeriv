@@ -34,12 +34,31 @@ import time
 from datetime import datetime
 from typing import Optional
 
+
+def _reexec_with_project_venv() -> None:
+    """Relança o pipeline com a .venv local quando chamado via Python global."""
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(project_dir, ".venv", "bin", "python")
+
+    if not os.path.exists(venv_python):
+        return
+
+    if os.path.abspath(sys.executable) == os.path.abspath(venv_python):
+        return
+
+    os.execv(venv_python, [venv_python, *sys.argv])
+
+
+_reexec_with_project_venv()
+
 import websocket
 
 import dataset_builder
+import deriv_session
 import train_model
 from config import (
     APP_ID, TOKEN, SYMBOL,
+    DERIV_AUTH_MODE,
     TICKS_CSV, DATASET_CSV, AI_MODEL_PATH,
     TARGET_LOOKFORWARD,
     MODEL_PROMOTION_MIN_AUC_DELTA,
@@ -58,6 +77,9 @@ _DEFAULT_HISTORY_COUNT = 500  # ticks históricos baixados da API ao iniciar
 _DEFAULT_MIN_TICKS     = 500  # mín. no CSV antes do 1º treino (igual ao histórico)
 _DEFAULT_RETRAIN_MIN   = 10   # intervalo de re-treino em minutos
 _WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
+_AUTH_MODE = "legacy"
+_PAT_ACCOUNT_ID: Optional[str] = None
+_PAT_ACCOUNT: dict = {}
 
 # Nomes descritivos dos índices sintéticos da Deriv
 _SYMBOL_NAMES: dict = {
@@ -115,6 +137,20 @@ def _ensure_ticks_header() -> None:
             csv.writer(f).writerow(["epoch", "datetime", "symbol", "price"])
 
 
+def _uses_bearer_auth() -> bool:
+    return _AUTH_MODE == "bearer" and bool(_PAT_ACCOUNT_ID)
+
+
+def _get_ws_url() -> str:
+    if not _uses_bearer_auth():
+        return _WS_URL
+    return deriv_session.get_options_ws_url(
+        str(_PAT_ACCOUNT_ID),
+        app_id=APP_ID,
+        token=TOKEN,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────
 #  PRÉ-FASE — Scan de tendência: elege o melhor índice antes de coletar
 # ─────────────────────────────────────────────────────────────────
@@ -144,8 +180,20 @@ def _fetch_prices_for_symbol(symbol: str, count: int) -> list:
     received: list = []
     done = threading.Event()
 
+    def _send_history_request(ws):
+        ws.send(json.dumps({
+            "ticks_history":     symbol,
+            "end":               "latest",
+            "count":             count,
+            "style":             "ticks",
+            "adjust_start_time": 1,
+        }))
+
     def _on_open(ws):
-        ws.send(json.dumps({"authorize": TOKEN}))
+        if _uses_bearer_auth():
+            _send_history_request(ws)
+        else:
+            ws.send(json.dumps({"authorize": TOKEN}))
 
     def _on_message(ws, message):
         data = json.loads(message)
@@ -153,13 +201,7 @@ def _fetch_prices_for_symbol(symbol: str, count: int) -> list:
             ws.close()
             return
         if data.get("msg_type") == "authorize":
-            ws.send(json.dumps({
-                "ticks_history":     symbol,
-                "end":               "latest",
-                "count":             count,
-                "style":             "ticks",
-                "adjust_start_time": 1,
-            }))
+            _send_history_request(ws)
             return
         if data.get("msg_type") == "history":
             received.extend(float(p) for p in data.get("history", {}).get("prices", []))
@@ -172,7 +214,7 @@ def _fetch_prices_for_symbol(symbol: str, count: int) -> list:
         done.set()
 
     ws = websocket.WebSocketApp(
-        _WS_URL,
+        _get_ws_url(),
         on_open=_on_open, on_message=_on_message,
         on_error=_on_error, on_close=_on_close,
     )
@@ -323,8 +365,20 @@ def _fetch_historical_ticks(count: int) -> int:
     done      = threading.Event()
     error_msg: list = []
 
+    def _send_history_request(ws):
+        ws.send(json.dumps({
+            "ticks_history":     SYMBOL,
+            "end":               "latest",
+            "count":             count,
+            "style":             "ticks",
+            "adjust_start_time": 1,
+        }))
+
     def _on_open(ws):
-        ws.send(json.dumps({"authorize": TOKEN}))
+        if _uses_bearer_auth():
+            _send_history_request(ws)
+        else:
+            ws.send(json.dumps({"authorize": TOKEN}))
 
     def _on_message(ws, message):
         data = json.loads(message)
@@ -335,13 +389,7 @@ def _fetch_historical_ticks(count: int) -> int:
             return
 
         if data.get("msg_type") == "authorize":
-            ws.send(json.dumps({
-                "ticks_history":     SYMBOL,
-                "end":               "latest",
-                "count":             count,
-                "style":             "ticks",
-                "adjust_start_time": 1,
-            }))
+            _send_history_request(ws)
             return
 
         if data.get("msg_type") == "history":
@@ -360,7 +408,7 @@ def _fetch_historical_ticks(count: int) -> int:
         done.set()
 
     ws = websocket.WebSocketApp(
-        _WS_URL,
+        _get_ws_url(),
         on_open=_on_open,
         on_message=_on_message,
         on_error=_on_error,
@@ -410,6 +458,147 @@ def _banner(history_count: int, min_ticks: int, retrain_min: int, demo: bool) ->
 
 
 # ─────────────────────────────────────────────────────────────────
+#  Pré-checagem — autenticação Deriv
+# ─────────────────────────────────────────────────────────────────
+
+def _validate_deriv_token(demo: bool, timeout_sec: int = 15) -> bool:
+    """
+    Valida o DERIV_TOKEN antes de iniciar scan, coletor, treino ou bot.
+
+    Sem essa checagem, a API pode devolver "The token is invalid" ou
+    "Account is disabled" e o pipeline continua com reconexões infinitas.
+    """
+    if not str(TOKEN).strip():
+        print("\n[AUTH] DERIV_TOKEN vazio. Atualize o arquivo .env e tente novamente.")
+        return False
+
+    if deriv_session.is_bearer_token(TOKEN, DERIV_AUTH_MODE):
+        return _validate_deriv_bearer_token(demo=demo, timeout_sec=timeout_sec)
+
+    done = threading.Event()
+    result = {
+        "ok": False,
+        "message": "",
+        "code": "",
+        "loginid": "",
+        "currency": "",
+    }
+
+    def _on_open(ws):
+        ws.send(json.dumps({"authorize": TOKEN}))
+
+    def _on_message(ws, message):
+        data = json.loads(message)
+
+        if "error" in data:
+            error = data.get("error", {})
+            result["message"] = error.get("message", "Erro de autenticação desconhecido.")
+            result["code"] = error.get("code", "")
+            ws.close()
+            return
+
+        if data.get("msg_type") == "authorize":
+            auth = data.get("authorize", {})
+            result["ok"] = True
+            result["loginid"] = str(auth.get("loginid", ""))
+            result["currency"] = str(auth.get("currency", ""))
+            ws.close()
+
+    def _on_error(ws, err):
+        result["message"] = str(err)
+        ws.close()
+
+    def _on_close(ws, *_):
+        done.set()
+
+    print("\n[AUTH] Validando token Deriv...")
+    ws = websocket.WebSocketApp(
+        _WS_URL,
+        on_open=_on_open,
+        on_message=_on_message,
+        on_error=_on_error,
+        on_close=_on_close,
+    )
+    thread = threading.Thread(target=ws.run_forever, daemon=True)
+    thread.start()
+    done.wait(timeout=timeout_sec)
+
+    if not done.is_set():
+        try:
+            ws.close()
+        except Exception:
+            pass
+        print(f"[AUTH] Timeout após {timeout_sec}s ao validar o token.")
+        return False
+
+    if result["ok"]:
+        account = result["loginid"] or "desconhecida"
+        currency = result["currency"] or "sem moeda"
+        print(f"[AUTH] Token validado | Conta: {account} | Moeda: {currency}")
+        return True
+
+    message = result["message"] or "A Deriv recusou a autenticação."
+    code = f" ({result['code']})" if result["code"] else ""
+    print(f"[AUTH] Falha na autenticação: {message}{code}")
+    print("[AUTH] Corrija DERIV_TOKEN em /home/stanis/Repositorios/StanDeriv/.env.")
+    print("[AUTH] Gere um token novo em developers.deriv.com com permissão de trade.")
+    if "disabled" in message.lower():
+        print("[AUTH] A conta vinculada ao token está desativada; use outra conta/token ativo.")
+    return False
+
+
+def _validate_deriv_bearer_token(demo: bool, timeout_sec: int = 15) -> bool:
+    """
+    Valida tokens Bearer (PAT/OAuth) do fluxo novo da Deriv.
+
+    Tokens Bearer usam REST com Authorization: Bearer para selecionar/criar a
+    conta Options e obter uma URL WebSocket autenticada por OTP.
+    """
+    global _AUTH_MODE, _PAT_ACCOUNT_ID, _PAT_ACCOUNT
+
+    token_kind = "PAT" if deriv_session.is_pat_token(TOKEN) else "Bearer/OAuth"
+    print(f"[AUTH] Token {token_kind} detectado (fluxo novo da Deriv).")
+
+    try:
+        session = deriv_session.setup_bearer_options_session(
+            app_id=APP_ID,
+            token=TOKEN,
+            demo=demo,
+            timeout_sec=timeout_sec,
+        )
+    except deriv_session.DerivAPIError as exc:
+        code = f" ({exc.code})" if exc.code else ""
+        print(f"[AUTH] Falha no token Bearer via REST: {exc}{code}")
+        if exc.status == 401:
+            print("[AUTH] O token está inválido, expirado, revogado ou não pertence a este App ID.")
+        _print_bearer_migration_hint()
+        return False
+    except Exception as exc:
+        print(f"[AUTH] Erro inesperado ao validar token Bearer: {exc}")
+        return False
+
+    _AUTH_MODE = "bearer"
+    _PAT_ACCOUNT_ID = session["account_id"]
+    _PAT_ACCOUNT = session["account"]
+    balance = _PAT_ACCOUNT.get("balance", "?")
+    currency = _PAT_ACCOUNT.get("currency", "USD")
+    account_type = _PAT_ACCOUNT.get("account_type", "demo")
+    print(
+        f"[AUTH] Token Bearer validado | Conta Options: {_PAT_ACCOUNT_ID} "
+        f"({account_type}) | Saldo: {balance} {currency}"
+    )
+    return True
+
+
+def _print_bearer_migration_hint() -> None:
+    print("[AUTH] Para o fluxo novo, gere um App ID novo e um token Bearer/PAT com escopo 'trade'.")
+    print("[AUTH] Se ainda nao houver conta Options, o token tambem precisa de 'account_manage'.")
+    if str(APP_ID) == "1089":
+        print("[AUTH] Seu DERIV_APP_ID atual é 1089; a documentação nova informa que App IDs legados")
+        print("[AUTH] não funcionam com as novas APIs PAT/REST.")
+
+
+# ─────────────────────────────────────────────────────────────────
 #  FASE 1 — Coletor em thread daemon
 # ─────────────────────────────────────────────────────────────────
 
@@ -446,7 +635,7 @@ class _CollectorThread(threading.Thread):
         while not _shutdown.is_set():
             try:
                 ws = websocket.WebSocketApp(
-                    _WS_URL,
+                    _get_ws_url(),
                     on_open=self._on_open,
                     on_message=self._on_message,
                     on_error=self._on_error,
@@ -465,7 +654,8 @@ class _CollectorThread(threading.Thread):
 
     def _on_open(self, ws) -> None:
         print(f"\n[COLETOR] Conectado | {_symbol_display(SYMBOL)}")
-        ws.send(json.dumps({"authorize": TOKEN}))
+        if not _uses_bearer_auth():
+            ws.send(json.dumps({"authorize": TOKEN}))
         ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
 
     def _on_message(self, ws, message: str) -> None:
@@ -860,6 +1050,9 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, _handle_interrupt)
 
+    if not _validate_deriv_token(demo=is_demo):
+        sys.exit(1)
+
     # ── PRÉ-FASE: Detectar índice com maior tendência ──────────
     import config as _cfg
     detected = _detect_trending_symbol(no_scan=args.no_scan)
@@ -944,8 +1137,19 @@ def main() -> None:
 
     # ── FASE 6: Bot ────────────────────────────────────────────
     print("\n[PIPELINE] Fase 6: Iniciando bot de trading...\n")
-    risk_manager = RiskManager(initial_balance=args.balance)
-    bot = DerivBot(risk_manager=risk_manager, demo=is_demo)
+    initial_balance = args.balance
+    if _uses_bearer_auth():
+        try:
+            initial_balance = float(_PAT_ACCOUNT.get("balance", initial_balance))
+        except (TypeError, ValueError):
+            pass
+    risk_manager = RiskManager(initial_balance=initial_balance)
+    bot = DerivBot(
+        risk_manager=risk_manager,
+        demo=is_demo,
+        auth_mode=_AUTH_MODE,
+        account_id=str(_PAT_ACCOUNT_ID or ""),
+    )
     bot.run()  # bloqueia até Ctrl+C
 
 

@@ -53,9 +53,21 @@ pip install -r requirements.txt
 ```env
 DERIV_TOKEN=seu_token_aqui
 DERIV_APP_ID=1089
+# auto = detecta token legado, PAT (pat_...) ou OAuth Bearer (ory_at_...)
+# use "bearer" se seu token novo nao tiver prefixo reconhecido
+DERIV_AUTH_MODE=auto
 ```
 
 2. Ajuste parâmetros em `config.py` conforme necessário.
+
+### Autenticação Deriv
+
+O bot aceita os dois fluxos da documentação atual:
+
+- Token legado da WebSocket API: conecta em `wss://ws.derivws.com/websockets/v3?app_id=...` e envia `authorize`.
+- PAT/OAuth Bearer: usa REST em `https://api.derivws.com` com `Deriv-App-ID` e `Authorization: Bearer`, seleciona/cria uma conta Options e obtém a URL WebSocket por OTP antes de operar.
+
+Para PAT/OAuth, o token precisa do escopo `trade`. Se a conta Options ainda não existir, também precisa de `account_manage`. Evite usar `DERIV_APP_ID=1089` com o fluxo novo; crie um App ID próprio na Deriv.
 
 ## Uso Rápido
 

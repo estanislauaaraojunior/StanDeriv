@@ -21,6 +21,7 @@ from typing import Optional
 
 import websocket
 
+import deriv_session
 from config import (
     APP_ID, TOKEN, SYMBOL,
     DURATION, DURATION_UNIT, BASIS, CURRENCY,
@@ -49,9 +50,17 @@ class DerivBot:
                       False → opera em conta real (requer TOKEN de conta real)
     """
 
-    def __init__(self, risk_manager: RiskManager, demo: bool = True) -> None:
+    def __init__(
+        self,
+        risk_manager: RiskManager,
+        demo: bool = True,
+        auth_mode: str = "legacy",
+        account_id: str = "",
+    ) -> None:
         self.risk_manager = risk_manager
         self.demo = demo
+        self.auth_mode = auth_mode
+        self.account_id = account_id
         self._ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
         # P12: Buffer maior para indicadores mais estáveis (500 ticks)
@@ -93,6 +102,18 @@ class DerivBot:
         self._ticks_since_last_entry: int = ENTRY_TICK_INTERVAL
 
         self._ws: Optional[websocket.WebSocketApp] = None
+
+    def _uses_bearer_auth(self) -> bool:
+        return self.auth_mode == "bearer" and bool(self.account_id)
+
+    def _get_ws_url(self) -> str:
+        if not self._uses_bearer_auth():
+            return self._ws_url
+        return deriv_session.get_options_ws_url(
+            self.account_id,
+            app_id=APP_ID,
+            token=TOKEN,
+        )
 
     def _set_active_contract_state(self, clear: bool = False) -> None:
         """Sincroniza contrato ativo no state.json para consumo do dashboard."""
@@ -138,7 +159,7 @@ class DerivBot:
         print(f"{'=' * 55}\n")
 
         ws = websocket.WebSocketApp(
-            self._ws_url,
+            self._get_ws_url(),
             on_open=self._on_open,
             on_message=self._on_message,
             on_error=self._on_error,
@@ -153,7 +174,10 @@ class DerivBot:
 
     def _on_open(self, ws) -> None:
         print("[BOT] Conectado à Deriv WebSocket API")
-        ws.send(json.dumps({"authorize": TOKEN}))
+        if self._uses_bearer_auth():
+            self._start_authenticated_stream(ws)
+        else:
+            ws.send(json.dumps({"authorize": TOKEN}))
 
     def _on_message(self, ws, message: str) -> None:
         data = json.loads(message)
@@ -189,6 +213,9 @@ class DerivBot:
         balance = float(auth.get("balance", self.risk_manager.balance))
         self.risk_manager.balance = balance
         print(f"[BOT] Autorizado | Saldo real: {balance:.2f} USD")
+        self._start_authenticated_stream(ws)
+
+    def _start_authenticated_stream(self, ws) -> None:
         ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
 
         # Re-subscrever ao contrato ativo em caso de reconexão
