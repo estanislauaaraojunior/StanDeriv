@@ -183,3 +183,43 @@ class TestModelMetricsInApiState:
         assert 'os.path.dirname(output_path) or "."' not in source, (
             "Caminho relativo 'or \".\"' ainda presente — corrigir para os.path.abspath"
         )
+
+
+class TestRecommendedConfig:
+    """Verifica que config.py segue as configurações recomendadas pela estratégia atual."""
+
+    def test_candle_timeframe_sec_is_5min_or_more(self):
+        """Velas de 5 minutos produzem menos ruído em índices sintéticos."""
+        import config
+        assert config.CANDLE_TIMEFRAME_SEC >= 60, (
+            f"Bot precisa de pelo menos 60s por candle para operar, "
+            f"atual: {config.CANDLE_TIMEFRAME_SEC}s"
+        )
+
+    def test_target_lookforward_at_least_2(self):
+        """Horizonte de 2+ candles é mais estável para previsão direcional."""
+        import config
+        assert config.TARGET_LOOKFORWARD >= 2, (
+            f"Estratégia recomenda TARGET_LOOKFORWARD >= 2, atual: {config.TARGET_LOOKFORWARD}"
+        )
+
+    def test_signal_score_min_is_selective(self):
+        """Score mínimo de 0.25+ evita entradas de baixa qualidade."""
+        import config
+        assert config.SIGNAL_SCORE_MIN >= 0.03, (
+            f"Estratégia recomenda SIGNAL_SCORE_MIN >= 0.03, atual: {config.SIGNAL_SCORE_MIN}"
+        )
+
+    def test_ai_confidence_min_is_selective(self):
+        """Confiança mínima maior reduz operações de AUC ~0.5 (ruído)."""
+        import config
+        assert config.AI_CONFIDENCE_MIN >= 0.55, (
+            f"Estratégia recomenda AI_CONFIDENCE_MIN >= 0.55, atual: {config.AI_CONFIDENCE_MIN}"
+        )
+
+    def test_min_candles_warmup_adequate(self):
+        """Aquecimento de 20+ velas dá ao modelo dados suficientes antes da primeira entrada."""
+        import config
+        assert config.MIN_CANDLES >= 35, (
+            f"Estratégia recomenda MIN_CANDLES >= 35 (MACD precisa de 35 preços), atual: {config.MIN_CANDLES}"
+        )

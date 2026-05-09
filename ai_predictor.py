@@ -291,11 +291,15 @@ def predict(prices: list) -> tuple:
 
     # Apenas modelo clássico disponível
     if tft_dir is None or _tft_model is None:
-        return classical_dir, classical_conf
+        if classical_conf >= AI_CONFIDENCE_MIN:
+            return classical_dir, classical_conf
+        return None, classical_conf
 
     # Apenas TFT disponível
     if classical_dir is None or _model is None:
-        return tft_dir, tft_conf
+        if tft_conf >= AI_CONFIDENCE_MIN:
+            return tft_dir, tft_conf
+        return None, tft_conf
 
     # Ambos disponíveis: ensemble blend
     blend = TRANSFORMER_BLEND_WEIGHT   # 0.55

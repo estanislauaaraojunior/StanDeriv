@@ -1,0 +1,7 @@
+{
+    "python.defaultInterpreterPath": "/home/stanis/.venv/bin/python3",
+    "code-runner.executorMap": {
+        "python": "/home/stanis/.venv/bin/python3"
+    },
+    "code-runner.runInTerminal": true
+}

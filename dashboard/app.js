@@ -165,7 +165,7 @@ function updateEquityChart(data) {
   if (!chart) return;
 
   chart.data.labels = data.map(d => d.timestamp?.slice(0, 16) || '');
-  chart.data.datasets[0].data = data.map(d => ({ x: d.timestamp, y: d.balance_after, _result: d.result }));
+  chart.data.datasets[0].data = data.map(d => ({ x: d.timestamp?.slice(0, 16) || '', y: d.balance_after, _result: d.result }));
   chart.update('none');
 }
 
@@ -216,7 +216,18 @@ function initPriceChart() {
       options: {
         ...baseChartOptions,
         scales: {
-          x: { ...baseChartOptions.scales.x, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+          x: {
+            type: 'linear',
+            ...baseChartOptions.scales.x,
+            ticks: {
+              maxTicksLimit: 8,
+              maxRotation: 0,
+              callback: v => {
+                const d = new Date(v * 1000);
+                return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              },
+            },
+          },
           y: { ...baseChartOptions.scales.y, position: 'right' },
         },
       },
@@ -295,42 +306,85 @@ function initRtContractChart() {
     options: {
       ...baseChartOptions,
       scales: {
-        x: { ...baseChartOptions.scales.x, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        x: {
+          type: 'linear',
+          ...baseChartOptions.scales.x,
+          ticks: {
+            maxTicksLimit: 8,
+            maxRotation: 0,
+            callback: v => {
+              const d = new Date(v * 1000);
+              return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            },
+          },
+        },
         y: { ...baseChartOptions.scales.y, position: 'right' },
       },
     },
   });
 }
 
+let _rtContractTimerInterval = null;
+
 function _setRtContractStatus(contract, entryTick, lastTick) {
   const statusEl = el('rtContractStatus');
-  const metaEl = el('rtContractMeta');
-  if (!statusEl || !metaEl) return;
+  const metaEl   = el('rtContractMeta');
+  const dirEl    = el('rtContractDirection');
+  const timerEl  = el('rtContractTimer');
+  const progEl   = el('rtContractProgress');
+
+  if (_rtContractTimerInterval) { clearInterval(_rtContractTimerInterval); _rtContractTimerInterval = null; }
 
   if (!contract) {
-    statusEl.textContent = 'Aguardando contrato';
-    statusEl.style.color = '#8b949e';
-    metaEl.textContent = 'Sem contrato ativo no momento.';
+    if (statusEl) { statusEl.textContent = 'Aguardando contrato'; statusEl.style.color = '#8b949e'; }
+    if (metaEl)   metaEl.textContent = 'Sem contrato ativo no momento.';
+    if (dirEl)    { dirEl.textContent = '—'; dirEl.style.background = '#21262d'; dirEl.style.color = '#8b949e'; }
+    if (timerEl)  timerEl.textContent = '—';
+    if (progEl)   progEl.style.width = '0%';
     return;
   }
 
-  const side = contract.direction === 'BUY' ? 'CALL/BUY' : contract.direction === 'SELL' ? 'PUT/SELL' : (contract.direction || '—');
-  statusEl.textContent = `${contract.symbol || '—'} • ${side}`;
-  statusEl.style.color = contract.direction === 'BUY' ? '#00ff88' : contract.direction === 'SELL' ? '#ff4757' : '#8b949e';
+  const isBuy   = contract.direction === 'BUY' || contract.direction === 'CALL';
+  const side    = isBuy ? '▲ CALL / BUY' : '▼ PUT / SELL';
+  const dirColor = isBuy ? '#00ff88' : '#ff4757';
+  const dirBg    = isBuy ? 'rgba(0,255,136,0.12)' : 'rgba(255,71,87,0.12)';
 
-  const entryTxt = entryTick ? fmt(entryTick.price, 2) : fmt(contract.entry_price, 2);
-  const currentTxt = lastTick ? fmt(lastTick.price, 2) : '—';
-  const deltaTicks = (entryTick && lastTick && Number.isFinite(entryTick.epoch) && Number.isFinite(lastTick.epoch))
-    ? Math.max(0, lastTick.epoch - entryTick.epoch)
-    : 0;
-  metaEl.textContent = `Entrada: ${entryTxt} | Atual: ${currentTxt} | Decorrência: ${deltaTicks} ticks`;
+  if (statusEl) { statusEl.textContent = `${contract.symbol || '—'} • ${isBuy ? 'CALL/BUY' : 'PUT/SELL'}`; statusEl.style.color = dirColor; }
+  if (dirEl)    { dirEl.textContent = side; dirEl.style.background = dirBg; dirEl.style.color = dirColor; }
+
+  const entryTxt   = entryTick ? fmt(entryTick.price, 5) : fmt(contract.entry_price, 5);
+  const durationSec = (Number(contract.duration) || 0) * 60;
+  const startEpoch  = Number(contract.buy_timestamp) || Number(contract.entry_epoch) || 0;
+
+  function _tick() {
+    const now       = Date.now() / 1000;
+    const elapsed   = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
+    const remaining = durationSec > 0 ? Math.max(0, durationSec - elapsed) : null;
+    const pct       = durationSec > 0 ? Math.min(100, (elapsed / durationSec) * 100) : 0;
+    const currentTxt = lastTick ? fmt(lastTick.price, 5) : '—';
+
+    let timerTxt = '';
+    if (remaining !== null) {
+      const rm = Math.ceil(remaining);
+      timerTxt = `⏱ ${Math.floor(rm / 60)}m ${rm % 60}s restantes de ${durationSec}s`;
+    } else if (elapsed > 0) {
+      timerTxt = `Decorrido: ${Math.floor(elapsed)}s`;
+    }
+
+    if (timerEl) timerEl.textContent = timerTxt;
+    if (progEl)  { progEl.style.width = pct + '%'; progEl.style.background = pct > 80 ? '#ff4757' : isBuy ? '#00ff88' : '#58a6ff'; }
+    if (metaEl)  metaEl.textContent = `Entrada: ${entryTxt} | Atual: ${currentTxt} | ${timerTxt}`;
+  }
+
+  _tick();
+  _rtContractTimerInterval = setInterval(_tick, 1000);
 }
 
 function updateRtContractChart(ticks, contract) {
   const chart = state.charts.rtContract;
   if (!chart) return;
 
-  if (!contract || !Array.isArray(ticks) || !ticks.length) {
+  if (!contract && (!Array.isArray(ticks) || !ticks.length)) {
     chart.data.datasets[0].data = [];
     chart.data.datasets[1].data = [];
     chart.update('none');
@@ -338,15 +392,18 @@ function updateRtContractChart(ticks, contract) {
     return;
   }
 
-  const series = ticks.map(t => ({ x: t.epoch, y: t.price }));
+  const series = ticks.map(t => ({ x: Number(t.epoch), y: Number(t.price) }));
   chart.data.datasets[0].data = series;
 
-  let entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
-  if (!entryTick && ticks.length) entryTick = ticks[0];
-  chart.data.datasets[1].data = entryTick ? [{ x: entryTick.epoch, y: entryTick.price }] : [];
+  let entryTick = null;
+  if (contract && contract.entry_epoch) {
+    entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
+    if (!entryTick && ticks.length) entryTick = ticks[0];
+  }
+  chart.data.datasets[1].data = entryTick ? [{ x: Number(entryTick.epoch), y: Number(entryTick.price) }] : [];
 
-  chart.update('none');
-  _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
+  chart.update('active');
+  if (contract) _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
 }
 
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
@@ -364,17 +421,27 @@ function initRsiChart() {
     options: {
       ...baseChartOptions,
       scales: {
-        x: { ...baseChartOptions.scales.x, display: false },
-        y: { ...baseChartOptions.scales.y, min: 0, max: 100,
-             ticks: { values: [35, 50, 65] },
-             afterDataLimits: () => {},
+        x: { type: 'linear', ...baseChartOptions.scales.x, display: false },
+        y: {
+          ...baseChartOptions.scales.y,
+          min: 0, max: 100,
+          afterBuildTicks: axis => {
+            axis.ticks = [0, 30, 50, 70, 100].map(v => ({ value: v }));
+          },
+          ticks: {
+            maxTicksLimit: 8,
+          },
+          grid: {
+            color: ctx => [30, 70].includes(ctx.tick.value) ? 'rgba(255,184,48,0.4)' : '#1e2737',
+            lineWidth: ctx => [30, 70].includes(ctx.tick.value) ? 1.5 : 1,
+          },
         },
       },
     },
   });
 }
 
-// ─── MACD Chart ──────────────────────────────────────────────────────────────
+// ─── MACD Chart ────────────────────────────────────────────────────────────────────────────
 
 function initMacdChart() {
   const ctx = el('macdChart').getContext('2d');
@@ -394,15 +461,21 @@ function initMacdChart() {
     options: {
       ...baseChartOptions,
       scales: {
-        x: { ...baseChartOptions.scales.x, display: false },
-        y: { ...baseChartOptions.scales.y, ticks: { maxTicksLimit: 4 } },
+        x: { type: 'linear', ...baseChartOptions.scales.x, display: false },
+        y: {
+          ...baseChartOptions.scales.y,
+          ticks: { maxTicksLimit: 4 },
+          grid: {
+            color: ctx => ctx.tick.value === 0 ? 'rgba(139,148,158,0.55)' : '#1e2737',
+            lineWidth: ctx => ctx.tick.value === 0 ? 2 : 1,
+          },
+        },
       },
     },
   });
 }
 
-// ─── Indicador EMA local (para gráfico de preço) ─────────────────────────────
-
+// ─── Indicador EMA local (para gráfico de preço) ──────────────────────────────────────────────────
 function calcEma(prices, period) {
   if (prices.length < period) return new Array(prices.length).fill(null);
   const k = 2 / (period + 1);
@@ -515,6 +588,7 @@ async function pollState() {
     const ddPct = Math.abs(d.risk_state?.daily_pnl_pct ?? s.drawdown_pct ?? 0);
     const dd = Math.min(ddPct / 25 * 100, 100);
     el('drawdownBar').style.width = dd + '%';
+    el('drawdownBar').style.background = ddPct > 20 ? 'var(--red)' : ddPct > 10 ? 'var(--yellow)' : 'var(--green)';
     el('drawdownVal').textContent = fmtPct(-(d.risk_state?.daily_pnl_pct ?? 0));
     const cl = s.consec_losses ?? 0;
     el('consecVal').textContent = `${cl} / 3`;
@@ -538,10 +612,6 @@ async function pollState() {
 
     // Notificações de eventos críticos (Phase 4.4)
     _checkCriticalEvents(s, d.risk_state ?? {});
-
-    // — Indicadores ao vivo —
-    const ind = d.indicators ?? {};
-    if (Object.keys(ind).length) _applyIndicators(ind);
 
     // — Modelo —
     const m = d.model ?? {};
@@ -693,16 +763,7 @@ function _applyIndicators(d) {
     const score = d.ai_score ?? 0;
     el('aiScoreBar').style.width = (score * 100) + '%';
     el('aiScoreVal').textContent = fmt(score, 3);
-    // Série para gráficos RSI/MACD
-    const now = Date.now();
-    state.rsiSeries.push({ x: now, y: d.rsi });
-    state.macdSeries.push({ x: now, y: d.macd_hist });
-    if (state.rsiSeries.length > 60) state.rsiSeries.shift();
-    if (state.macdSeries.length > 60) state.macdSeries.shift();
-    state.charts.rsi.data.datasets[0].data = [...state.rsiSeries];
-    state.charts.rsi.update('none');
-    state.charts.macd.data.datasets[0].data = [...state.macdSeries];
-    state.charts.macd.update('none');
+    // RSI/MACD chart são atualizados exclusivamente por pollIndicators()
 }
 
 async function pollBotStatus() {
@@ -811,7 +872,27 @@ async function pollContractRealtime() {
     const c = await resp.json();
 
     if (!c || !c.has_active) {
+      // Sem contrato ativo: mostra últimos 150 ticks do símbolo atual (modo monitor)
       state.activeContract = null;
+      const activeSymbol = el('activeSymbol')?.textContent?.trim();
+      const params = new URLSearchParams({ n: '150' });
+      if (activeSymbol) params.set('symbol', activeSymbol);
+      try {
+        const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
+        const ticks = await rTicks.json();
+        if (Array.isArray(ticks) && ticks.length) {
+          updateRtContractChart(ticks, null);
+          // Exibe mensagem de monitor mas não limpa o gráfico
+          const statusEl = el('rtContractStatus');
+          const metaEl = el('rtContractMeta');
+          if (statusEl) { statusEl.textContent = 'Monitor de preço (sem contrato ativo)'; statusEl.style.color = '#8b949e'; }
+          if (metaEl && ticks.length) {
+            const last = ticks[ticks.length - 1];
+            metaEl.textContent = `Último tick: ${fmt(last.price, 5)} — ${new Date(last.epoch * 1000).toLocaleTimeString('pt-BR')}`;
+          }
+          return;
+        }
+      } catch (_) {}
       updateRtContractChart([], null);
       return;
     }
@@ -819,12 +900,14 @@ async function pollContractRealtime() {
     state.activeContract = c;
     const params = new URLSearchParams({ n: '600' });
     if (c.symbol) params.set('symbol', c.symbol);
-    if (c.entry_epoch) params.set('from_epoch', String(c.entry_epoch));
+    if (c.entry_epoch && c.entry_epoch > 0) params.set('from_epoch', String(c.entry_epoch));
 
     const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
     const ticks = await rTicks.json();
     updateRtContractChart(Array.isArray(ticks) ? ticks : [], c);
-  } catch (_) {}
+  } catch (e) {
+    console.warn('[rtContract]', e);
+  }
 }
 
 // ─── Polling: Equity ─────────────────────────────────────────────────────────
@@ -1290,6 +1373,24 @@ function clearLogs() {
 
 // ─── Polling: Estatísticas avançadas ─────────────────────────────────────────
 
+async function _loadIndicatorSeries() {
+  try {
+    const r = await fetch(API_BASE_URL + '/api/indicator-series?n=60', { cache: 'no-store' });
+    const series = await r.json();
+    if (!Array.isArray(series) || !series.length) return;
+    state.rsiSeries  = series.map(s => ({ x: s.epoch * 1000, y: s.rsi }));
+    state.macdSeries = series.map(s => ({ x: s.epoch * 1000, y: s.macd_hist }));
+    if (state.charts.rsi) {
+      state.charts.rsi.data.datasets[0].data = [...state.rsiSeries];
+      state.charts.rsi.update('none');
+    }
+    if (state.charts.macd) {
+      state.charts.macd.data.datasets[0].data = [...state.macdSeries];
+      state.charts.macd.update('none');
+    }
+  } catch (_) {}
+}
+
 let _profitDistChart = null;
 
 function _initProfitDistChart() {
@@ -1321,7 +1422,7 @@ function _initProfitDistChart() {
 
 async function pollStats() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/stats');
+    const r = await fetch(API_BASE_URL + '/api/stats', { cache: 'no-store' });
     const d = await r.json();
     if (!d || d.error) return;
 
@@ -1394,6 +1495,22 @@ async function pollModelMetrics() {
     if (el('mmAccuracy') && d.accuracy != null) {
       el('mmAccuracy').style.color = d.accuracy >= 0.65 ? '#00ff88' : d.accuracy >= 0.55 ? '#ffb830' : '#ff4757';
     }
+
+    // Comparativo ROC-AUC
+    const wrap = el('rocComparisonWrap');
+    if (wrap && Array.isArray(d.models_comparison) && d.models_comparison.length > 0) {
+      const maxAuc = Math.max(...d.models_comparison.map(m => m.auc));
+      wrap.innerHTML = d.models_comparison.map(m => {
+        const pct = Math.round((m.auc / 0.7) * 100); // escala visual: 0.7 = 100%
+        const barW = Math.min(pct, 100);
+        const color = m.name === d.best_model ? '#00ff88' : '#58a6ff';
+        return `<div class="roc-row">
+          <span class="roc-name">${m.name}</span>
+          <div class="roc-bar-bg"><div class="roc-bar-fill" style="width:${barW}%;background:${color}"></div></div>
+          <span class="roc-auc" style="color:${color}">${fmt(m.auc, 4)}</span>
+        </div>`;
+      }).join('');
+    }
   } catch (_) {}
 }
 
@@ -1446,6 +1563,7 @@ function init() {
   initRsiChart();
   initMacdChart();
   _initProfitDistChart();
+  _loadIndicatorSeries();
 
   // Primeira carga (estado consolidado + outros)
   pollState();
@@ -1458,8 +1576,10 @@ function init() {
   pollStats();
   pollSystem();
 
-  // Polls contínuos — pollState() substitui pollBotStatus + pollSummary + pollIndicators + pollModel
+  // Polls contínuos — pollState() substitui pollBotStatus + pollSummary + pollModel
   setInterval(pollState,    POLL_SUMMARY);
+  pollIndicators();
+  setInterval(pollIndicators, POLL_IND);
   setInterval(pollTicks,    POLL_TICKS);
   setInterval(pollContractRealtime, POLL_CONTRACT);
   setInterval(pollEquity,   POLL_SUMMARY);
