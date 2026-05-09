@@ -1,4 +1,5 @@
 import json
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -138,14 +139,29 @@ def get_options_ws_url(
     app_id: str,
     token: str,
     timeout_sec: int = 15,
+    attempts: int = 3,
 ) -> str:
-    data = request_json(
-        "POST",
-        f"/trading/v1/options/accounts/{account_id}/otp",
-        app_id=app_id,
-        token=token,
-        timeout_sec=timeout_sec,
-    )
+    last_error: DerivAPIError | None = None
+    max_attempts = max(1, int(attempts or 1))
+
+    for attempt in range(max_attempts):
+        try:
+            data = request_json(
+                "POST",
+                f"/trading/v1/options/accounts/{account_id}/otp",
+                app_id=app_id,
+                token=token,
+                timeout_sec=timeout_sec,
+            )
+            break
+        except DerivAPIError as exc:
+            last_error = exc
+            if attempt >= max_attempts - 1:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+    else:
+        raise last_error or DerivAPIError("Unable to obtain Options WebSocket URL")
+
     payload = data.get("data", {}) if isinstance(data, dict) else {}
     url = payload.get("url") if isinstance(payload, dict) else ""
     if not url:

@@ -66,6 +66,7 @@ def _get_ws_url() -> str:
         ACCOUNT_ID,
         app_id=APP_ID,
         token=TOKEN,
+        attempts=3,
     )
 
 

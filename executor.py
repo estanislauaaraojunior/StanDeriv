@@ -56,11 +56,13 @@ class DerivBot:
         demo: bool = True,
         auth_mode: str = "legacy",
         account_id: str = "",
+        initial_ws_url: str = "",
     ) -> None:
         self.risk_manager = risk_manager
         self.demo = demo
         self.auth_mode = auth_mode
         self.account_id = account_id
+        self._next_ws_url = initial_ws_url
         self._ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
         # P12: Buffer maior para indicadores mais estáveis (500 ticks)
@@ -109,10 +111,15 @@ class DerivBot:
     def _get_ws_url(self) -> str:
         if not self._uses_bearer_auth():
             return self._ws_url
+        if self._next_ws_url:
+            ws_url = self._next_ws_url
+            self._next_ws_url = ""
+            return ws_url
         return deriv_session.get_options_ws_url(
             self.account_id,
             app_id=APP_ID,
             token=TOKEN,
+            attempts=3,
         )
 
     def _set_active_contract_state(self, clear: bool = False) -> None:
@@ -158,15 +165,22 @@ class DerivBot:
         print(f"  Stake   : {self.risk_manager.get_stake():.2f} USD (1% do saldo)")
         print(f"{'=' * 55}\n")
 
-        ws = websocket.WebSocketApp(
-            self._get_ws_url(),
-            on_open=self._on_open,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close,
-        )
-        self._ws = ws
-        ws.run_forever(reconnect=5)
+        while True:
+            try:
+                ws = websocket.WebSocketApp(
+                    self._get_ws_url(),
+                    on_open=self._on_open,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                    on_close=self._on_close,
+                )
+                self._ws = ws
+                ws.run_forever(reconnect=5)
+                time.sleep(1)
+            except deriv_session.DerivAPIError as exc:
+                code = f" ({exc.code})" if exc.code else ""
+                print(f"[BOT] Falha ao obter WebSocket Options: {exc}{code} — tentando novamente em 5s")
+                time.sleep(5)
 
     # ─────────────────────────────────────────────────────────
     #  Handlers WebSocket
@@ -338,8 +352,11 @@ class DerivBot:
             "currency":       CURRENCY,
             "duration":       duration,
             "duration_unit":  DURATION_UNIT,
-            "symbol":         SYMBOL,
         }
+        if self._uses_bearer_auth():
+            proposal["underlying_symbol"] = SYMBOL
+        else:
+            proposal["symbol"] = SYMBOL
         ws.send(json.dumps(proposal))
         print(
             f"\n[BOT] → {direction} | Stake: {stake:.2f} USD | Duração: {duration}t | "

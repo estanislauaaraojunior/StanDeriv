@@ -80,6 +80,7 @@ _WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 _AUTH_MODE = "legacy"
 _PAT_ACCOUNT_ID: Optional[str] = None
 _PAT_ACCOUNT: dict = {}
+_PAT_WS_URL: Optional[str] = None
 
 # Nomes descritivos dos índices sintéticos da Deriv
 _SYMBOL_NAMES: dict = {
@@ -142,12 +143,18 @@ def _uses_bearer_auth() -> bool:
 
 
 def _get_ws_url() -> str:
+    global _PAT_WS_URL
     if not _uses_bearer_auth():
         return _WS_URL
+    if _PAT_WS_URL:
+        ws_url = _PAT_WS_URL
+        _PAT_WS_URL = None
+        return ws_url
     return deriv_session.get_options_ws_url(
         str(_PAT_ACCOUNT_ID),
         app_id=APP_ID,
         token=TOKEN,
+        attempts=3,
     )
 
 
@@ -554,7 +561,7 @@ def _validate_deriv_bearer_token(demo: bool, timeout_sec: int = 15) -> bool:
     Tokens Bearer usam REST com Authorization: Bearer para selecionar/criar a
     conta Options e obter uma URL WebSocket autenticada por OTP.
     """
-    global _AUTH_MODE, _PAT_ACCOUNT_ID, _PAT_ACCOUNT
+    global _AUTH_MODE, _PAT_ACCOUNT_ID, _PAT_ACCOUNT, _PAT_WS_URL
 
     token_kind = "PAT" if deriv_session.is_pat_token(TOKEN) else "Bearer/OAuth"
     print(f"[AUTH] Token {token_kind} detectado (fluxo novo da Deriv).")
@@ -580,6 +587,7 @@ def _validate_deriv_bearer_token(demo: bool, timeout_sec: int = 15) -> bool:
     _AUTH_MODE = "bearer"
     _PAT_ACCOUNT_ID = session["account_id"]
     _PAT_ACCOUNT = session["account"]
+    _PAT_WS_URL = session.get("ws_url")
     balance = _PAT_ACCOUNT.get("balance", "?")
     currency = _PAT_ACCOUNT.get("currency", "USD")
     account_type = _PAT_ACCOUNT.get("account_type", "demo")
@@ -1149,6 +1157,7 @@ def main() -> None:
         demo=is_demo,
         auth_mode=_AUTH_MODE,
         account_id=str(_PAT_ACCOUNT_ID or ""),
+        initial_ws_url=_get_ws_url() if _uses_bearer_auth() else "",
     )
     bot.run()  # bloqueia até Ctrl+C
 
