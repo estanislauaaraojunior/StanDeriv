@@ -304,8 +304,6 @@ class DerivBot:
         self._start_authenticated_stream(ws)
 
     def _start_authenticated_stream(self, ws) -> None:
-        ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
-
         # Re-subscrever ao contrato ativo em caso de reconexão
         if self._in_trade and self._open_contract_id:
             ws.send(json.dumps({
@@ -315,7 +313,7 @@ class DerivBot:
             }))
             print(f"[BOT] Re-subscrevendo ao contrato ativo: {self._open_contract_id}")
 
-        # Reconexão: candles já estão em memória, subscreve ticks direto
+        # Reconexão: candles já estão em memória, subscreve ticks direto (uma única vez)
         if self._api_history_loaded:
             ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
             return
