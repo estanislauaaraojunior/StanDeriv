@@ -18,7 +18,6 @@ _RAW_APP_ID = os.environ.get("DERIV_APP_ID", "1089").strip()
 _RAW_TOKEN  = os.environ["DERIV_TOKEN"].strip()    # defina em .env — crie em: developers.deriv.com
 DERIV_AUTH_MODE = os.environ.get("DERIV_AUTH_MODE", "auto").strip().lower()
 _TOKEN_PREFIXES = ("pat_", "ory_at_")
-
 # Protege contra inversão acidental no .env:
 #   DERIV_APP_ID=pat_...
 #   DERIV_TOKEN=<app_id>

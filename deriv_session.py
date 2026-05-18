@@ -7,6 +7,9 @@ from urllib.request import Request, urlopen
 API_BASE = "https://api.derivws.com"
 BEARER_TOKEN_PREFIXES = ("pat_", "ory_at_")
 
+# User-Agent que passa pelo WAF da Cloudflare (Python-urllib é bloqueado).
+_USER_AGENT = "Mozilla/5.0 (compatible; DerivBot/2.0; +https://developers.deriv.com)"
+
 
 class DerivAPIError(RuntimeError):
     def __init__(self, message: str, status: int | None = None, code: str = "") -> None:
@@ -25,7 +28,7 @@ def is_bearer_token(token: str, auth_mode: str = "auto") -> bool:
     mode = str(auth_mode or "auto").strip().lower()
     if mode in ("bearer", "pat", "oauth", "rest"):
         return True
-    if mode == "legacy":
+    if mode in ("legacy", "none", "ws", "websocket"):
         return False
     return str(token).strip().startswith(BEARER_TOKEN_PREFIXES)
 
@@ -43,24 +46,29 @@ def request_json(
     payload: dict | None = None,
     timeout_sec: int = 15,
 ) -> dict:
+    method = method.upper()
     body = None
     headers = {
         "Authorization": f"Bearer {token}",
         "Deriv-App-ID": str(app_id),
-        "Content-Type": "application/json",
+        "User-Agent": _USER_AGENT,
+        "Accept": "application/json",
     }
+    # Content-Type só em requisições com corpo; GET sem body não deve enviá-lo
+    # pois o WAF da Cloudflare pode rejeitar GETs com Content-Type.
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
 
-    request = Request(
+    req = Request(
         f"{API_BASE}{path}",
         data=body,
         headers=headers,
-        method=method.upper(),
+        method=method,
     )
 
     try:
-        with urlopen(request, timeout=timeout_sec) as response:
+        with urlopen(req, timeout=timeout_sec) as response:
             raw = response.read().decode("utf-8", errors="replace")
             return json.loads(raw) if raw else {}
     except HTTPError as exc:
@@ -69,11 +77,16 @@ def request_json(
         code = ""
         try:
             parsed = json.loads(raw)
+            # Formato novo Deriv: {"errors": [{"code": "...", "message": "..."}]}
             errors = parsed.get("errors") or []
             if errors:
                 first = errors[0]
                 code = str(first.get("code", ""))
                 message = str(first.get("message", message))
+            # Formato alternativo: {"error": "...", "message": "..."}
+            elif isinstance(parsed.get("error"), str):
+                code = str(parsed["error"])
+                message = str(parsed.get("message", code))
         except Exception:
             pass
         raise DerivAPIError(message, status=exc.code, code=code) from exc
@@ -91,14 +104,31 @@ def _extract_accounts(data: dict) -> list[dict]:
 
 
 def get_options_accounts(*, app_id: str, token: str, timeout_sec: int = 15) -> list[dict]:
-    data = request_json(
-        "GET",
-        "/trading/v1/options/accounts",
-        app_id=app_id,
-        token=token,
-        timeout_sec=timeout_sec,
-    )
-    return _extract_accounts(data)
+    last_err: DerivAPIError | None = None
+    for attempt in range(3):
+        try:
+            data = request_json(
+                "GET",
+                "/trading/v1/options/accounts",
+                app_id=app_id,
+                token=token,
+                timeout_sec=timeout_sec,
+            )
+            return _extract_accounts(data)
+        except DerivAPIError as exc:
+            last_err = exc
+            # 429 / Cloudflare 1015 (rate limit) — backoff exponencial
+            is_rate_limit = (
+                exc.status in (429,)
+                or "1015" in str(exc)
+                or str(exc.code).lower() in ("ratelimit", "rate_limit")
+            )
+            if is_rate_limit and attempt < 2:
+                wait = 2 ** (attempt + 1)  # 2s, 4s
+                time.sleep(wait)
+                continue
+            raise
+    raise last_err or DerivAPIError("get_options_accounts: max retries exceeded")
 
 
 def create_options_account(

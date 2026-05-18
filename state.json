@@ -1,1 +1,1 @@
-{"symbol": "R_10", "session_start": "2026-05-09T15:53:44.983611", "active_contract": null, "min_ticks_target": 200}
+{"symbol": "frxUSDCAD", "session_start": "2026-05-18T12:02:40.686095", "active_contract": {"has_active": true, "contract_id": "487356279", "symbol": "frxUSDCAD", "direction": "BUY", "duration": 30, "buy_timestamp": 1779121742.0073018, "entry_epoch": 1779121741, "entry_price": 1.37463}, "min_ticks_target": 200}

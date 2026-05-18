@@ -1,1 +1,1 @@
-{"is_paused": false, "pause_remaining_sec": 0, "daily_pnl": -7.51, "daily_pnl_pct": -0.77, "consec_losses": 1, "drift_detected": false, "win_rate_recent": 50.0, "date": "2026-05-11", "balance": 969.6, "pause_until_epoch": 1778494022.4592223, "recent_results": [1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0]}
+{"is_paused": false, "pause_remaining_sec": 0, "daily_pnl": -19.9, "daily_pnl_pct": -0.2, "consec_losses": 2, "drift_detected": false, "win_rate_recent": 0.0, "date": "2026-05-18", "balance": 980.1, "pause_until_epoch": 0.0, "recent_results": [0, 0]}

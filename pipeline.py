@@ -88,8 +88,9 @@ _PAT_ACCOUNT_ID: Optional[str] = None
 _PAT_ACCOUNT: dict = {}
 _PAT_WS_URL: Optional[str] = None
 
-# Nomes descritivos dos índices sintéticos da Deriv
+# Nomes descritivos dos instrumentos da Deriv
 _SYMBOL_NAMES: dict = {
+    # ── Índices sintéticos ──────────────────────────────────────
     "R_10":      "Volatility 10 Index",
     "R_25":      "Volatility 25 Index",
     "R_50":      "Volatility 50 Index",
@@ -112,6 +113,36 @@ _SYMBOL_NAMES: dict = {
     "JD50":      "Jump 50 Index",
     "JD75":      "Jump 75 Index",
     "JD100":     "Jump 100 Index",
+    # ── Pares de moedas (Forex) ──────────────────────────────────
+    # Majors
+    "frxEURUSD": "Euro / US Dollar",
+    "frxGBPUSD": "British Pound / US Dollar",
+    "frxUSDJPY": "US Dollar / Japanese Yen",
+    "frxAUDUSD": "Australian Dollar / US Dollar",
+    "frxUSDCAD": "US Dollar / Canadian Dollar",
+    "frxUSDCHF": "US Dollar / Swiss Franc",
+    "frxNZDUSD": "New Zealand Dollar / US Dollar",
+    # Crosses
+    "frxEURGBP": "Euro / British Pound",
+    "frxEURJPY": "Euro / Japanese Yen",
+    "frxEURCHF": "Euro / Swiss Franc",
+    "frxEURCAD": "Euro / Canadian Dollar",
+    "frxEURNZD": "Euro / New Zealand Dollar",
+    "frxEURAUD": "Euro / Australian Dollar",
+    "frxGBPJPY": "British Pound / Japanese Yen",
+    "frxGBPCHF": "British Pound / Swiss Franc",
+    "frxGBPCAD": "British Pound / Canadian Dollar",
+    "frxGBPAUD": "British Pound / Australian Dollar",
+    "frxGBPNZD": "British Pound / New Zealand Dollar",
+    "frxAUDJPY": "Australian Dollar / Japanese Yen",
+    "frxAUDCAD": "Australian Dollar / Canadian Dollar",
+    "frxAUDNZD": "Australian Dollar / New Zealand Dollar",
+    "frxAUDCHF": "Australian Dollar / Swiss Franc",
+    "frxCADJPY": "Canadian Dollar / Japanese Yen",
+    "frxCADCHF": "Canadian Dollar / Swiss Franc",
+    "frxCHFJPY": "Swiss Franc / Japanese Yen",
+    "frxNZDJPY": "New Zealand Dollar / Japanese Yen",
+    "frxNZDCAD": "New Zealand Dollar / Canadian Dollar",
 }
 
 
@@ -168,12 +199,24 @@ def _get_ws_url() -> str:
 #  PRÉ-FASE — Scan de tendência: elege o melhor índice antes de coletar
 # ─────────────────────────────────────────────────────────────────
 
-# Grupo 1: índices de volatilidade (mais líquidos, avaliados primeiro)
+# Grupo 0: pares de moedas forex (avaliados primeiro; score 0.0 quando mercado fechado)
+_SCAN_SYMBOLS_FOREX = [
+    # Majors
+    "frxEURUSD", "frxGBPUSD", "frxUSDJPY", "frxAUDUSD",
+    "frxUSDCAD", "frxUSDCHF", "frxNZDUSD",
+    # Crosses
+    "frxEURGBP", "frxEURJPY", "frxEURCHF", "frxEURCAD",
+    "frxEURNZD", "frxEURAUD",
+    "frxGBPJPY", "frxGBPCHF", "frxGBPCAD", "frxGBPAUD", "frxGBPNZD",
+    "frxAUDJPY", "frxAUDCAD", "frxAUDNZD", "frxAUDCHF",
+    "frxCADJPY", "frxCADCHF", "frxCHFJPY", "frxNZDJPY", "frxNZDCAD",
+]
+# Grupo 1: índices de volatilidade (fallback quando forex estiver fechado/lateral)
 _SCAN_SYMBOLS_PRIMARY = [
     "R_10", "R_25", "R_50", "R_75", "R_100",
     "1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V",
 ]
-# Grupo 2: índices de boom/crash/jump (consultados só se primários estiverem laterais)
+# Grupo 2: índices de boom/crash/jump (último recurso)
 _SCAN_SYMBOLS_SECONDARY = [
     "BOOM500", "BOOM1000", "CRASH500", "CRASH1000",
     "BOOM300N", "CRASH300N",
@@ -304,17 +347,36 @@ def _best_from(results: dict) -> tuple:
 def _detect_trending_symbol(no_scan: bool = False) -> str:
     """
     Etapas:
-      1. Escaneia os símbolos primários em paralelo.
-      2. Se o melhor tiver score >= _ADX_TREND_MIN → retorna ele.
-      3. Se todos estiverem laterais → escaneia o grupo secundário.
-      4. Se nenhum grupo tiver tendência → retorna SYMBOL de config.py.
+      1. Escaneia pares de moedas forex em paralelo (prioridade máxima).
+         — Se mercado forex estiver fechado, scores ficam 0.0 automaticamente.
+      2. Se o melhor forex tiver score >= _ADX_TREND_MIN → retorna ele.
+      3. Se todos laterais/fechados → escaneia índices de volatilidade (primários).
+      4. Se primários laterais → escaneia índices boom/crash/jump (secundários).
+      5. Se nenhum grupo com tendência → retorna SYMBOL de config.py.
     """
     import config as _cfg
 
     if no_scan:
         return _cfg.SYMBOL
 
-    print("\n[TENDÊNCIA] ── Scan primário ──────────────────────────────")
+    # ── Etapa 1: Scan forex ──────────────────────────────────────
+    print("\n[TENDÊNCIA] ── Scan forex (pares de moedas) ────────────────")
+    print(f"[TENDÊNCIA] Candidatos: {', '.join(_SCAN_SYMBOLS_FOREX)}")
+    forex = _scan_group(_SCAN_SYMBOLS_FOREX)
+    best_fx, score_fx = _best_from(forex)
+
+    if score_fx >= _ADX_TREND_MIN:
+        print(f"\n[TENDÊNCIA] ✔ Melhor par forex: {_symbol_display(best_fx)} (score={score_fx:.2f})")
+        return best_fx
+
+    print(
+        f"\n[TENDÊNCIA] ⚠ Nenhum par forex com tendência clara "
+        f"(melhor score={score_fx:.2f} < {_ADX_TREND_MIN}) "
+        f"— mercado fechado ou lateral. Tentando índices sintéticos..."
+    )
+
+    # ── Etapa 2: Scan primários (volatilidade) ───────────────────
+    print("\n[TENDÊNCIA] ── Scan primário (volatilidade) ────────────────")
     print(f"[TENDÊNCIA] Candidatos: {', '.join(_SCAN_SYMBOLS_PRIMARY)}")
     primary = _scan_group(_SCAN_SYMBOLS_PRIMARY)
     best, score = _best_from(primary)
@@ -323,12 +385,12 @@ def _detect_trending_symbol(no_scan: bool = False) -> str:
         print(f"\n[TENDÊNCIA] ✔ Melhor índice: {_symbol_display(best)} (score={score:.2f})")
         return best
 
-    # Mercado primário lateral → tenta grupo secundário
+    # ── Etapa 3: Scan secundários (boom/crash/jump) ──────────────
     print(
         f"\n[TENDÊNCIA] ⚠ Todos os índices primários estão laterais "
         f"(melhor score={score:.2f} < {_ADX_TREND_MIN})."
     )
-    print("[TENDÊNCIA] ── Scan secundário ─────────────────────────────")
+    print("[TENDÊNCIA] ── Scan secundário (boom/crash/jump) ───────────")
     print(f"[TENDÊNCIA] Candidatos: {', '.join(_SCAN_SYMBOLS_SECONDARY)}")
     secondary = _scan_group(_SCAN_SYMBOLS_SECONDARY)
     best2, score2 = _best_from(secondary)
@@ -337,9 +399,9 @@ def _detect_trending_symbol(no_scan: bool = False) -> str:
         print(f"\n[TENDÊNCIA] ✔ Melhor índice (secundário): {_symbol_display(best2)} (score={score2:.2f})")
         return best2
 
-    # Nenhum grupo com tendência → mantém padrão
+    # ── Etapa 4: Nenhum grupo com tendência → mantém padrão ──────
     print(
-        f"\n[TENDÊNCIA] ⚠ Nenhum índice com tendência clara "
+        f"\n[TENDÊNCIA] ⚠ Nenhum instrumento com tendência clara "
         f"(melhor score secundário={score2:.2f}). "
         f"Usando padrão: {_cfg.SYMBOL}."
     )
@@ -589,6 +651,10 @@ def _validate_deriv_bearer_token(demo: bool, timeout_sec: int = 15) -> bool:
         print(f"[AUTH] Falha no token Bearer via REST: {exc}{code}")
         if exc.status == 401:
             print("[AUTH] O token está inválido, expirado, revogado ou não pertence a este App ID.")
+        elif "1015" in str(exc) or exc.status == 429:
+            print("[AUTH] Cloudflare bloqueou a requisição (rate limit / WAF).")
+            print("[AUTH] Isso pode ocorrer se o App ID não pertence ao app registrado em")
+            print("[AUTH] developers.deriv.com ou se o tipo do app (PAT vs OAuth) não bate com o token.")
         _print_bearer_migration_hint()
         return False
     except Exception as exc:
@@ -610,11 +676,19 @@ def _validate_deriv_bearer_token(demo: bool, timeout_sec: int = 15) -> bool:
 
 
 def _print_bearer_migration_hint() -> None:
-    print("[AUTH] Para o fluxo novo, gere um App ID novo e um token Bearer/PAT com escopo 'trade'.")
-    print("[AUTH] Se ainda nao houver conta Options, o token tambem precisa de 'account_manage'.")
+    print("[AUTH] ──────────────────────────────────────────────────────────")
+    print("[AUTH] COMO CORRIGIR:")
+    print("[AUTH]  1. Acesse https://developers.deriv.com e faça login")
+    print("[AUTH]  2. No Dashboard, crie um novo app do tipo PAT")
+    print("[AUTH]     (NÃO use apps do tipo OAuth para tokens PAT)")
+    print("[AUTH]  3. Copie o App ID gerado (ex: abc123xyz) → DERIV_APP_ID no .env")
+    print("[AUTH]  4. Vá em 'API Tokens' e gere um PAT com escopos: trade + account_manage")
+    print("[AUTH]  5. Cole o token (pat_...) → DERIV_TOKEN no .env")
+    print("[AUTH]  6. Mantenha DERIV_AUTH_MODE=auto")
+    print("[AUTH] ──────────────────────────────────────────────────────────")
     if str(APP_ID) == "1089":
-        print("[AUTH] Seu DERIV_APP_ID atual é 1089; a documentação nova informa que App IDs legados")
-        print("[AUTH] não funcionam com as novas APIs PAT/REST.")
+        print("[AUTH] ATENÇÃO: App IDs legados (1089) não funcionam com o fluxo PAT/REST.")
+        print("[AUTH] Registre um novo app em developers.deriv.com.")
 
 
 # ─────────────────────────────────────────────────────────────────
