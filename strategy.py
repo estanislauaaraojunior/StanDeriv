@@ -50,14 +50,16 @@ def get_adaptive_adx_min(adx_history: list) -> float:
     Retorna o ADX mínimo adaptado ao percentil do histórico recente.
 
     Se ADX_ADAPTIVE=False ou histórico vazio, retorna ADX_MIN fixo.
-    Piso de 15 para evitar filtros excessivamente frouxos.
+    Piso de 15 para evitar filtros excessivamente frouxos e teto configurável
+    para impedir que um histórico muito forte bloqueie tendências moderadas.
     """
-    from config import ADX_ADAPTIVE, ADX_ADAPTIVE_PERCENTILE
+    from config import ADX_ADAPTIVE, ADX_ADAPTIVE_PERCENTILE, ADX_ADAPTIVE_MAX
     if not adx_history or not ADX_ADAPTIVE:
         return ADX_MIN
     sorted_h = sorted(adx_history)
     idx = max(0, int(len(sorted_h) * ADX_ADAPTIVE_PERCENTILE / 100) - 1)
-    return max(sorted_h[idx], 15.0)
+    adaptive = max(sorted_h[idx], 15.0)
+    return float(min(adaptive, max(float(ADX_MIN), float(ADX_ADAPTIVE_MAX))))
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -97,6 +99,7 @@ def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None,
         "ema21":     round(ema21, 5),
         "rsi":       round(rsi_val, 2),
         "adx":       round(adx_val, 2),
+        "adx_min":   round(adx_min, 2),
         "macd_line": round(macd_line, 6),
         "macd_hist": round(macd_hist, 6),
         "momentum":  round(mom, 6),
@@ -112,6 +115,7 @@ def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None,
 
     # ── Filtro 1: ADX — bloquear mercado lateral (P10: adx_min adaptativo) ──
     if adx_val < adx_min:
+        indicators["block_reason"] = "adx_below_min"
         return None, indicators
 
     # ── Filtro ADX rising — tendência perdendo força (limiar suavizado para índices sintéticos) ──

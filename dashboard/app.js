@@ -42,8 +42,9 @@ const POLL_MODEL    = 10_000;
 const POLL_LOGS     = 2_000;
 const POLL_CONTRACT = 2_000;
 
-// Candlestick desativado por padrão para evitar renderização distorcida de velas.
+// Candlestick desativado por padrão no gráfico técnico para evitar renderização distorcida.
 const ENABLE_CANDLESTICK = false;
+const RT_CONTRACT_CANDLE_SECONDS = 60;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,8 @@ document.querySelectorAll('.nav-item').forEach(item => {
         state.charts.rsi?.resize();
         state.charts.macd?.resize();
       }, 50);
+      _loadIndicatorSeries();
+      pollTicks();
     }
     if (tab === 'overview') {
       setTimeout(() => { state.charts.rtContract?.resize(); }, 50);
@@ -165,8 +168,8 @@ function updateEquityChart(data) {
   if (!chart) return;
 
   chart.data.labels = data.map(d => d.timestamp?.slice(0, 16) || '');
-  chart.data.datasets[0].data = data.map(d => ({ x: d.timestamp?.slice(0, 16) || '', y: d.balance_after, _result: d.result }));
-  chart.update('none');
+  chart.data.datasets[0].data = data.map(d => ({ y: d.balance_after, _result: d.result }));
+  chart.update();
 }
 
 // ─── Price Chart ────────────────────────────────────────────────────────────
@@ -268,60 +271,143 @@ function updatePriceChart(ticks) {
   chart.update('none');
 }
 
+// Helper: agrega ticks em velas OHLC de 30 segundos
+function ticksToCandles30s(ticks) {
+  if (!ticks || !ticks.length) return [];
+  const SIZE = RT_CONTRACT_CANDLE_SECONDS;
+  const candles = [];
+  let bucket = null;
+  for (const t of ticks) {
+    const epoch = Number(t.epoch);
+    const price = Number(t.price);
+    const bs = Math.floor(epoch / SIZE) * SIZE;
+    if (!bucket || bucket._bs !== bs) {
+      if (bucket) candles.push({ x: bucket._bs * 1000, o: bucket.o, h: bucket.h, l: bucket.l, c: bucket.c });
+      bucket = { _bs: bs, o: price, h: price, l: price, c: price };
+    } else {
+      if (price > bucket.h) bucket.h = price;
+      if (price < bucket.l) bucket.l = price;
+      bucket.c = price;
+    }
+  }
+  if (bucket) candles.push({ x: bucket._bs * 1000, o: bucket.o, h: bucket.h, l: bucket.l, c: bucket.c });
+  return candles;
+}
+
+// Plugin inline para desenhar velas OHLC sem depender de CDN externo
+const _inlineCandlestickPlugin = {
+  id: 'inlineCandlestick',
+
+  beforeDatasetsDraw(chart) {
+    const ds = chart.data.datasets[0];
+    if (!ds || !ds.data || !ds.data.length) return;
+    if (ds.data[0] == null || ds.data[0].o == null) return;
+
+    const { ctx, scales: { x: xS, y: yS } } = chart;
+    const total = ds.data.length;
+    const barW  = Math.max(4, (xS.right - xS.left) / Math.max(total, 1) * 0.70);
+
+    ctx.save();
+    ds.data.forEach(c => {
+      if (c.o == null) return;
+      const px  = xS.getPixelForValue(c.x);
+      const pyH = yS.getPixelForValue(c.h);
+      const pyL = yS.getPixelForValue(c.l);
+      const pyO = yS.getPixelForValue(c.o);
+      const pyC = yS.getPixelForValue(c.c);
+      const bull = c.c >= c.o;
+      // Cores estilo Deriv/TradingView
+      const clr     = bull ? '#26a69a' : '#ef5350';
+      const clrDark = bull ? '#1a7a71' : '#c62828';
+
+      // Pavio superior (topo → corpo) e inferior (corpo → fundo) — separados
+      ctx.lineWidth   = 1.5;
+      ctx.strokeStyle = clr;
+      ctx.beginPath();
+      ctx.moveTo(px, pyH);
+      ctx.lineTo(px, Math.min(pyO, pyC));
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px, pyL);
+      ctx.lineTo(px, Math.max(pyO, pyC));
+      ctx.stroke();
+
+      // Corpo da vela — mínimo 2px para dojis ficarem visíveis
+      const bodyTop = Math.min(pyO, pyC);
+      const bodyH   = Math.max(2, Math.abs(pyO - pyC));
+      ctx.fillStyle   = clr;
+      ctx.strokeStyle = clrDark;
+      ctx.lineWidth   = 1;
+      ctx.fillRect(px - barW / 2, bodyTop, barW, bodyH);
+      ctx.strokeRect(px - barW / 2, bodyTop, barW, bodyH);
+    });
+    ctx.restore();
+  },
+};
+
 function initRtContractChart() {
   const canvas = el('rtContractChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
+  // Usa sempre scatter + plugin inline para garantir renderização das velas
+  // independentemente de CDNs externas (chartjs-chart-financial 0.2.1 tem
+  // incompatibilidades com Chart.js 4.4.x nos internals do BarController)
   state.charts.rtContract = new Chart(ctx, {
-    type: 'line',
+    type: 'scatter',
+    plugins: [_inlineCandlestickPlugin],
     data: {
       datasets: [
         {
-          label: 'Preço',
+          label: `Velas ${RT_CONTRACT_CANDLE_SECONDS}s`,
           data: [],
-          borderColor: '#58a6ff',
-          backgroundColor: 'rgba(88,166,255,0.05)',
-          pointRadius: 0,
-          borderWidth: 1.6,
-          tension: 0.18,
-          fill: true,
-          order: 2,
+          pointRadius: 0, // pontos ocultos — plugin desenha as velas OHLC
         },
         {
           label: 'Entrada',
           data: [],
-          type: 'scatter',
           borderColor: '#ffb830',
           backgroundColor: '#ffb830',
-          pointRadius: 5,
-          pointHoverRadius: 6,
+          pointRadius: 7,
+          pointHoverRadius: 8,
           pointBorderWidth: 2,
           pointBorderColor: '#0d1117',
           showLine: false,
-          order: 1,
         },
       ],
     },
     options: {
-      ...baseChartOptions,
-      scales: {
-        x: {
-          type: 'linear',
-          ...baseChartOptions.scales.x,
-          ticks: {
-            maxTicksLimit: 8,
-            maxRotation: 0,
-            callback: v => {
-              const d = new Date(v * 1000);
-              return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          mode: 'nearest',
+          intersect: false,
+          callbacks: {
+            label: ctx => {
+              const r = ctx.raw || {};
+              if (r.o != null) return `O ${fmt(r.o, 5)}  H ${fmt(r.h, 5)}  L ${fmt(r.l, 5)}  C ${fmt(r.c, 5)}`;
+              return `Entrada: ${fmt(r.y, 5)}`;
             },
           },
         },
-        y: { ...baseChartOptions.scales.y, position: 'right' },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          grid: { color: '#1e2737' },
+          ticks: {
+            maxTicksLimit: 8,
+            maxRotation: 0,
+            callback: v => new Date(v).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          },
+        },
+        y: { grid: { color: '#1e2737' }, position: 'right' },
       },
     },
   });
+  state._rtContractIsCandlestick = true;
 }
 
 let _rtContractTimerInterval = null;
@@ -392,18 +478,60 @@ function updateRtContractChart(ticks, contract) {
     return;
   }
 
-  const series = ticks.map(t => ({ x: Number(t.epoch), y: Number(t.price) }));
-  chart.data.datasets[0].data = series;
+  if (state._rtContractIsCandlestick) {
+    // Modo candlestick: agrega ticks em velas de 30s
+    const candles = ticksToCandles30s(ticks);
+    chart.data.datasets[0].data = candles;
 
-  let entryTick = null;
-  if (contract && contract.entry_epoch) {
-    entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
-    if (!entryTick && ticks.length) entryTick = ticks[0];
+    // ── Ajuste dinâmico dos eixos ──────────────────────────────────────────
+    if (candles.length > 0) {
+      // Y: min/max do OHLC com padding proporcional
+      let minVal = Infinity, maxVal = -Infinity;
+      candles.forEach(c => {
+        if (isFinite(c.l) && c.l < minVal) minVal = c.l;
+        if (isFinite(c.h) && c.h > maxVal) maxVal = c.h;
+      });
+      if (isFinite(minVal) && isFinite(maxVal)) {
+        const range = maxVal - minVal;
+        const pad   = Math.max(range * 0.35, 0.0005);
+        chart.options.scales.y.min = minVal - pad;
+        chart.options.scales.y.max = maxVal + pad;
+      }
+      // X: garante que o eixo cubra todos os candles (ms)
+      const xFirst = candles[0].x;
+      const xLast  = candles[candles.length - 1].x + RT_CONTRACT_CANDLE_SECONDS * 1000;
+      chart.options.scales.x.min = xFirst;
+      chart.options.scales.x.max = xLast;
+    }
+
+    // Marcador de entrada: usa a vela mais próxima do epoch de entrada
+    let entryMarker = [];
+    if (contract && contract.entry_epoch) {
+      const entryMs = Number(contract.entry_epoch) * 1000;
+      const entryCandle = candles.find(c => c.x >= entryMs) || candles[0];
+      if (entryCandle) {
+        entryMarker = [{
+          x: entryCandle.x,
+          y: Number(contract.entry_price) || entryCandle.o,
+        }];
+      }
+    }
+    chart.data.datasets[1].data = entryMarker;
+  } else {
+    // Modo linha: plota ticks diretamente
+    const series = ticks.map(t => ({ x: Number(t.epoch), y: Number(t.price) }));
+    chart.data.datasets[0].data = series;
+
+    let entryTick = null;
+    if (contract && contract.entry_epoch) {
+      entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
+      if (!entryTick && ticks.length) entryTick = ticks[0];
+    }
+    chart.data.datasets[1].data = entryTick ? [{ x: Number(entryTick.epoch), y: Number(entryTick.price) }] : [];
   }
-  chart.data.datasets[1].data = entryTick ? [{ x: Number(entryTick.epoch), y: Number(entryTick.price) }] : [];
 
   chart.update('active');
-  if (contract) _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
+  if (contract) _setRtContractStatus(contract, null, ticks[ticks.length - 1]);
 }
 
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
@@ -524,7 +652,7 @@ async function pollState() {
       const hasModel = !!d.model?.model_exists;
       const ticksCount = Number(d.model?.ticks_count ?? 0);
       const datasetRows = Number(d.model?.dataset_rows ?? 0);
-      const minTicksTarget = Math.max(1, Number(d.model?.min_ticks_target ?? 500));
+      const minTicksTarget = Math.max(1, Number(d.model?.min_ticks_target ?? 1000));
       const hasActiveContract = !!d.active_contract?.has_active;
       if (isStopLoss) {
         el('cardStatus').textContent = 'STOP LOSS';
@@ -799,6 +927,18 @@ async function pollBotStatus() {
       el('cardStatus').className   = 'card-value';
       el('cardStatusSub').textContent = '—';
     }
+
+    // Badge de horário de mercado
+    const badge = el('marketStatusBadge');
+    if (badge) {
+      const isOpen = d.market_open;
+      badge.style.display = '';
+      badge.textContent   = isOpen ? '🟢 Mercado Aberto' : '🔴 Mercado Fechado';
+      badge.className     = 'market-status-badge ' + (isOpen ? 'market-open' : 'market-closed');
+      badge.title         = isOpen
+        ? 'Forex ativo — bot prioriza mercados reais'
+        : 'Forex fechado — bot usa índices sintéticos';
+    }
   } catch (_) {}
 }
 
@@ -875,18 +1015,28 @@ async function pollContractRealtime() {
       // Sem contrato ativo: mostra últimos 150 ticks do símbolo atual (modo monitor)
       state.activeContract = null;
       const activeSymbol = el('activeSymbol')?.textContent?.trim();
-      const params = new URLSearchParams({ n: '150' });
-      if (activeSymbol) params.set('symbol', activeSymbol);
-      try {
+
+      const _fetchTicks = async (withSymbol) => {
+        const params = new URLSearchParams({ n: '150' });
+        if (withSymbol && activeSymbol && activeSymbol !== '—') params.set('symbol', activeSymbol);
         const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
-        const ticks = await rTicks.json();
+        return rTicks.json();
+      };
+
+      try {
+        let ticks = await _fetchTicks(true);
+        // Fallback: se o símbolo filtrado não retornar ticks, busca sem filtro
+        if ((!Array.isArray(ticks) || !ticks.length) && activeSymbol && activeSymbol !== '—') {
+          ticks = await _fetchTicks(false);
+        }
         if (Array.isArray(ticks) && ticks.length) {
           updateRtContractChart(ticks, null);
           // Exibe mensagem de monitor mas não limpa o gráfico
           const statusEl = el('rtContractStatus');
           const metaEl = el('rtContractMeta');
-          if (statusEl) { statusEl.textContent = 'Monitor de preço (sem contrato ativo)'; statusEl.style.color = '#8b949e'; }
-          if (metaEl && ticks.length) {
+          const tickSymbol = ticks[ticks.length - 1]?.symbol;
+          if (statusEl) { statusEl.textContent = `Monitor de preço${tickSymbol ? ' — ' + tickSymbol : ''} (sem contrato ativo)`; statusEl.style.color = '#8b949e'; }
+          if (metaEl) {
             const last = ticks[ticks.length - 1];
             metaEl.textContent = `Último tick: ${fmt(last.price, 5)} — ${new Date(last.epoch * 1000).toLocaleTimeString('pt-BR')}`;
           }
@@ -898,6 +1048,7 @@ async function pollContractRealtime() {
     }
 
     state.activeContract = c;
+    _setRtContractStatus(c, null, null); // mostra direção/timer imediatamente, antes de carregar ticks
     const params = new URLSearchParams({ n: '600' });
     if (c.symbol) params.set('symbol', c.symbol);
     if (c.entry_epoch && c.entry_epoch > 0) params.set('from_epoch', String(c.entry_epoch));
@@ -1020,7 +1171,7 @@ async function pollModel() {
 // ─── Histórico de trades ──────────────────────────────────────────────────────
 
 async function loadHistory() {
-  const n = el('histCount')?.value || 50;
+  const n = el('histCount')?.value || 60;
   try {
     const r = await fetch(`${API_BASE_URL}/api/trades?n=${n}`);
     state.allTrades = await r.json();
@@ -1039,7 +1190,7 @@ function renderHistory() {
 
   const tbody = el('histBody');
   if (!trades.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty-msg">Nenhuma operação encontrada.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-msg">Nenhuma operação encontrada.</td></tr>';
     el('histSummary').textContent = '';
     return;
   }
@@ -1048,21 +1199,28 @@ function renderHistory() {
   const wins  = trades.filter(t => t.result === 'WIN').length;
   const wr    = trades.length ? (wins / trades.length * 100).toFixed(1) : 0;
 
-  tbody.innerHTML = trades.map(t => `
+  tbody.innerHTML = trades.map(t => {
+    const payoutPct = t.stake > 0 ? (t.profit / t.stake * 100).toFixed(1) : null;
+    const payoutClass = payoutPct !== null ? (Number(payoutPct) >= 0 ? 'positive' : 'negative') : '';
+    const payoutTxt = payoutPct !== null ? (Number(payoutPct) >= 0 ? '+' : '') + payoutPct + '%' : '—';
+    return `
     <tr>
       <td class="td-mono">${t.timestamp?.slice(0, 19) || '—'}</td>
       <td><span class="badge badge-${t.direction?.toLowerCase()}">${t.direction || '—'}</span></td>
+      <td class="td-mono">${t.symbol || '—'}</td>
       <td class="td-mono">${fmtUsd(t.stake)}</td>
       <td class="td-mono">${t.duration ?? '—'}t</td>
       <td><span class="badge badge-${t.result?.toLowerCase()}">${t.result || '—'}</span></td>
       <td class="td-mono ${t.profit >= 0 ? 'positive' : 'negative'}">${(t.profit >= 0 ? '+' : '') + fmtUsd(t.profit)}</td>
+      <td class="td-mono ${payoutClass}">${payoutTxt}</td>
       <td class="td-mono">${fmtUsd(t.balance_after)}</td>
       <td class="td-mono">${fmt(t.rsi, 1)}</td>
       <td class="td-mono">${fmt(t.adx, 1)}</td>
       <td class="td-mono">${fmtPct(t.ai_confidence * 100)}</td>
       <td>${t.market_condition || '—'}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   el('histSummary').textContent =
     `${trades.length} operações | Win Rate: ${wr}% | Lucro total: ${(totalProfit >= 0 ? '+' : '') + fmtUsd(totalProfit)}`;
@@ -1074,7 +1232,7 @@ function renderHistory() {
 function updateRecentDots(containerId) {
   const container = el(containerId);
   if (!container) return;
-  const recent = state.allTrades.slice(0, 20);
+  const recent = state.allTrades.slice(0, 60);
   container.innerHTML = recent.length
     ? recent.map(t => `<div class="tdot ${t.result === 'WIN' ? 'win' : 'loss'}" title="${t.result} — ${fmtUsd(t.profit)}"></div>`).join('')
     : '<span style="color:var(--text-dim);font-size:12px">Sem operações</span>';
@@ -1251,7 +1409,14 @@ async function quickStart() {
     const r = await fetch(API_BASE_URL + '/api/bot/start', {
       method: 'POST',
       headers: _authHeaders(),
-      body: JSON.stringify({ mode: 'demo', balance: 1000, skip_collect: false }),
+      body: JSON.stringify({
+        mode: 'demo',
+        balance: 1000,
+        skip_collect: false,
+        min_ticks: 1000,
+        history_count: 1000,
+        force_retrain: true,
+      }),
     });
     const d = await r.json();
     if (d.ok) {
@@ -1272,8 +1437,8 @@ async function confirmStart() {
   const skipCollect     = el('skipCollect').checked;
   const noScan          = el('noScan') ? el('noScan').checked : false;
   const retrainInterval = el('retrainInterval') ? (parseInt(el('retrainInterval').value) || 10) : 10;
-  const minTicks        = el('minTicks') ? (parseInt(el('minTicks').value) || 500) : 500;
-  const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 500) : 500;
+  const minTicks        = el('minTicks') ? (parseInt(el('minTicks').value) || 1000) : 1000;
+  const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 1000) : 1000;
   const forceRetrain    = el('forceRetrain') ? el('forceRetrain').checked : false;
 
   if (mode === 'real') {

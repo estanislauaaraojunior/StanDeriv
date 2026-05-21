@@ -4,6 +4,7 @@
 # ============================================================
 
 import os
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()  # carrega variáveis de .env (ignorado se não existir)
@@ -15,7 +16,14 @@ DEMO_MODE = True
 
 # ----- Conexão -----
 _RAW_APP_ID = os.environ.get("DERIV_APP_ID", "1089").strip()
-_RAW_TOKEN  = os.environ["DERIV_TOKEN"].strip()    # defina em .env — crie em: developers.deriv.com
+_RAW_TOKEN  = os.environ.get("DERIV_TOKEN", "").strip()
+if not _RAW_TOKEN:
+    raise EnvironmentError(
+        "DERIV_TOKEN não definido.\n"
+        "Crie um arquivo .env na raiz do projeto com:\n"
+        "  DERIV_TOKEN=<seu_token>\n"
+        "Gere seu token em: https://developers.deriv.com"
+    )
 DERIV_AUTH_MODE = os.environ.get("DERIV_AUTH_MODE", "auto").strip().lower()
 _TOKEN_PREFIXES = ("pat_", "ory_at_")
 # Protege contra inversão acidental no .env:
@@ -32,19 +40,30 @@ else:
 # ----- Instrumento -----
 SYMBOL        = "R_100"  # índice sintético 24/7 (sem impacto de notícias)
 
+# ----- Prioridade de mercado por horário comercial -----
+# True  → em horário comercial (seg-sex, 22h dom–22h sex UTC) prioriza mercados reais (forex)
+#          e só cai em índices sintéticos se nenhum par forex apresentar tendência válida.
+#          Fora desse horário, pula o scan forex e vai direto para sintéticos (mais rápido).
+# False → comportamento legado: sempre escaneia todos os grupos na mesma ordem,
+#          independente do horário.
+PREFER_REAL_MARKETS = True
+
 # Símbolo ativo (pode ser alterado pelo scan de tendência em runtime)
 _active_symbol: str = SYMBOL
+_symbol_lock: threading.RLock = threading.RLock()
 
 
 def get_active_symbol() -> str:
     """Retorna o símbolo ativo atual (pode diferir de SYMBOL se o scan o alterou)."""
-    return _active_symbol
+    with _symbol_lock:
+        return _active_symbol
 
 
 def set_active_symbol(symbol: str) -> None:
     """Atualiza o símbolo ativo em runtime (chamado pelo pipeline após scan)."""
     global _active_symbol
-    _active_symbol = symbol
+    with _symbol_lock:
+        _active_symbol = symbol
 DURATION      = 5        # duração de fallback (usada quando o modelo ainda não existe)
 DURATION_UNIT = "m"      # "t" = ticks | "s" = segundos | "m" = minutos
 BASIS         = "stake"  # base do contrato
@@ -101,6 +120,7 @@ ADX_MIN         = 18   # abaixo → mercado lateral → sem entrada
 # False → usa ADX_MIN fixo acima
 ADX_ADAPTIVE            = True
 ADX_ADAPTIVE_PERCENTILE = 50   # percentil do histórico de ADX; piso = 15
+ADX_ADAPTIVE_MAX        = 22.0 # teto do filtro adaptativo; evita travar entradas em tendência moderada
 
 # ----- Gestão de risco -----
 STAKE_PCT         = 0.01   # 1% do saldo por operação

@@ -192,15 +192,22 @@ def main() -> None:
     print("  Pressione Ctrl+C para encerrar")
     print("=" * 55)
 
-    ws = websocket.WebSocketApp(
-        _get_ws_url(),
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-    )
-    _ws_instance = ws
-    ws.run_forever(reconnect=5)
+    # Para autenticação Bearer/OTP a URL expira em ~60s.
+    # reconnect=5 reutilizaria a URL expirada → 401. Usamos loop manual.
+    while True:
+        try:
+            ws = websocket.WebSocketApp(
+                _get_ws_url(),
+                on_open=on_open,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+            )
+            _ws_instance = ws
+            ws.run_forever()
+        except Exception as exc:
+            print(f"\n[COLETOR] Exceção inesperada: {exc}")
+        time.sleep(5)
 
 
 if __name__ == "__main__":

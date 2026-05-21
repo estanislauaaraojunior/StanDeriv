@@ -13,6 +13,7 @@ Fluxo de uma operação:
 """
 
 import json
+import re
 import threading
 import time
 from collections import deque
@@ -23,7 +24,7 @@ import websocket
 
 import deriv_session
 from config import (
-    APP_ID, TOKEN, SYMBOL,
+    APP_ID, TOKEN, SYMBOL, get_active_symbol,
     DURATION, DURATION_UNIT, BASIS, CURRENCY,
     MIN_TICKS, MIN_CANDLES, ENTRY_TICK_INTERVAL, ENTRY_CANDLE_INTERVAL,
     PRICE_BUFFER_SIZE,
@@ -39,6 +40,10 @@ import indicators as ind
 
 
 _STATE_JSON = Path(__file__).resolve().parent / "state.json"
+
+
+def _active_symbol() -> str:
+    return get_active_symbol() or SYMBOL
 
 
 class DerivBot:
@@ -98,6 +103,7 @@ class DerivBot:
         self._pending_stake: float = 0.0
         self._pending_duration: int = DURATION
         self._pending_indicators: dict = {}
+        self._proposal_retry_count: int = 0
         self._open_contract_id: Optional[str] = None
         self._entry_price: float = 0.0
         self._entry_epoch: int = 0
@@ -118,6 +124,7 @@ class DerivBot:
 
         # Cadência de entradas: começa já no limite para disparar na 1ª oportunidade.
         self._ticks_since_last_entry: int = ENTRY_TICK_INTERVAL
+        self._force_first_entry_check: bool = False
 
         # Flag: histórico de candles já carregado via API (evita re-request na reconexão)
         self._api_history_loaded: bool = False
@@ -155,7 +162,7 @@ class DerivBot:
                 state["active_contract"] = {
                     "has_active": True,
                     "contract_id": self._open_contract_id,
-                    "symbol": SYMBOL,
+                    "symbol": _active_symbol(),
                     "direction": self._pending_direction,
                     "duration": self._pending_duration,
                     "buy_timestamp": self._buy_timestamp,
@@ -195,8 +202,10 @@ class DerivBot:
                     on_close=self._on_close,
                 )
                 self._ws = ws
-                ws.run_forever(reconnect=5)
-                time.sleep(1)
+                # reconnect=5 reutiliza a URL OTP expirada → 401.
+                # O while True externo já gera uma nova URL a cada iteração.
+                ws.run_forever()
+                time.sleep(5)
             except deriv_session.DerivAPIError as exc:
                 code = f" ({exc.code})" if exc.code else ""
                 print(f"[BOT] Falha ao obter WebSocket Options: {exc}{code} — tentando novamente em 5s")
@@ -248,6 +257,8 @@ class DerivBot:
                     self._adx_history.append(adx_v)
 
             n = len(self._candle_closes)
+            if n >= MIN_CANDLES:
+                self._force_first_entry_check = True
             print(f"[BOT] Pré-carregados {n} candles históricos de {SYMBOL} — aquecimento instantâneo.")
         except Exception as exc:
             print(f"[BOT] Aviso: pré-carga de candles falhou ({exc}) — aguardando ao vivo.")
@@ -267,7 +278,7 @@ class DerivBot:
         data = json.loads(message)
 
         if "error" in data:
-            print(f"[BOT] Erro API: {data['error']['message']}")
+            self._handle_api_error(ws, data.get("error", {}))
             return
 
         msg_type = data.get("msg_type", "")
@@ -290,6 +301,61 @@ class DerivBot:
 
     def _on_close(self, ws, code, msg) -> None:
         print(f"[BOT] Conexão encerrada (código: {code}) — tentando reconectar...")
+
+    def _handle_api_error(self, ws, error: dict) -> None:
+        """Trata erros da API, incluindo stake/payout acima do limite permitido."""
+        message = str(error.get("message", "Erro desconhecido"))
+        print(f"[BOT] Erro API: {message}")
+
+        if self._retry_proposal_with_allowed_stake(ws, message):
+            return
+
+        if self._pending_timestamp > 0 and self._open_contract_id is None:
+            self._pending_timestamp = 0.0
+            self._pending_direction = ""
+            self._pending_stake = 0.0
+
+    def _retry_proposal_with_allowed_stake(self, ws, message: str) -> bool:
+        """
+        A Deriv valida payout máximo por contrato, não apenas stake mínimo.
+        Se a proposal falhar por payout acima do teto, reduz o stake na mesma
+        proporção e reenfileira uma única tentativa.
+        """
+        msg = message.lower()
+        if "maximum payout" not in msg or "current payout" not in msg:
+            return False
+        if not self._pending_direction or self._pending_stake <= 0:
+            return False
+        if self._open_contract_id is not None or self._proposal_retry_count >= 1:
+            return False
+
+        nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", message)]
+        if len(nums) < 3:
+            return False
+
+        min_stake, max_payout, current_payout = nums[0], nums[1], nums[2]
+        if current_payout <= 0 or max_payout <= 0:
+            return False
+
+        adjusted_stake = round(self._pending_stake * (max_payout / current_payout) * 0.98, 2)
+        adjusted_stake = max(min_stake, adjusted_stake)
+        if adjusted_stake >= self._pending_stake:
+            return False
+
+        self._proposal_retry_count += 1
+        print(
+            f"[BOT] Reduzindo stake para {adjusted_stake:.2f} USD "
+            f"para respeitar payout máximo de {max_payout:.2f} USD."
+        )
+        self._send_proposal(
+            ws,
+            self._pending_direction,
+            self._pending_indicators,
+            stake_override=adjusted_stake,
+            duration_override=self._pending_duration,
+            is_retry=True,
+        )
+        return True
 
     # ─────────────────────────────────────────────────────────
     #  Lógica de negócio
@@ -356,6 +422,8 @@ class DerivBot:
                 self._adx_history.append(adx_v)
 
         self._api_history_loaded = True
+        if len(self._candle_closes) >= MIN_CANDLES:
+            self._force_first_entry_check = True
         print(f"[BOT] {loaded} candles históricos carregados via API — aquecimento instantâneo.")
 
         # Subscreve ticks ao vivo
@@ -459,9 +527,10 @@ class DerivBot:
             if self.risk_manager.consecutive_losses >= 2:
                 adaptive_interval = ENTRY_CANDLE_INTERVAL + 1  # aguarda 1 vela extra
 
-        if self._candles_since_last_entry < adaptive_interval or not self._new_candle_closed:
+        ready_to_evaluate = self._new_candle_closed or self._force_first_entry_check
+        if self._candles_since_last_entry < adaptive_interval or not ready_to_evaluate:
             remain = max(0, adaptive_interval - self._candles_since_last_entry)
-            if not self._new_candle_closed:
+            if not ready_to_evaluate:
                 print(
                     f"\r[BOT] {price:.4f} | Aguardando fechamento da vela... "
                     f"(candles ok: {n_candles})   ",
@@ -471,8 +540,12 @@ class DerivBot:
                 print(
                     f"\r[BOT] {price:.4f} | Próxima entrada em {remain} vela(s)   ",
                     end="", flush=True,
-                )
+            )
             return
+
+        if self._force_first_entry_check and not self._new_candle_closed:
+            print("\n[BOT] Primeira avaliação imediata após o treino com candles históricos.")
+        self._force_first_entry_check = False
 
         # P10: Calcular ADX mínimo adaptativo usando closes das velas
         candle_closes = list(self._candle_closes)
@@ -494,12 +567,20 @@ class DerivBot:
             self._send_proposal(ws, signal, indicators)
             self._candles_since_last_entry = 0  # reinicia após entrada
 
-    def _send_proposal(self, ws, direction: str, indicators: dict) -> None:
+    def _send_proposal(
+        self,
+        ws,
+        direction: str,
+        indicators: dict,
+        stake_override: float | None = None,
+        duration_override: int | None = None,
+        is_retry: bool = False,
+    ) -> None:
         contract_type = "CALL" if direction == "BUY" else "PUT"
-        stake = self.risk_manager.get_stake()
+        stake = round(float(stake_override), 2) if stake_override is not None else self.risk_manager.get_stake()
 
         # Duração escolhida pela IA a partir dos closes das velas (em minutos)
-        duration = ai_predictor.predict_duration(list(self._candle_closes))
+        duration = int(duration_override) if duration_override is not None else ai_predictor.predict_duration(list(self._candle_closes))
 
         # Salva estado da operação pendente
         self._pending_direction   = direction
@@ -507,6 +588,8 @@ class DerivBot:
         self._pending_duration    = duration
         self._pending_indicators  = indicators
         self._pending_timestamp   = time.time()  # P1: marca início do timeout
+        if not is_retry:
+            self._proposal_retry_count = 0
 
         proposal = {
             "proposal":       1,
@@ -518,24 +601,26 @@ class DerivBot:
             "duration_unit":  DURATION_UNIT,
         }
         if self._uses_bearer_auth():
-            proposal["underlying_symbol"] = SYMBOL
+            proposal["underlying_symbol"] = _active_symbol()
         else:
-            proposal["symbol"] = SYMBOL
+            proposal["symbol"] = _active_symbol()
         ws.send(json.dumps(proposal))
         print(
-            f"\n[BOT] → {direction} | Stake: {stake:.2f} USD | Duração: {duration}m | "
+            f"\n[BOT] → {direction} | Símbolo: {_active_symbol()} | Stake: {stake:.2f} USD | Duração: {duration}m | "
             f"ADX:{indicators.get('adx', 0):.1f} RSI:{indicators.get('rsi', 0):.1f}"
         )
 
     def _handle_proposal(self, ws, proposal: dict) -> None:
         proposal_id = proposal["id"]
         self._in_trade = True
+        self._proposal_retry_count = 0
         ws.send(json.dumps({"buy": proposal_id, "price": self._pending_stake}))
 
     def _handle_buy(self, ws, buy: dict) -> None:
         contract_id = str(buy.get("contract_id", ""))
         self._open_contract_id = contract_id
         self._pending_timestamp = 0.0          # P1: proposal foi aceita, limpar timeout
+        self._proposal_retry_count = 0
         self._buy_timestamp = time.time()      # P7: marcar abertura do contrato
         self._entry_price = self._last_tick_price
         self._entry_epoch = self._last_tick_epoch
@@ -572,7 +657,7 @@ class DerivBot:
         profit = float(contract.get("profit", 0.0))
 
         self.risk_manager.record_result(
-            symbol     = SYMBOL,
+            symbol     = _active_symbol(),
             direction  = self._pending_direction,
             stake      = self._pending_stake,
             duration   = self._pending_duration,
@@ -729,6 +814,8 @@ class DerivBot:
         tag = ""
         if adx_v < 20:
             tag = "[LATERAL]"
+        elif indicators.get("block_reason") == "adx_below_min":
+            tag = f"[ADX<{indicators.get('adx_min', 0):.1f}]"
         elif signal:
             tag = f"[→ {signal}]"
 
