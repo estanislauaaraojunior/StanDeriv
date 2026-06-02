@@ -32,6 +32,7 @@ from config import (
     HEARTBEAT_TIMEOUT_SEC,
     CANDLE_SIZE, CANDLE_NOTIFY, PA_SR_TOLERANCE,
     CANDLE_TIMEFRAME_SEC, TICKS_CSV,
+        set_active_symbol, is_market_open,
 )
 from risk_manager import RiskManager
 from strategy import get_signal, get_adaptive_adx_min
@@ -381,7 +382,17 @@ class DerivBot:
 
         # Reconexão: candles já estão em memória, subscreve ticks direto (uma única vez)
         if self._api_history_loaded:
-            ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
+            # Garante que o símbolo ativo pertence a um mercado aberto;
+            # caso contrário, força fallback para o índice sintético padrão.
+            try:
+                cur = _active_symbol()
+                if not is_market_open(cur):
+                    print(f"[BOT] Símbolo ativo {cur} em mercado fechado — trocando para fallback {SYMBOL}.")
+                    set_active_symbol(SYMBOL)
+                    cur = SYMBOL
+            except Exception:
+                cur = SYMBOL
+            ws.send(json.dumps({"ticks": cur, "subscribe": 1}))
             return
 
         # Primeira conexão: solicita 100 candles históricos antes de subscrever ticks
@@ -426,8 +437,16 @@ class DerivBot:
             self._force_first_entry_check = True
         print(f"[BOT] {loaded} candles históricos carregados via API — aquecimento instantâneo.")
 
-        # Subscreve ticks ao vivo
-        ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
+        # Subscreve ticks ao vivo — assegura que o símbolo escolhido está em mercado aberto.
+        try:
+            cur = _active_symbol()
+            if not is_market_open(cur):
+                print(f"[BOT] Símbolo ativo {cur} em mercado fechado — trocando para fallback {SYMBOL}.")
+                set_active_symbol(SYMBOL)
+                cur = SYMBOL
+        except Exception:
+            cur = SYMBOL
+        ws.send(json.dumps({"ticks": cur, "subscribe": 1}))
 
     def _handle_tick(self, ws, tick: dict) -> None:
         price = float(tick["quote"])

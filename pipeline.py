@@ -493,7 +493,11 @@ def _detect_trending_symbol(no_scan: bool = False) -> str:
         return _cfg.SYMBOL
 
     prefer_real = getattr(_cfg, "PREFER_REAL_MARKETS", True)
-    market_open = _is_forex_market_open()
+    # Usa verificação centralizada em config.py (mais extensível)
+    try:
+        market_open = _cfg.is_market_open("forex")
+    except Exception:
+        market_open = _is_forex_market_open()
 
     # ── Etapa 1: Scan forex (apenas se mercado aberto ou PREFER_REAL_MARKETS desativado) ──
     run_forex_scan = (not prefer_real) or market_open
