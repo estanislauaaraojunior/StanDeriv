@@ -159,14 +159,12 @@ def _read_csv_safe(path, **kwargs):
             return pd.DataFrame()
         # Tentativa padrão (arquivo com cabeçalho)
         df = pd.read_csv(path, **kwargs)
-        # Se a coluna 'price' existir, retornamos imediatamente
-        if "price" in df.columns:
+        if "price" in df.columns or path != TICKS_CSV:
             return df
 
-        # Se não houver 'price' é provável que o CSV não possua cabeçalho
-        # (caso comum quando o arquivo foi gerado sem a linha de header).
-        # Recarrega sem header e atribui nomes de coluna conforme o número
-        # de colunas detectadas.
+        # Se não houver 'price' e estivermos lendo ticks.csv, é provável que o CSV
+        # não tenha cabeçalho. Recarrega sem header e atribui nomes de coluna conforme
+        # o número de colunas detectadas.
         df_no_header = pd.read_csv(path, header=None, **kwargs)
         cols = df_no_header.shape[1]
         if cols >= 4:
