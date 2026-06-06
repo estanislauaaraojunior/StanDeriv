@@ -26,6 +26,7 @@ import deriv_session
 from config import (
     APP_ID, TOKEN, SYMBOL, get_active_symbol,
     DURATION, DURATION_UNIT, BASIS, CURRENCY,
+    CANDIDATE_DURATIONS,
     MIN_TICKS, MIN_CANDLES, ENTRY_TICK_INTERVAL, ENTRY_CANDLE_INTERVAL,
     PRICE_BUFFER_SIZE,
     PROPOSAL_TIMEOUT_SEC,
@@ -310,6 +311,8 @@ class DerivBot:
 
         if self._retry_proposal_with_allowed_stake(ws, message):
             return
+        if self._retry_proposal_with_allowed_duration(ws, message):
+            return
 
         if self._pending_timestamp > 0 and self._open_contract_id is None:
             self._pending_timestamp = 0.0
@@ -354,6 +357,48 @@ class DerivBot:
             self._pending_indicators,
             stake_override=adjusted_stake,
             duration_override=self._pending_duration,
+            is_retry=True,
+        )
+        return True
+
+    def _retry_proposal_with_allowed_duration(self, ws, message: str) -> bool:
+        msg = message.lower()
+        if "trading is not offered for this duration" not in msg and \
+           "duration is not offered" not in msg and \
+           "duration not offered" not in msg:
+            return False
+
+        if not self._pending_direction or self._pending_stake <= 0:
+            return False
+        if self._open_contract_id is not None or self._proposal_retry_count >= 1:
+            return False
+
+        try:
+            current_duration = int(self._pending_duration)
+        except (TypeError, ValueError):
+            return False
+
+        candidates = [d for d in sorted(CANDIDATE_DURATIONS) if isinstance(d, int) and d > 0]
+        if not candidates:
+            return False
+
+        fallback_durations = [d for d in candidates if d != current_duration]
+        if not fallback_durations:
+            return False
+
+        fallback_durations.sort(key=lambda d: (abs(d - current_duration), d))
+        new_duration = fallback_durations[0]
+        self._proposal_retry_count += 1
+        print(
+            f"[BOT] Duração {current_duration}{DURATION_UNIT} não oferecida para este símbolo. "
+            f"Tentando {new_duration}{DURATION_UNIT}."
+        )
+        self._send_proposal(
+            ws,
+            self._pending_direction,
+            self._pending_indicators,
+            stake_override=self._pending_stake,
+            duration_override=new_duration,
             is_retry=True,
         )
         return True
@@ -624,8 +669,10 @@ class DerivBot:
         else:
             proposal["symbol"] = _active_symbol()
         ws.send(json.dumps(proposal))
+        duration_unit_label = DURATION_UNIT if DURATION_UNIT in ("t", "s", "m") else DURATION_UNIT
         print(
-            f"\n[BOT] → {direction} | Símbolo: {_active_symbol()} | Stake: {stake:.2f} USD | Duração: {duration}m | "
+            f"\n[BOT] → {direction} | Símbolo: {_active_symbol()} | Stake: {stake:.2f} USD | "
+            f"Duração: {duration}{duration_unit_label} | "
             f"ADX:{indicators.get('adx', 0):.1f} RSI:{indicators.get('rsi', 0):.1f}"
         )
 

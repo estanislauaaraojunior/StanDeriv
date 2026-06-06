@@ -776,6 +776,40 @@ async function pollState() {
   }
 }
 
+
+// ─── Limpar dados (operacoes + estados) ─────────────────────────────────────
+async function clearData() {
+  try {
+    const confirmMsg = 'Confirma limpar TODOS os dados de operações?\n\nSerão apagados: operacoes_log.csv, risk_state.json e state.json. Esta ação é irreversível.';
+    if (!confirm(confirmMsg)) return;
+    showToast('Limpando dados...', '');
+
+    const r = await fetch(API_BASE_URL + '/api/bot/data/clear', {
+      method: 'POST',
+      headers: _authHeaders(),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) {
+      showToast('Dados limpos com sucesso', '');
+      // Atualiza estado e histórico na UI
+      await pollState();
+      await loadHistory();
+      // Limpa gráficos locais
+      try {
+        if (state.charts.equity && state.charts.equity.data && state.charts.equity.data.datasets && state.charts.equity.data.datasets[0]) {
+          state.charts.equity.data.datasets[0].data = [];
+          if (typeof state.charts.equity.update === 'function') state.charts.equity.update();
+        }
+      } catch (e) {}
+    } else {
+      const msg = j.msg || r.statusText || 'Erro desconhecido';
+      showToast('Falha ao limpar: ' + msg, 'error');
+    }
+  } catch (e) {
+    showToast('Erro ao limpar dados: ' + (e && e.message ? e.message : e), 'error');
+  }
+}
+
 // ─── Notificações de eventos críticos ────────────────────────────────────────
 
 const _notifState = { paused: false, stopLoss: false, drift: false };

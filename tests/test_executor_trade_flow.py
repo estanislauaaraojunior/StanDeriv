@@ -108,6 +108,23 @@ class TestSendProposal(unittest.TestCase):
         self.assertGreaterEqual(payload["amount"], 0.50)
         self.assertEqual(self.bot._proposal_retry_count, 1)
 
+    def test_alterna_duracao_quando_nao_oferecida(self):
+        self.bot._pending_direction = "BUY"
+        self.bot._pending_stake = 50.0
+        self.bot._pending_duration = 15
+        self.bot._pending_indicators = {"adx": 30.0, "rsi": 65.0}
+        self.bot._pending_timestamp = time.time()
+
+        self.bot._handle_api_error(
+            self.ws,
+            {"message": "Trading is not offered for this duration."},
+        )
+
+        payload = json.loads(self.ws.send.call_args[0][0])
+        self.assertEqual(payload["proposal"], 1)
+        self.assertEqual(payload["duration"], 5)
+        self.assertEqual(self.bot._proposal_retry_count, 1)
+
 
 # ─────────────────────────────────────────────────────────────────
 #  Testes — Confirmação de compra (_handle_buy)

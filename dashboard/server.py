@@ -157,7 +157,30 @@ def _read_csv_safe(path, **kwargs):
     try:
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             return pd.DataFrame()
-        return pd.read_csv(path, **kwargs)
+        # Tentativa padrão (arquivo com cabeçalho)
+        df = pd.read_csv(path, **kwargs)
+        # Se a coluna 'price' existir, retornamos imediatamente
+        if "price" in df.columns:
+            return df
+
+        # Se não houver 'price' é provável que o CSV não possua cabeçalho
+        # (caso comum quando o arquivo foi gerado sem a linha de header).
+        # Recarrega sem header e atribui nomes de coluna conforme o número
+        # de colunas detectadas.
+        df_no_header = pd.read_csv(path, header=None, **kwargs)
+        cols = df_no_header.shape[1]
+        if cols >= 4:
+            # epoch, datetime, symbol, price (+ possíveis colunas extra)
+            names = ["epoch", "datetime", "symbol", "price"]
+            if cols > 4:
+                names += [f"col{i}" for i in range(4, cols)]
+            df_no_header.columns = names
+        elif cols == 2:
+            df_no_header.columns = ["epoch", "price"]
+        else:
+            # fallback: manter nomes numéricos
+            df_no_header.columns = list(df_no_header.columns)
+        return df_no_header
     except Exception:
         return pd.DataFrame()
 
@@ -588,6 +611,66 @@ def api_bot_stop():
             pass
 
         return jsonify({"ok": True, "pid": pid})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)}), 500
+
+
+def _reset_operations_and_state() -> tuple[bool, str]:
+    """Reseta os arquivos de operações e estados usados pelo dashboard.
+
+    Retorna (True, "") em sucesso ou (False, mensagem) em erro.
+    """
+    try:
+        # Trunca/limpa o CSV de operações
+        try:
+            if OPERATIONS_CSV.exists():
+                OPERATIONS_CSV.write_text("", encoding="utf-8")
+        except Exception:
+            pass
+
+        # Reseta risk_state.json com valores iniciais seguros
+        try:
+            import datetime as _dt
+            _fresh_state = {
+                "is_paused": False,
+                "pause_remaining_sec": 0,
+                "daily_pnl": 0.0,
+                "daily_pnl_pct": 0.0,
+                "consec_losses": 0,
+                "drift_detected": False,
+                "win_rate_recent": 0.0,
+                "date": _dt.date.today().isoformat(),
+                "balance": 0.0,
+                "pause_until_epoch": 0.0,
+                "recent_results": [],
+            }
+            RISK_STATE_JSON.write_text(json.dumps(_fresh_state))
+        except Exception:
+            pass
+
+        # Reseta state.json para um dicionário vazio
+        try:
+            STATE_JSON.write_text(json.dumps({}))
+        except Exception:
+            pass
+
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+@app.route("/api/bot/data/clear", methods=["POST"])
+@_require_token
+def api_bot_data_clear():
+    """Limpa os dados das operações (operacoes_log.csv, risk_state.json, state.json).
+
+    Protegido por token via `_require_token`.
+    """
+    try:
+        ok, msg = _reset_operations_and_state()
+        if not ok:
+            return jsonify({"ok": False, "msg": msg}), 500
+        return jsonify({"ok": True, "msg": "Dados limpos: operacoes_log.csv, risk_state.json, state.json"})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
 

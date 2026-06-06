@@ -1,0 +1,11 @@
+=======================================================
+  Deriv Bot Dashboard
+  http://localhost:5055
+  Auth: desativada (defina DASHBOARD_TOKEN no .env para ativar)
+  Ctrl+C para encerrar
+=======================================================
+ * Serving Flask app 'server'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5055
+[33mPress CTRL+C to quit[0m

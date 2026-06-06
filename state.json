@@ -1,1 +1,1 @@
-{"symbol": "frxEURGBP", "session_start": "2026-06-02T13:11:26.919578", "active_contract": {"has_active": true, "contract_id": "1248087979", "symbol": "frxEURGBP", "direction": "SELL", "duration": 15, "buy_timestamp": 1780418043.1514668, "entry_epoch": 1780418042, "entry_price": 0.86324}, "min_ticks_target": 1000}
+{"session_start": "2026-06-06T10:27:22.057250", "active_contract": null, "min_ticks_target": 1000, "symbol": "R_10"}
