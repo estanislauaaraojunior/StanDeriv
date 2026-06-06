@@ -14,15 +14,6 @@ from unittest.mock import patch
 
 import pytest
 
-# Garante imports do projeto
-_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
-sys.path.insert(0, str(_ROOT / "dashboard"))
-
-# Força DERIV_TOKEN para o import do config não falhar
-os.environ.setdefault("DERIV_TOKEN", "test_token_placeholder")
-os.environ.setdefault("DASHBOARD_TOKEN", "")  # sem auth por padrão nos testes
-
 
 @pytest.fixture(scope="module")
 def client():

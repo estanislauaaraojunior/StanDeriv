@@ -9,8 +9,8 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
   <!-- Chart.js DateTime adapter (para eixo temporal) -->
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-  <!-- chartjs-chart-financial (candlestick) -->
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.1/dist/chartjs-chart-financial.min.js"></script>
+  <!-- chartjs-chart-financial (candlestick) — 0.2.1 para Chart.js 4.x -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
 
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -70,11 +70,13 @@
       </button>
       <span id="topbarTitle">Overview</span>
       <span id="activeSymbol" class="active-symbol-badge"></span>
+      <span id="marketStatusBadge" class="market-status-badge" style="display:none"></span>
     </div>
     <div id="topbarRight">
       <span id="lastUpdate" class="last-update">—</span>
       <button id="btnStart" class="btn btn-green" onclick="botStart()">▶ Iniciar</button>
       <button id="btnStop"  class="btn btn-red"   onclick="botStop()"  style="display:none">■ Parar</button>
+      <button id="btnClearData" class="btn btn-outline" onclick="clearData()" title="Apaga operacoes_log.csv, risk_state.json e state.json">🧹 Limpar Dados</button>
     </div>
   </header>
 
@@ -127,7 +129,7 @@
 
     <div class="chart-card full-width">
       <div class="chart-title">
-        Contrato em Tempo Real
+        Contrato em Tempo Real - Velas 1min
         <span id="rtContractStatus" class="legend-item">Aguardando contrato</span>
       </div>
       <div id="rtContractInfo" style="display:flex;align-items:center;gap:14px;padding:6px 4px 2px;flex-wrap:wrap;">
@@ -310,9 +312,9 @@
       ⚠ Drift detectado: Win rate recente abaixo do mínimo. Considera re-treinar o modelo.
     </div>
 
-    <!-- Win rate recente (últimas 20 operações) -->
+    <!-- Win rate recente (últimas 60 operações) -->
     <div class="chart-card full-width" style="margin-top:16px">
-      <div class="chart-title">Win Rate Recente (últimas 20 operações)</div>
+      <div class="chart-title">Win Rate Recente (últimas 60 operações)</div>
       <div id="recentWinDots" class="trade-dots-wrap large"></div>
     </div>
 
@@ -428,10 +430,12 @@
           <tr>
             <th>Data/Hora</th>
             <th>Dir.</th>
+            <th>Símbolo</th>
             <th>Stake</th>
             <th>Dur.</th>
             <th>Resultado</th>
             <th>Profit</th>
+            <th>Payout %</th>
             <th>Saldo</th>
             <th>RSI</th>
             <th>ADX</th>
@@ -440,7 +444,7 @@
           </tr>
         </thead>
         <tbody id="histBody">
-          <tr><td colspan="11" class="empty-msg">Carregando...</td></tr>
+          <tr><td colspan="13" class="empty-msg">Carregando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -575,14 +579,14 @@
           <label>Intervalo de re-treino (min)
             <input type="number" id="retrainInterval" value="10" min="1" step="1" />
           </label>
-          <label>Mín. de ticks para treino
-            <input type="number" id="minTicks" value="500" min="100" step="100" />
+          <label>Mín. de candles para treino
+            <input type="number" id="minTicks" value="1000" min="1000" step="100" />
           </label>
-          <label>Ticks históricos a coletar
-            <input type="number" id="historyCount" value="500" min="100" step="100" />
+          <label>Candles históricos a coletar
+            <input type="number" id="historyCount" value="1000" min="1000" step="100" />
           </label>
           <label class="checkbox-label">
-            <input type="checkbox" id="forceRetrain" /> Forçar re-treino imediato
+            <input type="checkbox" id="forceRetrain" checked /> Forçar treino inicial com candles novos
           </label>
           <label>Token de autenticação
             <input type="text" id="authToken" placeholder="Deixe vazio se não configurado" autocomplete="off" />

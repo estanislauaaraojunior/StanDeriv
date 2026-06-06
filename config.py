@@ -4,6 +4,7 @@
 # ============================================================
 
 import os
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()  # carrega variáveis de .env (ignorado se não existir)
@@ -14,29 +15,116 @@ load_dotenv()  # carrega variáveis de .env (ignorado se não existir)
 DEMO_MODE = True
 
 # ----- Conexão -----
-APP_ID = os.environ.get("DERIV_APP_ID", "1089")
-TOKEN  = os.environ["DERIV_TOKEN"]    # defina em .env — crie em: developers.deriv.com
+_RAW_APP_ID = os.environ.get("DERIV_APP_ID", "1089").strip()
+_RAW_TOKEN  = os.environ.get("DERIV_TOKEN", "").strip()
+if not _RAW_TOKEN:
+    raise EnvironmentError(
+        "DERIV_TOKEN não definido.\n"
+        "Crie um arquivo .env na raiz do projeto com:\n"
+        "  DERIV_TOKEN=<seu_token>\n"
+        "Gere seu token em: https://developers.deriv.com"
+    )
+DERIV_AUTH_MODE = os.environ.get("DERIV_AUTH_MODE", "auto").strip().lower()
+_TOKEN_PREFIXES = ("pat_", "ory_at_")
+# Protege contra inversão acidental no .env:
+#   DERIV_APP_ID=pat_...
+#   DERIV_TOKEN=<app_id>
+if _RAW_APP_ID.startswith(_TOKEN_PREFIXES) and not _RAW_TOKEN.startswith(_TOKEN_PREFIXES):
+    APP_ID = _RAW_TOKEN
+    TOKEN  = _RAW_APP_ID
+    print("[CONFIG] Aviso: DERIV_APP_ID e DERIV_TOKEN parecem invertidos no .env; usando troca automática.")
+else:
+    APP_ID = _RAW_APP_ID
+    TOKEN  = _RAW_TOKEN
 
 # ----- Instrumento -----
 SYMBOL        = "R_100"  # índice sintético 24/7 (sem impacto de notícias)
 
+# ----- Prioridade de mercado por horário comercial -----
+# True  → em horário comercial (seg-sex, 22h dom–22h sex UTC) prioriza mercados reais (forex)
+#          e só cai em índices sintéticos se nenhum par forex apresentar tendência válida.
+#          Fora desse horário, pula o scan forex e vai direto para sintéticos (mais rápido).
+# False → comportamento legado: sempre escaneia todos os grupos na mesma ordem,
+#          independente do horário.
+PREFER_REAL_MARKETS = True
+
 # Símbolo ativo (pode ser alterado pelo scan de tendência em runtime)
 _active_symbol: str = SYMBOL
+_symbol_lock: threading.RLock = threading.RLock()
 
 
 def get_active_symbol() -> str:
     """Retorna o símbolo ativo atual (pode diferir de SYMBOL se o scan o alterou)."""
-    return _active_symbol
+    with _symbol_lock:
+        return _active_symbol
 
 
 def set_active_symbol(symbol: str) -> None:
     """Atualiza o símbolo ativo em runtime (chamado pelo pipeline após scan)."""
     global _active_symbol
-    _active_symbol = symbol
-DURATION      = 5        # duração de fallback (usada quando o modelo ainda não existe)
-DURATION_UNIT = "m"      # "t" = ticks | "s" = segundos | "m" = minutos
-BASIS         = "stake"  # base do contrato
-CURRENCY      = "USD"
+    with _symbol_lock:
+        _active_symbol = symbol
+
+
+def is_market_open(what: str, utc_now=None) -> bool:
+        """
+        Verifica se o mercado associado a `what` está aberto no momento UTC.
+
+        `what` pode ser:
+            - um prefixo de símbolo como 'frx' para forex
+            - o nome do mercado 'forex'
+            - um símbolo completo (ex: 'frxEURUSD', 'R_100')
+
+        Regras atuais (simplificadas):
+            - Forex ('frx' / 'forex' / símbolos que iniciam com 'frx')
+                abre: Domingo 22:00 UTC → Sexta 22:00 UTC  (fecha Sáb e janelas fora desse intervalo)
+            - Índices sintéticos (símbolos que começam com 'R_', '1HZ', 'BOOM', 'CRASH', 'JD', 'stp')
+                considerados 24/7 (sempre abertos)
+            - Outros (ex: ações, commodities, cripto): considerados abertos de segunda a sexta
+
+        Essa função é propositalmente conservadora e pode ser expandida com
+        horários por-exchange/mercado se necessário.
+        """
+        from datetime import datetime as _dt
+
+        now = utc_now or _dt.utcnow()
+        wd = now.weekday()  # 0=Mon .. 6=Sun
+        hm = now.hour * 60 + now.minute
+
+        key = str(what or "").strip()
+        key_low = key.lower()
+
+        # Alias
+        if key_low == "forex":
+                key = "frx"
+
+        # Forex: dom 22:00 UTC até sex 22:00 UTC
+        if key.startswith("frx"):
+                # Sábado: sempre fechado
+                if wd == 5:
+                        return False
+                # Domingo: abre às 22:00 UTC
+                if wd == 6:
+                        return hm >= 22 * 60
+                # Sexta: fecha às 22:00 UTC
+                if wd == 4:
+                        return hm < 22 * 60
+                # Segunda a quinta: sempre aberto
+                return True
+
+        # Símbolos/mercados sintéticos — sempre disponíveis
+        synthetic_prefixes = ("r_", "1hz", "boom", "crash", "jd", "stp")
+        if any(key.lower().startswith(p) for p in synthetic_prefixes):
+                return True
+
+        # Outros mercados (criptos, ações, commodities): abrir apenas em dias úteis
+        # (Mon-Fri) — essa é uma simplificação; feriados/exchanges não considerados.
+        return wd < 5
+DURATION            = 15       # duração de fallback (usada quando o modelo ainda não existe)
+PRIORITIZE_DURATION = 15       # fixa prioridade para contratos de 15 minutos quando definido
+DURATION_UNIT       = "m"      # "t" = ticks | "s" = segundos | "m" = minutos
+BASIS               = "stake"  # base do contrato
+CURRENCY            = "USD"
 
 # ----- Duração dinâmica (escolhida pela IA) -----
 # Durações candidatas (em minutos) que o modelo de duração pode prever.
@@ -89,6 +177,7 @@ ADX_MIN         = 18   # abaixo → mercado lateral → sem entrada
 # False → usa ADX_MIN fixo acima
 ADX_ADAPTIVE            = True
 ADX_ADAPTIVE_PERCENTILE = 50   # percentil do histórico de ADX; piso = 15
+ADX_ADAPTIVE_MAX        = 22.0 # teto do filtro adaptativo; evita travar entradas em tendência moderada
 
 # ----- Gestão de risco -----
 STAKE_PCT         = 0.01   # 1% do saldo por operação

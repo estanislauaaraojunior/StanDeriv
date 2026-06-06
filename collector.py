@@ -22,9 +22,12 @@ import sys
 import websocket
 from datetime import datetime
 
-from config import APP_ID, TOKEN, SYMBOL, TICKS_CSV, TICK_SPIKE_THRESHOLD
+import deriv_session
+from config import APP_ID, TOKEN, SYMBOL, TICKS_CSV, TICK_SPIKE_THRESHOLD, DERIV_AUTH_MODE
 
 WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
+AUTH_MODE = "legacy"
+ACCOUNT_ID = ""
 
 _tick_count = 0
 _ws_instance = None
@@ -52,13 +55,54 @@ def _is_valid_tick(prev: float, new_price: float) -> bool:
     return abs((new_price - prev) / prev) < TICK_SPIKE_THRESHOLD
 
 
+def _uses_bearer_auth() -> bool:
+    return AUTH_MODE == "bearer" and bool(ACCOUNT_ID)
+
+
+def _get_ws_url() -> str:
+    if not _uses_bearer_auth():
+        return WS_URL
+    return deriv_session.get_options_ws_url(
+        ACCOUNT_ID,
+        app_id=APP_ID,
+        token=TOKEN,
+        attempts=3,
+    )
+
+
+def _setup_auth() -> bool:
+    """Prepara o WebSocket conforme o fluxo atual da Deriv."""
+    global AUTH_MODE, ACCOUNT_ID
+
+    if not deriv_session.is_bearer_token(TOKEN, DERIV_AUTH_MODE):
+        return True
+
+    print("[COLETOR] Token Bearer detectado. Preparando WebSocket via REST/OTP...")
+    try:
+        session = deriv_session.setup_bearer_options_session(
+            app_id=APP_ID,
+            token=TOKEN,
+            demo=True,
+        )
+    except deriv_session.DerivAPIError as exc:
+        code = f" ({exc.code})" if exc.code else ""
+        print(f"[COLETOR] Falha ao preparar sessão Deriv: {exc}{code}")
+        return False
+
+    AUTH_MODE = "bearer"
+    ACCOUNT_ID = str(session["account_id"])
+    print(f"[COLETOR] Sessão Options pronta | Conta: {ACCOUNT_ID}")
+    return True
+
+
 # ─────────────────────────────────────────────────────────────
 #  Handlers WebSocket
 # ─────────────────────────────────────────────────────────────
 
 def on_open(ws) -> None:
     print(f"[COLETOR] Conectado | Símbolo: {SYMBOL}")
-    ws.send(json.dumps({"authorize": TOKEN}))
+    if not _uses_bearer_auth():
+        ws.send(json.dumps({"authorize": TOKEN}))
     ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
 
 
@@ -138,6 +182,9 @@ def main() -> None:
     _ensure_header()
     signal.signal(signal.SIGINT, _handle_interrupt)
 
+    if not _setup_auth():
+        sys.exit(1)
+
     print("=" * 55)
     print("  Deriv Tick Collector")
     print(f"  Símbolo : {SYMBOL}")
@@ -145,15 +192,22 @@ def main() -> None:
     print("  Pressione Ctrl+C para encerrar")
     print("=" * 55)
 
-    ws = websocket.WebSocketApp(
-        WS_URL,
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-    )
-    _ws_instance = ws
-    ws.run_forever(reconnect=5)
+    # Para autenticação Bearer/OTP a URL expira em ~60s.
+    # reconnect=5 reutilizaria a URL expirada → 401. Usamos loop manual.
+    while True:
+        try:
+            ws = websocket.WebSocketApp(
+                _get_ws_url(),
+                on_open=on_open,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+            )
+            _ws_instance = ws
+            ws.run_forever()
+        except Exception as exc:
+            print(f"\n[COLETOR] Exceção inesperada: {exc}")
+        time.sleep(5)
 
 
 if __name__ == "__main__":

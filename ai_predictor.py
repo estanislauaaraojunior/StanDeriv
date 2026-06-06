@@ -31,6 +31,7 @@ from config import (
     BB_PERIOD, BB_STD,
     AI_MODEL_PATH, AI_CONFIDENCE_MIN,
     DURATION, DURATION_MODEL_PATH,
+    PRIORITIZE_DURATION,
     USE_TRANSFORMER, TRANSFORMER_MODEL_PATH,
     TRANSFORMER_BLEND_WEIGHT, TRANSFORMER_SEQ_LEN,
     CANDIDATE_DURATIONS,
@@ -356,14 +357,20 @@ def predict_duration(prices: list) -> int:
     # 1. TFT duration head (maior precisão temporal)
     dur_tft = _predict_duration_tft(prices)
     if dur_tft is not None:
+        if PRIORITIZE_DURATION in CANDIDATE_DURATIONS:
+            return PRIORITIZE_DURATION
         return dur_tft
 
     # 2. Modelo clássico de duração (RF)
     if _dur_model is None:
+        if PRIORITIZE_DURATION in CANDIDATE_DURATIONS:
+            return PRIORITIZE_DURATION
         return DURATION
 
     feat_vec = _extract_features(prices)
     if feat_vec is None:
+        if PRIORITIZE_DURATION in CANDIDATE_DURATIONS:
+            return PRIORITIZE_DURATION
         return DURATION
 
     # Reconstrói vetor na ordem do modelo de duração
@@ -372,6 +379,12 @@ def predict_duration(prices: list) -> int:
     X = [[feature_map.get(f, 0.0) for f in feat_order]]
 
     try:
-        return int(_dur_model.predict(X)[0])
+        predicted_duration = int(_dur_model.predict(X)[0])
     except Exception:
+        if PRIORITIZE_DURATION in CANDIDATE_DURATIONS:
+            return PRIORITIZE_DURATION
         return DURATION
+
+    if PRIORITIZE_DURATION in CANDIDATE_DURATIONS:
+        return PRIORITIZE_DURATION
+    return predicted_duration

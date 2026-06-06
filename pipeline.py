@@ -29,17 +29,37 @@ import json
 import os
 import signal
 import sys
+import logging
 import threading
 import time
 from datetime import datetime
 from typing import Optional
 
+
+def _reexec_with_project_venv() -> None:
+    """Relança o pipeline com a .venv local quando chamado via Python global."""
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(project_dir, ".venv", "bin", "python")
+
+    if not os.path.exists(venv_python):
+        return
+
+    if os.path.abspath(sys.executable) == os.path.abspath(venv_python):
+        return
+
+    os.execv(venv_python, [venv_python, *sys.argv])
+
+
+_reexec_with_project_venv()
+
 import websocket
 
 import dataset_builder
+import deriv_session
 import train_model
 from config import (
     APP_ID, TOKEN, SYMBOL,
+    DERIV_AUTH_MODE,
     TICKS_CSV, DATASET_CSV, AI_MODEL_PATH,
     TRANSFORMER_MODEL_PATH, DURATION_MODEL_PATH,
     TARGET_LOOKFORWARD,
@@ -61,12 +81,18 @@ from risk_manager import RiskManager
 #  Defaults do pipeline
 # ─────────────────────────────────────────────────────────────────
 
-_DEFAULT_HISTORY_COUNT = 500  # candles históricos baixados da API ao iniciar
-_DEFAULT_MIN_TICKS     = 100  # mín. no CSV (candles) antes do 1º treino
+_DEFAULT_HISTORY_COUNT = 1000  # candles históricos baixados da API ao iniciar
+_DEFAULT_MIN_TICKS     = 1000  # mín. no CSV (candles) antes do 1º treino
 _WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
+_AUTH_MODE = "legacy"
+_PAT_ACCOUNT_ID: Optional[str] = None
+_PAT_ACCOUNT: dict = {}
+_PAT_WS_URL: Optional[str] = None
+_ACCOUNT_BALANCE: Optional[float] = None
 
-# Nomes descritivos dos índices sintéticos da Deriv
+# Nomes descritivos dos instrumentos da Deriv
 _SYMBOL_NAMES: dict = {
+    # ── Índices sintéticos ──────────────────────────────────────
     "R_10":      "Volatility 10 Index",
     "R_25":      "Volatility 25 Index",
     "R_50":      "Volatility 50 Index",
@@ -89,6 +115,36 @@ _SYMBOL_NAMES: dict = {
     "JD50":      "Jump 50 Index",
     "JD75":      "Jump 75 Index",
     "JD100":     "Jump 100 Index",
+    # ── Pares de moedas (Forex) ──────────────────────────────────
+    # Majors
+    "frxEURUSD": "Euro / US Dollar",
+    "frxGBPUSD": "British Pound / US Dollar",
+    "frxUSDJPY": "US Dollar / Japanese Yen",
+    "frxAUDUSD": "Australian Dollar / US Dollar",
+    "frxUSDCAD": "US Dollar / Canadian Dollar",
+    "frxUSDCHF": "US Dollar / Swiss Franc",
+    "frxNZDUSD": "New Zealand Dollar / US Dollar",
+    # Crosses
+    "frxEURGBP": "Euro / British Pound",
+    "frxEURJPY": "Euro / Japanese Yen",
+    "frxEURCHF": "Euro / Swiss Franc",
+    "frxEURCAD": "Euro / Canadian Dollar",
+    "frxEURNZD": "Euro / New Zealand Dollar",
+    "frxEURAUD": "Euro / Australian Dollar",
+    "frxGBPJPY": "British Pound / Japanese Yen",
+    "frxGBPCHF": "British Pound / Swiss Franc",
+    "frxGBPCAD": "British Pound / Canadian Dollar",
+    "frxGBPAUD": "British Pound / Australian Dollar",
+    "frxGBPNZD": "British Pound / New Zealand Dollar",
+    "frxAUDJPY": "Australian Dollar / Japanese Yen",
+    "frxAUDCAD": "Australian Dollar / Canadian Dollar",
+    "frxAUDNZD": "Australian Dollar / New Zealand Dollar",
+    "frxAUDCHF": "Australian Dollar / Swiss Franc",
+    "frxCADJPY": "Canadian Dollar / Japanese Yen",
+    "frxCADCHF": "Canadian Dollar / Swiss Franc",
+    "frxCHFJPY": "Swiss Franc / Japanese Yen",
+    "frxNZDJPY": "New Zealand Dollar / Japanese Yen",
+    "frxNZDCAD": "New Zealand Dollar / Canadian Dollar",
 }
 
 
@@ -106,12 +162,55 @@ _shutdown = threading.Event()
 #  Utilitários
 # ─────────────────────────────────────────────────────────────────
 
-def _count_ticks() -> int:
-    """Conta linhas de dados em ticks.csv (desconta o cabeçalho)."""
+def _active_symbol() -> str:
+    """Retorna o símbolo ativo atual, preservando fallback para SYMBOL."""
+    try:
+        import config as _cfg
+        return _cfg.get_active_symbol() or SYMBOL
+    except Exception:
+        return SYMBOL
+
+
+def _count_ticks(symbol: str | None = None) -> int:
+    """Conta linhas de dados em ticks.csv, opcionalmente filtrando por símbolo."""
     if not os.path.exists(TICKS_CSV) or os.path.getsize(TICKS_CSV) == 0:
         return 0
+    if symbol:
+        try:
+            with open(TICKS_CSV, "r") as f:
+                return sum(1 for row in csv.DictReader(f) if row.get("symbol") == symbol)
+        except Exception:
+            return 0
     with open(TICKS_CSV, "r") as f:
         return max(0, sum(1 for _ in f) - 1)
+
+
+def _estimate_training_points(df) -> int:
+    """
+    Estima quantos pontos de preço o dataset_builder terá após agregar candles.
+    Isso evita disparar treino quando há muitos ticks brutos, mas poucas velas.
+    """
+    try:
+        if df.empty or "price" not in df.columns:
+            return 0
+        prices = df["price"].astype(float).tolist()
+        if "epoch" not in df.columns or len(df) < 2:
+            return len(prices)
+        epochs = df["epoch"].astype(int).tolist()
+        pairs = sorted(zip(epochs, prices), key=lambda x: x[0])
+        epochs = [e for e, _ in pairs]
+        prices = [p for _, p in pairs]
+        avg_gap = (epochs[-1] - epochs[0]) / max(len(epochs) - 1, 1)
+        if avg_gap >= CANDLE_TIMEFRAME_SEC * 0.8:
+            return len(prices)
+        import indicators as _ind
+        candles = _ind.ticks_to_candles_by_time(
+            [{"epoch": e, "price": p} for e, p in zip(epochs, prices)],
+            CANDLE_TIMEFRAME_SEC,
+        )
+        return len(candles)
+    except Exception:
+        return 0
 
 
 def _ensure_ticks_header() -> None:
@@ -121,16 +220,48 @@ def _ensure_ticks_header() -> None:
             csv.writer(f).writerow(["epoch", "datetime", "symbol", "price"])
 
 
+def _uses_bearer_auth() -> bool:
+    return _AUTH_MODE == "bearer" and bool(_PAT_ACCOUNT_ID)
+
+
+def _get_ws_url() -> str:
+    global _PAT_WS_URL
+    if not _uses_bearer_auth():
+        return _WS_URL
+    if _PAT_WS_URL:
+        ws_url = _PAT_WS_URL
+        _PAT_WS_URL = None
+        return ws_url
+    return deriv_session.get_options_ws_url(
+        str(_PAT_ACCOUNT_ID),
+        app_id=APP_ID,
+        token=TOKEN,
+        attempts=3,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────
 #  PRÉ-FASE — Scan de tendência: elege o melhor índice antes de coletar
 # ─────────────────────────────────────────────────────────────────
 
-# Grupo 1: índices de volatilidade (mais líquidos, avaliados primeiro)
+# Grupo 0: pares de moedas forex (avaliados primeiro; score 0.0 quando mercado fechado)
+_SCAN_SYMBOLS_FOREX = [
+    # Majors
+    "frxEURUSD", "frxGBPUSD", "frxUSDJPY", "frxAUDUSD",
+    "frxUSDCAD", "frxUSDCHF", "frxNZDUSD",
+    # Crosses
+    "frxEURGBP", "frxEURJPY", "frxEURCHF", "frxEURCAD",
+    "frxEURNZD", "frxEURAUD",
+    "frxGBPJPY", "frxGBPCHF", "frxGBPCAD", "frxGBPAUD", "frxGBPNZD",
+    "frxAUDJPY", "frxAUDCAD", "frxAUDNZD", "frxAUDCHF",
+    "frxCADJPY", "frxCADCHF", "frxCHFJPY", "frxNZDJPY", "frxNZDCAD",
+]
+# Grupo 1: índices de volatilidade (fallback quando forex estiver fechado/lateral)
 _SCAN_SYMBOLS_PRIMARY = [
     "R_10", "R_25", "R_50", "R_75", "R_100",
     "1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V",
 ]
-# Grupo 2: índices de boom/crash/jump (consultados só se primários estiverem laterais)
+# Grupo 2: índices de boom/crash/jump (último recurso)
 _SCAN_SYMBOLS_SECONDARY = [
     "BOOM500", "BOOM1000", "CRASH500", "CRASH1000",
     "BOOM300N", "CRASH300N",
@@ -150,8 +281,20 @@ def _fetch_prices_for_symbol(symbol: str, count: int) -> list:
     received: list = []
     done = threading.Event()
 
+    def _send_history_request(ws):
+        ws.send(json.dumps({
+            "ticks_history":     symbol,
+            "end":               "latest",
+            "count":             count,
+            "style":             "ticks",
+            "adjust_start_time": 1,
+        }))
+
     def _on_open(ws):
-        ws.send(json.dumps({"authorize": TOKEN}))
+        if _uses_bearer_auth():
+            _send_history_request(ws)
+        else:
+            ws.send(json.dumps({"authorize": TOKEN}))
 
     def _on_message(ws, message):
         data = json.loads(message)
@@ -159,13 +302,7 @@ def _fetch_prices_for_symbol(symbol: str, count: int) -> list:
             ws.close()
             return
         if data.get("msg_type") == "authorize":
-            ws.send(json.dumps({
-                "ticks_history":     symbol,
-                "end":               "latest",
-                "count":             count,
-                "style":             "ticks",
-                "adjust_start_time": 1,
-            }))
+            _send_history_request(ws)
             return
         if data.get("msg_type") == "history":
             received.extend(float(p) for p in data.get("history", {}).get("prices", []))
@@ -178,7 +315,7 @@ def _fetch_prices_for_symbol(symbol: str, count: int) -> list:
         done.set()
 
     ws = websocket.WebSocketApp(
-        _WS_URL,
+        _get_ws_url(),
         on_open=_on_open, on_message=_on_message,
         on_error=_on_error, on_close=_on_close,
     )
@@ -252,20 +389,154 @@ def _best_from(results: dict) -> tuple:
     return best, results[best]
 
 
+def _validate_symbol_tick_stream(symbol: str) -> bool:
+    """
+    Verifica se o símbolo aceita subscrição de ticks ao vivo no endpoint Options.
+
+    Alguns símbolos (ex: frxCADCHF) respondem a ticks_history mas retornam
+    'Invalid symbol' ao tentar subscrever ao fluxo ao vivo — seriam inúteis
+    para o coletor e o bot.  Retorna True se válido, False caso contrário.
+    """
+    valid = [True]
+    done  = threading.Event()
+
+    def _on_open(ws):
+        if not _uses_bearer_auth():
+            ws.send(json.dumps({"authorize": TOKEN}))
+        else:
+            ws.send(json.dumps({"ticks": symbol, "subscribe": 1}))
+
+    def _on_message(ws, message):
+        data = json.loads(message)
+        msg_type = data.get("msg_type", "")
+        if msg_type == "authorize":
+            ws.send(json.dumps({"ticks": symbol, "subscribe": 1}))
+            return
+        if "error" in data:
+            valid[0] = False
+        ws.close()
+
+    def _on_error(ws, _err):
+        ws.close()
+
+    def _on_close(ws, *_):
+        done.set()
+
+    try:
+        ws = websocket.WebSocketApp(
+            _get_ws_url(),
+            on_open=_on_open,
+            on_message=_on_message,
+            on_error=_on_error,
+            on_close=_on_close,
+        )
+        threading.Thread(target=ws.run_forever, daemon=True).start()
+        done.wait(timeout=10)
+    except Exception:
+        return False
+    return valid[0]
+
+
+def _is_forex_market_open(utc_now=None) -> bool:
+    """
+    Retorna True se o mercado forex estiver aberto no momento.
+
+    O mercado forex opera de domingo 22:00 UTC até sexta 22:00 UTC.
+    Portanto está FECHADO:
+      - Sábado (o dia inteiro)
+      - Domingo antes das 22:00 UTC
+      - Sexta após as 22:00 UTC
+
+    Args:
+        utc_now: datetime UTC (sem timezone); se None, usa datetime.utcnow().
+    """
+    from datetime import datetime as _dt
+    now = utc_now or _dt.utcnow()
+    weekday = now.weekday()  # segunda=0 … sexta=4, sábado=5, domingo=6
+    hour_min = now.hour * 60 + now.minute
+
+    # Sábado: sempre fechado
+    if weekday == 5:
+        return False
+    # Domingo: abre às 22:00 UTC
+    if weekday == 6:
+        return hour_min >= 22 * 60
+    # Sexta: fecha às 22:00 UTC
+    if weekday == 4:
+        return hour_min < 22 * 60
+    # Segunda a quinta: sempre aberto
+    return True
+
+
 def _detect_trending_symbol(no_scan: bool = False) -> str:
     """
-    Etapas:
-      1. Escaneia os símbolos primários em paralelo.
-      2. Se o melhor tiver score >= _ADX_TREND_MIN → retorna ele.
-      3. Se todos estiverem laterais → escaneia o grupo secundário.
-      4. Se nenhum grupo tiver tendência → retorna SYMBOL de config.py.
+    Elege o melhor instrumento para operar com base no horário de mercado:
+
+    Se PREFER_REAL_MARKETS=True (padrão):
+      • Mercado ABERTO (seg-sex, dom 22h–sex 22h UTC):
+          1. Scan forex → se melhor score >= _ADX_TREND_MIN → usa forex (valida tick stream).
+          2. Se nenhum forex com tendência → fallback para índices sintéticos.
+      • Mercado FECHADO (sábado, ou domingo antes das 22h, ou sexta após 22h):
+          → Pula scan forex imediatamente; vai direto para índices sintéticos.
+
+    Se PREFER_REAL_MARKETS=False:
+      → Comportamento legado: sempre escaneia forex primeiro, independente do horário.
+
+    Em ambos os casos:
+      3. Scan primários (volatilidade) → se melhor score >= _ADX_TREND_MIN → retorna.
+      4. Scan secundários (boom/crash/jump) → idem.
+      5. Nenhum instrumento com tendência → retorna SYMBOL de config.py.
     """
     import config as _cfg
 
     if no_scan:
         return _cfg.SYMBOL
 
-    print("\n[TENDÊNCIA] ── Scan primário ──────────────────────────────")
+    prefer_real = getattr(_cfg, "PREFER_REAL_MARKETS", True)
+    # Usa verificação centralizada em config.py (mais extensível)
+    try:
+        market_open = _cfg.is_market_open("forex")
+    except Exception:
+        market_open = _is_forex_market_open()
+
+    # ── Etapa 1: Scan forex (apenas se mercado aberto ou PREFER_REAL_MARKETS desativado) ──
+    run_forex_scan = (not prefer_real) or market_open
+
+    if run_forex_scan:
+        if prefer_real and market_open:
+            print("\n[TENDÊNCIA] ── Scan forex — mercado aberto 🟢 ───────────────────")
+        else:
+            print("\n[TENDÊNCIA] ── Scan forex (pares de moedas) ────────────────")
+        print(f"[TENDÊNCIA] Candidatos: {', '.join(_SCAN_SYMBOLS_FOREX)}")
+        forex = _scan_group(_SCAN_SYMBOLS_FOREX)
+        best_fx, score_fx = _best_from(forex)
+
+        if score_fx >= _ADX_TREND_MIN:
+            print(f"\n[TENDÊNCIA] ✔ Melhor par forex: {_symbol_display(best_fx)} (score={score_fx:.2f})")
+            print(f"[TENDÊNCIA] Validando subscrição de ticks ao vivo para {best_fx}...")
+            if _validate_symbol_tick_stream(best_fx):
+                return best_fx
+            print(
+                f"[TENDÊNCIA] ⚠ {best_fx} não suporta ticks ao vivo no endpoint Options "
+                f"— descartando e tentando índices sintéticos."
+            )
+        else:
+            reason = "lateral" if market_open else "fechado ou lateral"
+            print(
+                f"\n[TENDÊNCIA] ⚠ Nenhum par forex com tendência clara "
+                f"(melhor score={score_fx:.2f} < {_ADX_TREND_MIN}) "
+                f"— mercado {reason}. Tentando índices sintéticos..."
+            )
+    else:
+        # Mercado fechado e PREFER_REAL_MARKETS ativo → pula scan forex
+        print(
+            "\n[TENDÊNCIA] ── Mercado forex FECHADO 🔴 ─────────────────────────"
+            "\n[TENDÊNCIA] Fora do horário comercial (dom 22h–sex 22h UTC)."
+            "\n[TENDÊNCIA] Pulando scan forex — usando índices sintéticos diretamente."
+        )
+
+    # ── Etapa 2: Scan primários (volatilidade) ───────────────────────────────
+    print("\n[TENDÊNCIA] ── Scan primário (volatilidade) ────────────────")
     print(f"[TENDÊNCIA] Candidatos: {', '.join(_SCAN_SYMBOLS_PRIMARY)}")
     primary = _scan_group(_SCAN_SYMBOLS_PRIMARY)
     best, score = _best_from(primary)
@@ -274,12 +545,12 @@ def _detect_trending_symbol(no_scan: bool = False) -> str:
         print(f"\n[TENDÊNCIA] ✔ Melhor índice: {_symbol_display(best)} (score={score:.2f})")
         return best
 
-    # Mercado primário lateral → tenta grupo secundário
+    # ── Etapa 3: Scan secundários (boom/crash/jump) ──────────────────────────
     print(
         f"\n[TENDÊNCIA] ⚠ Todos os índices primários estão laterais "
         f"(melhor score={score:.2f} < {_ADX_TREND_MIN})."
     )
-    print("[TENDÊNCIA] ── Scan secundário ─────────────────────────────")
+    print("[TENDÊNCIA] ── Scan secundário (boom/crash/jump) ───────────")
     print(f"[TENDÊNCIA] Candidatos: {', '.join(_SCAN_SYMBOLS_SECONDARY)}")
     secondary = _scan_group(_SCAN_SYMBOLS_SECONDARY)
     best2, score2 = _best_from(secondary)
@@ -288,9 +559,9 @@ def _detect_trending_symbol(no_scan: bool = False) -> str:
         print(f"\n[TENDÊNCIA] ✔ Melhor índice (secundário): {_symbol_display(best2)} (score={score2:.2f})")
         return best2
 
-    # Nenhum grupo com tendência → mantém padrão
+    # ── Etapa 4: Nenhum grupo com tendência → mantém padrão ─────────────────
     print(
-        f"\n[TENDÊNCIA] ⚠ Nenhum índice com tendência clara "
+        f"\n[TENDÊNCIA] ⚠ Nenhum instrumento com tendência clara "
         f"(melhor score secundário={score2:.2f}). "
         f"Usando padrão: {_cfg.SYMBOL}."
     )
@@ -333,8 +604,21 @@ def _fetch_historical_ticks(count: int) -> int:
     done      = threading.Event()
     error_msg: list = []
 
+    def _send_history_request(ws):
+        ws.send(json.dumps({
+            "ticks_history":     SYMBOL,
+            "end":               "latest",
+            "count":             count,
+            "granularity":       CANDLE_TIMEFRAME_SEC,
+            "style":             "candles",
+            "adjust_start_time": 1,
+        }))
+
     def _on_open(ws):
-        ws.send(json.dumps({"authorize": TOKEN}))
+        if _uses_bearer_auth():
+            _send_history_request(ws)
+        else:
+            ws.send(json.dumps({"authorize": TOKEN}))
 
     def _on_message(ws, message):
         data = json.loads(message)
@@ -345,14 +629,7 @@ def _fetch_historical_ticks(count: int) -> int:
             return
 
         if data.get("msg_type") == "authorize":
-            ws.send(json.dumps({
-                "ticks_history": SYMBOL,
-                "end":           "latest",
-                "count":         count,
-                "style":         "candles",
-                "granularity":   CANDLE_TIMEFRAME_SEC,
-                "adjust_start_time": 1,
-            }))
+            _send_history_request(ws)
             return
 
         if data.get("msg_type") == "candles":
@@ -370,7 +647,7 @@ def _fetch_historical_ticks(count: int) -> int:
         done.set()
 
     ws = websocket.WebSocketApp(
-        _WS_URL,
+        _get_ws_url(),
         on_open=_on_open,
         on_message=_on_message,
         on_error=_on_error,
@@ -422,6 +699,256 @@ def _banner(history_count: int, min_ticks: int, demo: bool) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────
+#  Pré-checagem — autenticação Deriv
+# ─────────────────────────────────────────────────────────────────
+
+def _validate_deriv_token(demo: bool, timeout_sec: int = 15) -> bool:
+    """
+    Valida o DERIV_TOKEN antes de iniciar scan, coletor, treino ou bot.
+
+    Sem essa checagem, a API pode devolver "The token is invalid" ou
+    "Account is disabled" e o pipeline continua com reconexões infinitas.
+    """
+    if not str(TOKEN).strip():
+        print("\n[AUTH] DERIV_TOKEN vazio. Atualize o arquivo .env e tente novamente.")
+        return False
+
+    if deriv_session.is_bearer_token(TOKEN, DERIV_AUTH_MODE):
+        return _validate_deriv_bearer_token(demo=demo, timeout_sec=timeout_sec)
+
+    done = threading.Event()
+    result = {
+        "ok": False,
+        "message": "",
+        "code": "",
+        "loginid": "",
+        "currency": "",
+    }
+
+    def _on_open(ws):
+        ws.send(json.dumps({"authorize": TOKEN}))
+
+    def _on_message(ws, message):
+        data = json.loads(message)
+
+        if "error" in data:
+            error = data.get("error", {})
+            result["message"] = error.get("message", "Erro de autenticação desconhecido.")
+            result["code"] = error.get("code", "")
+            ws.close()
+            return
+
+        if data.get("msg_type") == "authorize":
+            auth = data.get("authorize", {})
+            result["ok"] = True
+            result["loginid"] = str(auth.get("loginid", ""))
+            result["currency"] = str(auth.get("currency", ""))
+            ws.close()
+
+    def _on_error(ws, err):
+        result["message"] = str(err)
+        ws.close()
+
+    def _on_close(ws, *_):
+        done.set()
+
+    print("\n[AUTH] Validando token Deriv...")
+    ws = websocket.WebSocketApp(
+        _WS_URL,
+        on_open=_on_open,
+        on_message=_on_message,
+        on_error=_on_error,
+        on_close=_on_close,
+    )
+    thread = threading.Thread(target=ws.run_forever, daemon=True)
+    thread.start()
+    done.wait(timeout=timeout_sec)
+
+    if not done.is_set():
+        try:
+            ws.close()
+        except Exception:
+            pass
+        print(f"[AUTH] Timeout após {timeout_sec}s ao validar o token.")
+        return False
+
+    if result["ok"]:
+        account = result["loginid"] or "desconhecida"
+        currency = result["currency"] or "sem moeda"
+        print(f"[AUTH] Token validado | Conta: {account} | Moeda: {currency}")
+        return True
+
+    message = result["message"] or "A Deriv recusou a autenticação."
+    code = f" ({result['code']})" if result["code"] else ""
+    print(f"[AUTH] Falha na autenticação: {message}{code}")
+    print("[AUTH] Corrija DERIV_TOKEN em /home/stanis/Repositorios/StanDeriv/.env.")
+    print("[AUTH] Gere um token novo em developers.deriv.com com permissão de trade.")
+    if "disabled" in message.lower():
+        print("[AUTH] A conta vinculada ao token está desativada; use outra conta/token ativo.")
+    return False
+
+
+def _refresh_account_balance(demo: bool, timeout_sec: int = 15) -> Optional[float]:
+    """
+    Atualiza o saldo real da conta antes de coletar histórico/treinar.
+
+    O valor retornado vira a base do RiskManager e evita que stake, PnL e
+    equity comecem a sessão usando o saldo digitado no dashboard.
+    """
+    global _PAT_ACCOUNT, _ACCOUNT_BALANCE
+
+    if deriv_session.is_bearer_token(TOKEN, DERIV_AUTH_MODE):
+        try:
+            session = deriv_session.setup_bearer_options_session(
+                app_id=APP_ID,
+                token=TOKEN,
+                demo=demo,
+                timeout_sec=timeout_sec,
+            )
+            _PAT_ACCOUNT = session.get("account", _PAT_ACCOUNT)
+            balance = float(_PAT_ACCOUNT.get("balance"))
+            _ACCOUNT_BALANCE = balance
+            currency = _PAT_ACCOUNT.get("currency", "USD")
+            print(f"[SALDO] Saldo atualizado antes da coleta: {balance:.2f} {currency}")
+            return balance
+        except Exception as exc:
+            print(f"[SALDO] Aviso: não foi possível atualizar saldo antes da coleta ({exc}).")
+            return _ACCOUNT_BALANCE
+
+    done = threading.Event()
+    result = {"balance": None, "currency": "USD", "message": ""}
+
+    def _on_open(ws):
+        ws.send(json.dumps({"authorize": TOKEN}))
+
+    def _on_message(ws, message):
+        data = json.loads(message)
+        if "error" in data:
+            result["message"] = data.get("error", {}).get("message", "")
+            ws.close()
+            return
+        if data.get("msg_type") == "authorize":
+            auth = data.get("authorize", {})
+            result["balance"] = auth.get("balance")
+            result["currency"] = auth.get("currency", "USD")
+            ws.close()
+
+    def _on_error(ws, err):
+        result["message"] = str(err)
+        ws.close()
+
+    def _on_close(ws, *_):
+        done.set()
+
+    ws = websocket.WebSocketApp(
+        _WS_URL,
+        on_open=_on_open,
+        on_message=_on_message,
+        on_error=_on_error,
+        on_close=_on_close,
+    )
+    thread = threading.Thread(target=ws.run_forever, daemon=True)
+    thread.start()
+    done.wait(timeout=timeout_sec)
+
+    try:
+        balance = float(result["balance"])
+    except (TypeError, ValueError):
+        msg = f": {result['message']}" if result["message"] else ""
+        print(f"[SALDO] Aviso: não foi possível atualizar saldo antes da coleta{msg}.")
+        return _ACCOUNT_BALANCE
+
+    _ACCOUNT_BALANCE = balance
+    print(f"[SALDO] Saldo atualizado antes da coleta: {balance:.2f} {result['currency']}")
+    return balance
+
+
+def _write_refreshed_balance_state(balance: float) -> None:
+    """Reflete o saldo real recém-lido nos arquivos consumidos pelo dashboard."""
+    try:
+        state_path = os.path.join(os.path.dirname(TICKS_CSV), "risk_state.json")
+        state = {}
+        if os.path.exists(state_path) and os.path.getsize(state_path) > 0:
+            with open(state_path) as f:
+                state = json.load(f)
+        state["balance"] = round(float(balance), 2)
+        state.setdefault("daily_pnl", 0.0)
+        state.setdefault("daily_pnl_pct", 0.0)
+        with open(state_path, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass
+
+
+def _validate_deriv_bearer_token(demo: bool, timeout_sec: int = 15) -> bool:
+    """
+    Valida tokens Bearer (PAT/OAuth) do fluxo novo da Deriv.
+
+    Tokens Bearer usam REST com Authorization: Bearer para selecionar/criar a
+    conta Options e obter uma URL WebSocket autenticada por OTP.
+    """
+    global _AUTH_MODE, _PAT_ACCOUNT_ID, _PAT_ACCOUNT, _PAT_WS_URL, _ACCOUNT_BALANCE
+
+    token_kind = "PAT" if deriv_session.is_pat_token(TOKEN) else "Bearer/OAuth"
+    print(f"[AUTH] Token {token_kind} detectado (fluxo novo da Deriv).")
+
+    try:
+        session = deriv_session.setup_bearer_options_session(
+            app_id=APP_ID,
+            token=TOKEN,
+            demo=demo,
+            timeout_sec=timeout_sec,
+        )
+    except deriv_session.DerivAPIError as exc:
+        code = f" ({exc.code})" if exc.code else ""
+        print(f"[AUTH] Falha no token Bearer via REST: {exc}{code}")
+        if exc.status == 401:
+            print("[AUTH] O token está inválido, expirado, revogado ou não pertence a este App ID.")
+        elif "1015" in str(exc) or exc.status == 429:
+            print("[AUTH] Cloudflare bloqueou a requisição (rate limit / WAF).")
+            print("[AUTH] Isso pode ocorrer se o App ID não pertence ao app registrado em")
+            print("[AUTH] developers.deriv.com ou se o tipo do app (PAT vs OAuth) não bate com o token.")
+        _print_bearer_migration_hint()
+        return False
+    except Exception as exc:
+        print(f"[AUTH] Erro inesperado ao validar token Bearer: {exc}")
+        return False
+
+    _AUTH_MODE = "bearer"
+    _PAT_ACCOUNT_ID = session["account_id"]
+    _PAT_ACCOUNT = session["account"]
+    _PAT_WS_URL = session.get("ws_url")
+    balance = _PAT_ACCOUNT.get("balance", "?")
+    try:
+        _ACCOUNT_BALANCE = float(balance)
+    except (TypeError, ValueError):
+        pass
+    currency = _PAT_ACCOUNT.get("currency", "USD")
+    account_type = _PAT_ACCOUNT.get("account_type", "demo")
+    print(
+        f"[AUTH] Token Bearer validado | Conta Options: {_PAT_ACCOUNT_ID} "
+        f"({account_type}) | Saldo: {balance} {currency}"
+    )
+    return True
+
+
+def _print_bearer_migration_hint() -> None:
+    print("[AUTH] ──────────────────────────────────────────────────────────")
+    print("[AUTH] COMO CORRIGIR:")
+    print("[AUTH]  1. Acesse https://developers.deriv.com e faça login")
+    print("[AUTH]  2. No Dashboard, crie um novo app do tipo PAT")
+    print("[AUTH]     (NÃO use apps do tipo OAuth para tokens PAT)")
+    print("[AUTH]  3. Copie o App ID gerado (ex: abc123xyz) → DERIV_APP_ID no .env")
+    print("[AUTH]  4. Vá em 'API Tokens' e gere um PAT com escopos: trade + account_manage")
+    print("[AUTH]  5. Cole o token (pat_...) → DERIV_TOKEN no .env")
+    print("[AUTH]  6. Mantenha DERIV_AUTH_MODE=auto")
+    print("[AUTH] ──────────────────────────────────────────────────────────")
+    if str(APP_ID) == "1089":
+        print("[AUTH] ATENÇÃO: App IDs legados (1089) não funcionam com o fluxo PAT/REST.")
+        print("[AUTH] Registre um novo app em developers.deriv.com.")
+
+
+# ─────────────────────────────────────────────────────────────────
 #  FASE 1 — Coletor em thread daemon
 # ─────────────────────────────────────────────────────────────────
 
@@ -460,18 +987,21 @@ class _CollectorThread(threading.Thread):
         while not _shutdown.is_set():
             try:
                 ws = websocket.WebSocketApp(
-                    _WS_URL,
+                    _get_ws_url(),
                     on_open=self._on_open,
                     on_message=self._on_message,
                     on_error=self._on_error,
                     on_close=self._on_close,
                 )
                 self._ws = ws
-                ws.run_forever(reconnect=5)
+                # reconnect=5 reutiliza a URL OTP expirada → 401.
+                # O while externo gera nova URL a cada iteração.
+                ws.run_forever()
             except Exception as exc:
                 if not _shutdown.is_set():
                     print(f"\n[COLETOR] Exceção inesperada: {exc} — reconectando em 5s")
-                    time.sleep(5)
+            if not _shutdown.is_set():
+                time.sleep(5)
 
     def stop(self) -> None:
         if self._ws:
@@ -479,7 +1009,8 @@ class _CollectorThread(threading.Thread):
 
     def _on_open(self, ws) -> None:
         print(f"\n[COLETOR] Conectado | {_symbol_display(SYMBOL)}")
-        ws.send(json.dumps({"authorize": TOKEN}))
+        if not _uses_bearer_auth():
+            ws.send(json.dumps({"authorize": TOKEN}))
         ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
 
     def _on_message(self, ws, message: str) -> None:
@@ -653,6 +1184,16 @@ def _run_training(
     print("\n[PIPELINE] ── Fase 3: Construindo dataset ──")
     tmp_ticks = f"{TICKS_CSV}.train_snapshot"
     try:
+        active_sym = _active_symbol()
+        min_training_points = 50 + max(1, TARGET_LOOKFORWARD)
+
+        if active_sym and _count_ticks(active_sym) < min_training_points:
+            print(
+                f"[PIPELINE] Apenas {_count_ticks(active_sym):,} ticks de '{active_sym}' "
+                f"no CSV — buscando histórico antes do treino."
+            )
+            _fetch_historical_ticks(_DEFAULT_HISTORY_COUNT)
+
         # Snapshot do CSV — o original não é alterado enquanto o coletor grava
         shutil.copy2(TICKS_CSV, tmp_ticks)
 
@@ -662,17 +1203,37 @@ def _run_training(
         # ticks relevantes, sem ser engolido pelos dados do símbolo antigo.
         try:
             import pandas as _pd
-            import config as _cfg
-            _active_sym = _cfg.get_active_symbol()
             _snap_df = _pd.read_csv(tmp_ticks)
-            if "symbol" in _snap_df.columns and _active_sym:
+            if "symbol" in _snap_df.columns and active_sym:
                 _before = len(_snap_df)
-                _snap_df = _snap_df[_snap_df["symbol"] == _active_sym]
+                _snap_df = _snap_df[_snap_df["symbol"] == active_sym]
                 if len(_snap_df) < _before:
                     print(
-                        f"[PIPELINE] Snapshot filtrado para '{_active_sym}': "
+                        f"[PIPELINE] Snapshot filtrado para '{active_sym}': "
                         f"{len(_snap_df):,} ticks ({_before - len(_snap_df):,} de outros símbolos removidos)"
                     )
+                _points = _estimate_training_points(_snap_df)
+                if _points < min_training_points:
+                    print(
+                        f"[PIPELINE] Apenas {_points:,} pontos treináveis para '{active_sym}' "
+                        f"— buscando histórico antes do treino."
+                    )
+                    _fetch_historical_ticks(_DEFAULT_HISTORY_COUNT)
+                    shutil.copy2(TICKS_CSV, tmp_ticks)
+                    _snap_df = _pd.read_csv(tmp_ticks)
+                    _before = len(_snap_df)
+                    _snap_df = _snap_df[_snap_df["symbol"] == active_sym]
+                    print(
+                        f"[PIPELINE] Snapshot refeito para '{active_sym}': "
+                        f"{len(_snap_df):,} ticks ({_before - len(_snap_df):,} de outros símbolos removidos)"
+                    )
+                    _points = _estimate_training_points(_snap_df)
+                if _points < min_training_points:
+                    print(
+                        f"[PIPELINE] Dados insuficientes para treinar '{active_sym}': "
+                        f"{_points:,} pontos < {min_training_points:,}. Re-treino adiado."
+                    )
+                    return False, None
                 _snap_df.to_csv(tmp_ticks, index=False)
         except Exception:
             pass  # falha silenciosa — dataset_builder fará sua própria filtragem
@@ -759,6 +1320,7 @@ def _should_retrain_now() -> tuple[bool, str]:
     Retorna (deve_retreinar, motivo).
     """
     elapsed = time.time() - _retrain_state["last_epoch"]
+    active_sym = _active_symbol()
 
     # Nunca retreina antes do intervalo mínimo
     if elapsed < RETRAIN_MIN_INTERVAL_SEC:
@@ -774,6 +1336,8 @@ def _should_retrain_now() -> tuple[bool, str]:
         import pandas as _pd
         if os.path.exists(ops_path) and os.path.getsize(ops_path) > 0:
             df = _pd.read_csv(ops_path)
+            if active_sym and "symbol" in df.columns:
+                df = df[df["symbol"].astype(str) == active_sym]
             if len(df) >= RETRAIN_EVAL_WINDOW:
                 recent = df.tail(RETRAIN_EVAL_WINDOW)
 
@@ -796,10 +1360,13 @@ def _should_retrain_now() -> tuple[bool, str]:
         pass
 
     # Gatilho 3: Novos ticks acumulados desde o último treino
-    ticks_now = _count_ticks()
+    ticks_now = _count_ticks(active_sym)
     new_ticks = ticks_now - _retrain_state["last_tick_count"]
     if new_ticks >= RETRAIN_NEW_TICKS_TRIGGER:
-        return True, f"{new_ticks:,} novos ticks acumulados (limiar: {RETRAIN_NEW_TICKS_TRIGGER:,})"
+        return True, (
+            f"{new_ticks:,} novos ticks de {active_sym} acumulados "
+            f"(limiar: {RETRAIN_NEW_TICKS_TRIGGER:,})"
+        )
 
     return False, "nenhum gatilho acionado"
 
@@ -814,7 +1381,7 @@ def _retrain_loop() -> None:
     """
     # Inicializa estado com o momento de início do pipeline
     _retrain_state["last_epoch"] = time.time()
-    _retrain_state["last_tick_count"] = _count_ticks()
+    _retrain_state["last_tick_count"] = _count_ticks(_active_symbol())
 
     while not _shutdown.is_set():
         # Verifica a cada 60s em fatias de 5s (responde rápido ao shutdown)
@@ -827,10 +1394,11 @@ def _retrain_loop() -> None:
         if not should:
             continue
 
-        n_ticks = _count_ticks()
+        active_sym = _active_symbol()
+        n_ticks = _count_ticks(active_sym)
         print(
             f"\n[RE-TREINO] Gatilho: {reason} "
-            f"({n_ticks:,} ticks disponíveis). Iniciando re-treino..."
+            f"({n_ticks:,} ticks de {active_sym} disponíveis). Iniciando re-treino..."
         )
 
         tmp_dataset  = f"{DATASET_CSV}.tmp"
@@ -863,7 +1431,7 @@ def _retrain_loop() -> None:
 
         # Atualiza estado independente do resultado (evita loop de retreinos)
         _retrain_state["last_epoch"] = time.time()
-        _retrain_state["last_tick_count"] = _count_ticks()
+        _retrain_state["last_tick_count"] = _count_ticks(_active_symbol())
 
         # Limpeza de temporários
         for tmp in (tmp_dataset, tmp_model, tmp_tft, tmp_duration):
@@ -949,6 +1517,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     # ── Determina modo demo/real ───────────────────────────────
     if args.real:
         is_demo = False
@@ -971,6 +1545,14 @@ def main() -> None:
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _handle_interrupt)
+
+    if not _validate_deriv_token(demo=is_demo):
+        sys.exit(1)
+
+    refreshed_balance = _refresh_account_balance(demo=is_demo)
+    if refreshed_balance is not None:
+        args.balance = refreshed_balance
+        _write_refreshed_balance_state(refreshed_balance)
 
     # ── PRÉ-FASE: Detectar índice com maior tendência ──────────
     import config as _cfg
@@ -1057,8 +1639,20 @@ def main() -> None:
 
     # ── FASE 6: Bot ────────────────────────────────────────────
     print("\n[PIPELINE] Fase 6: Iniciando bot de trading...\n")
-    risk_manager = RiskManager(initial_balance=args.balance)
-    bot = DerivBot(risk_manager=risk_manager, demo=is_demo)
+    initial_balance = _ACCOUNT_BALANCE if _ACCOUNT_BALANCE is not None else args.balance
+    if _uses_bearer_auth():
+        try:
+            initial_balance = float(_PAT_ACCOUNT.get("balance", initial_balance))
+        except (TypeError, ValueError):
+            pass
+    risk_manager = RiskManager(initial_balance=initial_balance)
+    bot = DerivBot(
+        risk_manager=risk_manager,
+        demo=is_demo,
+        auth_mode=_AUTH_MODE,
+        account_id=str(_PAT_ACCOUNT_ID or ""),
+        initial_ws_url=_get_ws_url() if _uses_bearer_auth() else "",
+    )
     bot.run()  # bloqueia até Ctrl+C
 
 

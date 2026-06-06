@@ -89,6 +89,42 @@ class TestSendProposal(unittest.TestCase):
         self.bot._send_proposal(self.ws, "BUY", {})
         self.assertGreaterEqual(self.bot._pending_timestamp, before)
 
+    def test_reduz_stake_quando_payout_excede_limite(self):
+        self.bot._pending_direction = "BUY"
+        self.bot._pending_stake = 100.0
+        self.bot._pending_duration = 5
+        self.bot._pending_indicators = {"adx": 30.0, "rsi": 60.0}
+        self.bot._pending_timestamp = time.time()
+
+        self.bot._handle_api_error(
+            self.ws,
+            {"message": "Minimum stake of 0.50 and maximum payout of 100.00. Current payout is 178.18."},
+        )
+
+        payload = json.loads(self.ws.send.call_args[0][0])
+        self.assertEqual(payload["proposal"], 1)
+        self.assertEqual(payload["contract_type"], "CALL")
+        self.assertLess(payload["amount"], 100.0)
+        self.assertGreaterEqual(payload["amount"], 0.50)
+        self.assertEqual(self.bot._proposal_retry_count, 1)
+
+    def test_alterna_duracao_quando_nao_oferecida(self):
+        self.bot._pending_direction = "BUY"
+        self.bot._pending_stake = 50.0
+        self.bot._pending_duration = 15
+        self.bot._pending_indicators = {"adx": 30.0, "rsi": 65.0}
+        self.bot._pending_timestamp = time.time()
+
+        self.bot._handle_api_error(
+            self.ws,
+            {"message": "Trading is not offered for this duration."},
+        )
+
+        payload = json.loads(self.ws.send.call_args[0][0])
+        self.assertEqual(payload["proposal"], 1)
+        self.assertEqual(payload["duration"], 5)
+        self.assertEqual(self.bot._proposal_retry_count, 1)
+
 
 # ─────────────────────────────────────────────────────────────────
 #  Testes — Confirmação de compra (_handle_buy)

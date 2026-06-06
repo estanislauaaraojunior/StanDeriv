@@ -39,6 +39,7 @@ from config import (
     CANDIDATE_DURATIONS,
     CANDLE_SIZE, PA_SR_TOLERANCE, TARGET_NOISE_THRESHOLD,
     TARGET_LOOKFORWARD, CANDLE_TIMEFRAME_SEC,
+    PRIORITIZE_DURATION,
 )
 
 
@@ -257,15 +258,18 @@ def build_dataset(
             m = sum(rets) / len(rets)
             return (sum((r - m) ** 2 for r in rets) / len(rets)) ** 0.5
 
-        vol = _vol_window(20)
-        n_cands = len(CANDIDATE_DURATIONS)
-        # Limiares calibrados para volatilidade de candles de tempo (maior que de ticks)
-        if vol > 0.005:
-            best_d = CANDIDATE_DURATIONS[0]          # alta vol → duração curta (5m)
-        elif vol < 0.001:
-            best_d = CANDIDATE_DURATIONS[-1]         # baixa vol → duração longa (30m)
+        if PRIORITIZE_DURATION in CANDIDATE_DURATIONS:
+            best_d = PRIORITIZE_DURATION
         else:
-            best_d = CANDIDATE_DURATIONS[n_cands // 2]  # moderada (15m)
+            vol = _vol_window(20)
+            n_cands = len(CANDIDATE_DURATIONS)
+            # Limiares calibrados para volatilidade de candles de tempo (maior que de ticks)
+            if vol > 0.005:
+                best_d = CANDIDATE_DURATIONS[0]          # alta vol → duração curta (5m)
+            elif vol < 0.001:
+                best_d = CANDIDATE_DURATIONS[-1]         # baixa vol → duração longa (30m)
+            else:
+                best_d = CANDIDATE_DURATIONS[n_cands // 2]  # moderada (15m)
 
         features["optimal_duration"] = best_d
         rows.append(features)

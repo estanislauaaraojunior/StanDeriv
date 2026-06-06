@@ -1,4 +1,4 @@
-#!/home/stanis/projetos/Binarias/Deriv/.venv/bin/python3
+#!/usr/bin/env python3
 """
 bot.py — orquestrador principal (entry point).
 
@@ -13,6 +13,7 @@ Uso:
 """
 
 import argparse
+import logging
 import signal
 import sys
 
@@ -20,9 +21,11 @@ from config import DEMO_MODE
 from executor import DerivBot
 from risk_manager import RiskManager
 
+logger = logging.getLogger(__name__)
+
 
 def _handle_interrupt(sig, frame) -> None:
-    print("\n\n[BOT] Encerrado pelo usuário. Até logo.")
+    logger.info("Encerrado pelo usuário.")
     sys.exit(0)
 
 
@@ -69,6 +72,12 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     # Determina modo: flag CLI tem prioridade sobre config.DEMO_MODE
     if args.real:
