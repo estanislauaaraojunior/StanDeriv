@@ -10,6 +10,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+os.environ.setdefault("DERIV_TOKEN", "test_token")
+
 import risk_manager as rm_mod
 from risk_manager import RiskManager
 import config

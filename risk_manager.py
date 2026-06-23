@@ -10,7 +10,6 @@ Responsabilidades:
 
 import csv
 import json
-import logging
 import os
 import time
 from datetime import datetime, date
@@ -20,8 +19,6 @@ from config import (
     PAUSE_BASE_SEC, PAUSE_SCALE_FACTOR, RESUME_ON_WIN,
     DRIFT_WINDOW, DRIFT_WIN_RATE_MIN,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class RiskManager:
@@ -77,7 +74,7 @@ class RiskManager:
         """True se estiver em período de pausa por losses consecutivos."""
         if time.time() < self._pause_until:
             remaining = int(self._pause_until - time.time())
-            logger.info("Bot pausado — retorna em %dm %ds", remaining // 60, remaining % 60)
+            print(f"[RISCO] Bot pausado — retorna em {remaining // 60}m {remaining % 60}s")
             return True
         return False
 
@@ -94,16 +91,16 @@ class RiskManager:
         )
 
         if daily_pnl_pct <= -STOP_LOSS_PCT:
-            logger.warning(
-                "Stop diário atingido: %.2f%% (limite: -%.0f%%)",
-                daily_pnl_pct * 100, STOP_LOSS_PCT * 100,
+            print(
+                f"[RISCO] Stop diário atingido: {daily_pnl_pct * 100:.2f}% "
+                f"(limite: -{STOP_LOSS_PCT * 100:.0f}%)"
             )
             return False
 
         if daily_pnl_pct >= TAKE_PROFIT_PCT:
-            logger.info(
-                "Take profit diário atingido: %.2f%% (meta: +%.0f%%)",
-                daily_pnl_pct * 100, TAKE_PROFIT_PCT * 100,
+            print(
+                f"[RISCO] Take profit diário atingido: {daily_pnl_pct * 100:.2f}% "
+                f"(meta: +{TAKE_PROFIT_PCT * 100:.0f}%)"
             )
             return False
 
@@ -149,7 +146,7 @@ class RiskManager:
             # P8: Win durante pausa → retomar antecipadamente
             if RESUME_ON_WIN and time.time() < self._pause_until:
                 self._pause_until = 0.0
-                logger.info("Win detectado durante pausa — retomando operações")
+                print("[RISCO] Win detectado durante pausa — retomando operações")
             self._consec_losses = 0
 
         self.consecutive_losses = self._consec_losses
@@ -160,9 +157,9 @@ class RiskManager:
             pause_sec = int(PAUSE_BASE_SEC * (PAUSE_SCALE_FACTOR ** extra))
             pause_sec = min(pause_sec, 7200)  # cap de 2 horas
             self._pause_until = time.time() + pause_sec
-            logger.warning(
-                "%d losses consecutivos — pausando por %d min",
-                self._consec_losses, pause_sec // 60,
+            print(
+                f"[RISCO] {self._consec_losses} losses consecutivos — "
+                f"pausando por {pause_sec // 60} min"
             )
 
         # P13: Detectar drift do modelo
@@ -172,9 +169,9 @@ class RiskManager:
         self._check_drift()
 
         result_str = "WIN" if profit >= 0.0 else "LOSS"
-        logger.info(
-            "%s | Profit: %+.2f USD | Saldo: %.2f | PnL hoje: %+.2f",
-            result_str, profit, self.balance, self._daily_profit,
+        print(
+            f"[TRADE] {result_str:4s} | Profit: {profit:+.2f} USD | "
+            f"Saldo: {self.balance:.2f} | PnL hoje: {self._daily_profit:+.2f}"
         )
 
         # P15: Colunas extras no log
@@ -212,7 +209,7 @@ class RiskManager:
     def _reset_daily_if_needed(self) -> None:
         today = date.today()
         if today != self._today:
-            logger.info("Novo dia — resetando contadores diários")
+            print(f"[RISCO] Novo dia — resetando contadores diários")
             self._today = today
             self._daily_start_balance = self.balance
             self._daily_profit = 0.0
@@ -224,10 +221,10 @@ class RiskManager:
             return
         wr = sum(self._recent_results) / len(self._recent_results)
         if wr < DRIFT_WIN_RATE_MIN:
-            logger.warning(
-                "[DRIFT] ALERTA: win rate dos últimos %d trades = %.1f%% "
-                "(abaixo de %.0f%%) → considere retreinar o modelo",
-                DRIFT_WINDOW, wr * 100, DRIFT_WIN_RATE_MIN * 100,
+            print(
+                f"[DRIFT] ALERTA: win rate dos últimos {DRIFT_WINDOW} trades = "
+                f"{wr:.1%} (abaixo de {DRIFT_WIN_RATE_MIN:.0%}) "
+                "→ considere retreinar o modelo"
             )
 
     # ──────────────────────────────────────────────
@@ -291,9 +288,9 @@ class RiskManager:
             saved_balance = float(saved.get("balance", 0.0))
             if saved_balance > 0:
                 self.balance = saved_balance
-            logger.info(
-                "Estado restaurado: consec_losses=%d, saldo=%.2f",
-                self._consec_losses, self.balance,
+            print(
+                f"[RISCO] Estado restaurado: consec_losses={self._consec_losses}, "
+                f"saldo={self.balance:.2f}"
             )
         except Exception:
             pass

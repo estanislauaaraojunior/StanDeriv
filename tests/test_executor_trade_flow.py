@@ -89,6 +89,7 @@ class TestSendProposal(unittest.TestCase):
         self.bot._send_proposal(self.ws, "BUY", {})
         self.assertGreaterEqual(self.bot._pending_timestamp, before)
 
+<<<<<<< HEAD
     def test_reduz_stake_quando_payout_excede_limite(self):
         self.bot._pending_direction = "BUY"
         self.bot._pending_stake = 100.0
@@ -125,6 +126,8 @@ class TestSendProposal(unittest.TestCase):
         self.assertEqual(payload["duration"], 5)
         self.assertEqual(self.bot._proposal_retry_count, 1)
 
+=======
+>>>>>>> parent of f2a05db (Funcionalidade: aprimoramento do pipeline de negociação com validação de símbolos e gerenciamento de saldo de conta melhorados)
 
 # ─────────────────────────────────────────────────────────────────
 #  Testes — Confirmação de compra (_handle_buy)

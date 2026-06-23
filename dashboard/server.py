@@ -11,7 +11,6 @@ Acesso: http://localhost:5055
 """
 
 import collections
-import hmac
 import json
 import os
 import signal
@@ -36,14 +35,6 @@ try:
 except ImportError:
     _PSUTIL = False
 
-try:
-    import indicators as ind
-    from config import CANDLE_SIZE, PA_SR_TOLERANCE, CANDLE_TIMEFRAME_SEC
-    from feature_engine import compute_feature_map
-    _BOT_MODULES = True
-except Exception:
-    _BOT_MODULES = False
-
 # ─── Autenticação ─────────────────────────────────────────────────────────────────
 
 # Defina DASHBOARD_TOKEN no .env ou como variável de ambiente.
@@ -59,7 +50,7 @@ def _require_token(f):
         is_local = request.remote_addr in ("127.0.0.1", "::1")
         if _DASHBOARD_TOKEN:
             token = request.headers.get("X-Auth-Token", "")
-            if not hmac.compare_digest(token.encode("utf-8"), _DASHBOARD_TOKEN.encode("utf-8")):
+            if token != _DASHBOARD_TOKEN:
                 return jsonify({"ok": False, "msg": "Unauthorized"}), 401
         elif not is_local:
             # Sem token configurado: bloqueia qualquer origem não-local
@@ -90,23 +81,26 @@ CORS(app, origins=["http://localhost:*", "http://127.0.0.1:*"])
 
 # Serializa NaN/Inf como null para produzir JSON válido no browser
 import math as _math
-import json as _json
-
-
-def _clean_floats(obj):
-    """Converte NaN/Inf para None recursivamente antes de serializar."""
-    if isinstance(obj, float):
-        return None if (_math.isnan(obj) or _math.isinf(obj)) else obj
-    if isinstance(obj, dict):
-        return {k: _clean_floats(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_clean_floats(v) for v in obj]
-    return obj
-
 
 class _SafeJSONProvider(app.json_provider_class):  # type: ignore[name-defined]
     def dumps(self, obj, **kw):
-        return _json.dumps(_clean_floats(obj), **kw)
+        import json as _json
+        class _Enc(_json.JSONEncoder):
+            def iterencode(self, o, _one_shot=False):
+                return super().iterencode(self._clean(o), _one_shot)
+            def _clean(self, o):
+                if isinstance(o, float):
+                    if _math.isnan(o) or _math.isinf(o):
+                        return None
+                    return o
+                if isinstance(o, dict):
+                    return {k: self._clean(v) for k, v in o.items()}
+                if isinstance(o, (list, tuple)):
+                    return [self._clean(v) for v in o]
+                return o
+            def default(self, o):
+                return super().default(o)
+        return _json.dumps(obj, cls=_Enc, **kw)
 
 app.json_provider_class = _SafeJSONProvider
 app.json = _SafeJSONProvider(app)
@@ -116,7 +110,6 @@ app.json = _SafeJSONProvider(app)
 _bot_log_buffer: collections.deque = collections.deque(maxlen=200)
 _bot_process: subprocess.Popen | None = None
 _bot_log_lock = threading.Lock()
-_bot_start_lock = threading.Lock()
 
 
 def _read_bot_output(proc: subprocess.Popen) -> None:
@@ -247,11 +240,9 @@ def api_summary():
     df = _read_csv_safe(OPERATIONS_CSV)
 
     if df.empty:
-        risk_state = _read_json_safe(RISK_STATE_JSON)
-        balance = float(risk_state.get("balance", 0.0) or 0.0)
         return jsonify({
-            "balance": round(balance, 2),
-            "balance_initial": round(balance, 2),
+            "balance": 0.0,
+            "balance_initial": 0.0,
             "pnl_today": 0.0,
             "pnl_pct": 0.0,
             "win_rate": 0.0,
@@ -262,7 +253,7 @@ def api_summary():
             "consec_losses": 0,
             "is_paused": False,
             "drawdown_pct": 0.0,
-            "risk_state": risk_state,
+            "risk_state": _read_json_safe(RISK_STATE_JSON),
         })
 
     # Última linha disponível
@@ -453,26 +444,11 @@ def api_bot_status():
         except Exception:
             pass
 
-    # Detecta se o mercado forex está aberto agora (dom 22h–sex 22h UTC)
-    from datetime import datetime as _dt
-    _now = _dt.utcnow()
-    _wd = _now.weekday()   # seg=0 … sex=4, sáb=5, dom=6
-    _hm = _now.hour * 60 + _now.minute
-    if _wd == 5:
-        _market_open = False
-    elif _wd == 6:
-        _market_open = _hm >= 22 * 60
-    elif _wd == 4:
-        _market_open = _hm < 22 * 60
-    else:
-        _market_open = True
-
     return jsonify({
-        "running":     running,
-        "pid":         pid,
-        "uptime_sec":  uptime_sec,
-        "mode":        "demo",  # lido em tempo real do config.py se disponível
-        "market_open": _market_open,
+        "running":    running,
+        "pid":        pid,
+        "uptime_sec": uptime_sec,
+        "mode":       "demo",  # lido em tempo real do config.py se disponível
     })
 
 
@@ -481,11 +457,6 @@ def api_bot_status():
 @app.route("/api/bot/start", methods=["POST"])
 @_require_token
 def api_bot_start():
-    with _bot_start_lock:
-        return _api_bot_start_impl()
-
-
-def _api_bot_start_impl():
     running, pid = _bot_running()
     if running:
         return jsonify({"ok": False, "msg": f"Bot já está rodando (PID {pid})."}), 409
@@ -502,13 +473,13 @@ def _api_bot_start_impl():
         return jsonify({"ok": False, "msg": "balance deve ser um número positivo"}), 400
     skip_collect = bool(data.get("skip_collect", False))
     no_scan = bool(data.get("no_scan", False))
-    min_ticks = int(data.get("min_ticks", 1000))
-    history_count = int(data.get("history_count", 1000))
-    force_retrain = bool(data.get("force_retrain", True))
+    min_ticks = int(data.get("min_ticks", 200))
+    history_count = int(data.get("history_count", 2000))
+    force_retrain = bool(data.get("force_retrain", False))
 
     cmd = [sys.executable, "-u", str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]
     cmd += ["--balance", str(balance)]
-    min_ticks_target = max(1000, min_ticks)
+    min_ticks_target = max(50, min_ticks)
     cmd += ["--min-ticks", str(min_ticks_target)]
     cmd += ["--history-count", str(max(0, history_count))]
     if skip_collect:
@@ -690,16 +661,7 @@ def api_bot_logs():
 def api_equity():
     df = _read_csv_safe(OPERATIONS_CSV)
     if df.empty:
-        state = _read_json_safe(RISK_STATE_JSON)
-        balance = state.get("balance")
-        if balance is None:
-            return jsonify([])
-        session_state = _read_json_safe(STATE_JSON)
-        return jsonify([{
-            "timestamp": str(session_state.get("session_start", "")),
-            "balance_after": float(balance),
-            "result": "START",
-        }])
+        return jsonify([])
 
     result = []
     for _, row in df.iterrows():
@@ -716,9 +678,10 @@ def api_equity():
 @app.route("/api/candle-patterns")
 def api_candle_patterns():
     """Retorna padrões de vela detectados a partir dos ticks mais recentes."""
-    if not _BOT_MODULES:
-        return jsonify([])
     try:
+        import indicators as ind
+        from config import CANDLE_SIZE, PA_SR_TOLERANCE
+
         df = _read_csv_safe(TICKS_CSV)
         if df.empty:
             return jsonify([])
@@ -827,11 +790,8 @@ def api_state():
             df_ops = df_ops[df_ops["_ts"] >= _ss].reset_index(drop=True)
         except Exception:
             pass
-    risk_state_pre = _read_json_safe(RISK_STATE_JSON)
-    balance_pre = float(risk_state_pre.get("balance", 0.0) or 0.0)
     summary = {
-        "balance": round(balance_pre, 2), "balance_initial": round(balance_pre, 2),
-        "pnl_today": 0.0, "pnl_pct": 0.0,
+        "balance": 0.0, "balance_initial": 0.0, "pnl_today": 0.0, "pnl_pct": 0.0,
         "win_rate": 0.0, "win_rate_recent": 0.0, "total_trades": 0,
         "wins": 0, "losses": 0, "consec_losses": 0, "is_paused": False, "drawdown_pct": 0.0,
     }
@@ -877,6 +837,7 @@ def api_state():
     # — Indicadores ao vivo (últimos 500 ticks) —
     live_indicators = last_trade_indicators.copy()
     try:
+        from feature_engine import compute_feature_map
         df_ticks = _tail_csv(TICKS_CSV, 500)
         if not df_ticks.empty:
             if "price" not in df_ticks.columns and df_ticks.shape[1] >= 2:
@@ -904,7 +865,7 @@ def api_state():
         "model_mtime": int(MODEL_PKL.stat().st_mtime) if MODEL_PKL.exists() else None,
         "ticks_count": 0,
         "dataset_rows": 0,
-        "min_ticks_target": 1000,
+        "min_ticks_target": 500,
     }
     try:
         df_t = _read_csv_safe(TICKS_CSV)
@@ -924,9 +885,9 @@ def api_state():
         pass
 
     try:
-        model_info["min_ticks_target"] = int(active_state_pre.get("min_ticks_target", 1000) or 1000)
+        model_info["min_ticks_target"] = int(active_state_pre.get("min_ticks_target", 500) or 500)
     except Exception:
-        model_info["min_ticks_target"] = 1000
+        model_info["min_ticks_target"] = 500
 
     # — Métricas do último treino (model_metrics.json) —
     try:
@@ -948,7 +909,7 @@ def api_state():
         model_info["last_metrics"] = {}
 
     # — Risk state e state.json —
-    risk_state = risk_state_pre
+    risk_state = _read_json_safe(RISK_STATE_JSON)
     active_state = active_state_pre  # já lido acima para session_start
     active_contract = active_state.get("active_contract")
     if not isinstance(active_contract, dict):
@@ -1000,10 +961,12 @@ def api_contract_active():
 @app.route("/api/indicator-series")
 def api_indicator_series():
     """Calcula indicadores para os últimos N candles de tempo."""
-    if not _BOT_MODULES:
-        return jsonify([])
     n_candles = min(int(request.args.get("n", 60)), 300)
     try:
+        from feature_engine import compute_feature_map
+        from config import CANDLE_SIZE, CANDLE_TIMEFRAME_SEC
+        import indicators as ind
+
         window_size = 50  # mínimo de candles para indicadores
         ticks_needed = (n_candles + window_size + 5) * max(CANDLE_TIMEFRAME_SEC, CANDLE_SIZE)
         df = _tail_csv(TICKS_CSV, ticks_needed)
@@ -1072,12 +1035,11 @@ def api_model_history():
 def api_model_metrics():
     data = _read_json_safe(MODEL_METRICS_JSON)
     if not isinstance(data, list) or not data:
-        entry = {}
-    else:
-        # Prefere a última entrada com stage "final" (que contém models_comparison).
-        # Fallback para a última entrada disponível.
-        final_entries = [e for e in data if e.get("stage") == "final"]
-        entry = final_entries[-1] if final_entries else data[-1]
+        return jsonify({})
+    # Prefere a última entrada com stage "final" (que contém models_comparison).
+    # Fallback para a última entrada disponível.
+    final_entries = [e for e in data if e.get("stage") == "final"]
+    entry = final_entries[-1] if final_entries else data[-1]
     resp = jsonify(entry)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
@@ -1195,8 +1157,6 @@ def api_stats():
 
 @app.route("/api/candles")
 def api_candles():
-    if not _BOT_MODULES:
-        return jsonify([])
     n = min(int(request.args.get("n", 100)), 500)
     symbol = str(request.args.get("symbol", "")).strip()
     from_epoch_raw = request.args.get("from_epoch")
@@ -1207,6 +1167,9 @@ def api_candles():
         except (TypeError, ValueError):
             from_epoch = None
     try:
+        from config import CANDLE_SIZE, CANDLE_TIMEFRAME_SEC
+        import indicators as ind
+
         # Para candles por tempo precisamos de (n + margem) * max_ticks_por_candle
         # Estimativa: 1 tick/s × CANDLE_TIMEFRAME_SEC por vela
         ticks_needed = (n + 5) * max(CANDLE_TIMEFRAME_SEC, CANDLE_SIZE)
