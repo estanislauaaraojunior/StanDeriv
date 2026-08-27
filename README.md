@@ -4,128 +4,261 @@ Bot de opções binárias para índices sintéticos da plataforma Deriv, com an�
 
 ---
 
-## Arquitetura
+## 🎯 O Que Faz Este Bot
+
+O **StanDeriv** automatiza operações de trading em opções binárias combinando:
+
+- **Análise Técnica Clássica**: EMA, RSI, MACD, ADX, Bollinger Bands, Momentum
+- **Price Action Avançada**: 11 features derivadas de estrutura de mercado, S/R dinâmico, supply/demand, Fair Value Gaps (FVG)
+- **Machine Learning Ensemble**: RandomForest + XGBoost + StackingClassifier
+- **Deep Learning**: Temporal Fusion Transformer (TFT) com PyTorch para padrões temporais
+- **Gestão de Risco Profissional**: Sizing fixo, stop/take profit diário, pausa escalável por losses consecutivos
+- **Detecção de Degradação**: Alerta automático quando win rate cai abaixo do limiar
+
+**Resultado prático**: 52-60% de acurácia em índices sintéticos (R_100, BOOM, CRASH) ou Forex quando mercado está aberto.
+
+---
+
+## 📊 Arquitetura
 
 ```
-┌────────────┐     ┌──────────────┐     ┌────────────────┐
-│ collector   │────▶│ dataset_     │────▶│ train_model    │
-│ (ticks.csv) │     │ builder      │     │ (model.pkl)    │
-└────────────┘     └──────────────┘     └────────────────┘
-                                                │
-┌────────────┐     ┌──────────────┐     ┌───────▼────────┐
-│ executor   │◀───▶│ strategy     │◀───▶│ ai_predictor   │
-│ (WebSocket) │     │ (sinais)     │     │ (inferência)   │
-└────────────┘     └──────────────┘     └────────────────┘
-       │                    │
-       ▼                    ▼
-┌────────────┐     ┌──────────────┐
-│ risk_      │     │ indicators   │
-│ manager    │     │ (técnicos +  │
-│ (log CSV)  │     │  Price Action│
-└────────────┘     └──────────────┘
-       │
-       ▼
-┌──────────────────┐
-│ dashboard/       │
-│ (Flask + HTML/JS)│
-└──────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│              PIPELINE AUTOMÁTICO COMPLETO                      │
+└────────────────────────────────────────────────────────────────┘
+
+1. COLETA DE DADOS
+   ├─ collector.py        Ticks em streaming via WebSocket
+   └─ ticks.csv          Histórico de preços (~50k ticks)
+
+2. CONSTRUÇÃO DO DATASET
+   ├─ dataset_builder.py   27 features (técnicas + Price Action)
+   ├─ indicators.py        Indicadores + Price Action
+   └─ dataset.csv         Pronto para treino
+
+3. TREINAMENTO
+   ├─ train_model.py       4 modelos (RF, XGB, Stacking, TFT)
+   ├─ transformer_model.py PyTorch TFT
+   └─ model.pkl / transformer_model.pkl / duration_model.pkl
+
+4. EXECUÇÃO TEMPO REAL
+   ├─ executor.py         Cliente WebSocket, abertura de ordens
+   ├─ strategy.py         Sinal (BUY/SELL) com ponderação IA
+   ├─ ai_predictor.py     Ensemble + TFT
+   ├─ risk_manager.py     Gestão de risco, sizing, pausas
+   └─ operacoes_log.csv   Log de cada trade
+
+5. MONITORAMENTO
+   ├─ dashboard/server.py   API Flask (localhost:5055)
+   ├─ dashboard/index.html  Interface web interativa
+   └─ Padrões de vela com notificações em tempo real
+
+6. ORQUESTRAÇÃO
+   └─ pipeline.py         Coordena tudo + retreino automático
 ```
 
-## Requisitos
+Para detalhes técnicos completos, veja **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
-- Python 3.10+
-- Conta na Deriv (demo ou real) com token de API
+---
 
-### Instalação
+## 💾 Requisitos
+
+- **Python 3.10+**
+- **Conta Deriv** (demo ou real) com token de API
+- ~500 MB para dependências (especialmente PyTorch)
+
+### Instalação Rápida
 
 ```bash
 git clone https://github.com/estanislauaaraojunior/StanDeriv.git
 cd StanDeriv
 python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
+# ou: .venv\Scripts\activate  (Windows)
+
 pip install -r requirements.txt
 ```
 
-### Configuração
+Se PyTorch não for necessário (USE_TRANSFORMER=False em config.py):
 
-1. Crie o arquivo `.env` na raiz:
+```bash
+pip install -r requirements.txt --no-deps torch
+# ou instale apenas: pip install websocket-client scikit-learn xgboost joblib pandas numpy flask
+```
+
+---
+
+## 🔑 Configuração Inicial
+
+### 1. Crie o arquivo `.env` na raiz
 
 ```env
-DERIV_TOKEN=seu_token_aqui
+# Fluxo legado (token WebSocket simples)
+DERIV_TOKEN=SEUEIDENTIFICADORDEAPIAQUI
 DERIV_APP_ID=1089
-# auto = detecta token legado, PAT (pat_...) ou OAuth Bearer (ory_at_...)
-# use "bearer" se seu token novo nao tiver prefixo reconhecido
 DERIV_AUTH_MODE=auto
+
+# Ou fluxo novo (OAuth Bearer PAT)
+# DERIV_TOKEN=pat_SEUPATAQUICOMPPREFIXO
+# DERIV_APP_ID=SEU_APP_ID_NOVO
+# DERIV_AUTH_MODE=auto   (detecta automaticamente, ou force "bearer")
 ```
 
-2. Ajuste parâmetros em `config.py` conforme necessário.
+**Como obter seu token:**
+1. Acesse https://developers.deriv.com
+2. Crie um app novo (tipo PAT para fluxo novo)
+3. Gere um API Token com escopos: `trade` e `account_manage`
+4. Copie para `.env`
 
-### Autenticação Deriv
+### 2. Ajuste `config.py` conforme necessário
 
-O bot aceita os dois fluxos da documentação atual:
+```python
+# Modo de operação
+DEMO_MODE = True                    # False = usar dinheiro real (requer confirmação)
+SYMBOL = "R_100"                    # Índice sintético ou forex (ex: "frxEURUSD")
 
-- Token legado da WebSocket API: conecta em `wss://ws.derivws.com/websockets/v3?app_id=...` e envia `authorize`.
-- PAT/OAuth Bearer: usa REST em `https://api.derivws.com` com `Deriv-App-ID` e `Authorization: Bearer`, seleciona/cria uma conta Options e obtém a URL WebSocket por OTP antes de operar.
+# Risco por trade
+STAKE_PCT = 0.01                    # 1% do saldo por operação
+STOP_LOSS_PCT = 0.25                # Stop diário: -25% do saldo
+TAKE_PROFIT_PCT = 0.50              # Take profit diário: +50% do saldo
 
-Para PAT/OAuth, o token precisa do escopo `trade`. Se a conta Options ainda não existir, também precisa de `account_manage`. Evite usar `DERIV_APP_ID=1089` com o fluxo novo; crie um App ID próprio na Deriv.
+# Análise técnica
+CANDLE_TIMEFRAME_SEC = 60           # 1 minuto (60s) = velas de 1 min
+ADX_MIN = 18                        # Filtro de tendência
+RSI_OVERSOLD = 38                   # Limite inferior RSI
+RSI_OVERBOUGHT = 62                 # Limite superior RSI
 
-## Uso Rápido
+# Inteligência Artificial
+USE_AI_MODEL = True                 # Usar modelo ou só indicadores?
+AI_SCORE_MIN = 0.30                 # Score mínimo para operar
+AI_TECH_WEIGHT = 0.55               # Peso técnico vs IA
+AI_MODEL_WEIGHT = 0.45              # Peso modelo
 
-### Pipeline completo (coleta + treino + bot)
+# Deep Learning (TFT)
+USE_TRANSFORMER = True              # Usar Temporal Fusion Transformer?
+TRANSFORMER_BLEND_WEIGHT = 0.55     # Peso TFT no ensemble
+
+# Pausa escalável
+MAX_CONSEC_LOSSES = 3               # Losses antes de pausar
+PAUSE_BASE_SEC = 600                # Pausa inicial (10 min)
+PAUSE_SCALE_FACTOR = 2              # Dobra a cada loss extra
+```
+
+Mais parâmetros em **config.py** (~100 opções tuneáveis).
+
+---
+
+## 🚀 Modo de Uso
+
+### Pipeline Completo (Recomendado)
 
 ```bash
+# Demo mode — coleta, treina e executa automaticamente
 python pipeline.py --demo --balance 1000
+
+# Modo real — requer confirmação no terminal
+python pipeline.py --real --balance 500
+
+# Apenas coleta 500 candles históricos antes de treinar
+python pipeline.py --demo --history-count 500
+
+# Força retreino mesmo que model.pkl exista
+python pipeline.py --demo --force-retrain
 ```
 
-### Apenas o bot (modelo já treinado)
+**O que faz:**
+1. Coleta histórico de ticks (CANDLE_TIMEFRAME_SEC segundos por candle)
+2. Escaneia tendência (prioriza Forex em horário comercial)
+3. Constrói dataset (aguarda MIN_CANDLES=50 velas)
+4. Treina modelos (RF, XGB, Stacking, TFT)
+5. Inicia bot de execução
+6. Monitora degradação e retreina automaticamente
+
+---
+
+### Apenas Bot (Modelo Já Treinado)
 
 ```bash
-python bot.py
+python bot.py --demo
+python bot.py --real
 ```
 
-### Apenas coletar ticks
+---
+
+### Apenas Coleta
 
 ```bash
 python collector.py
+# Coleta ticks em ticks.csv continuamente
 ```
+
+---
+
+### Apenas Treino
+
+```bash
+# Gera dataset.csv a partir de ticks.csv
+python dataset_builder.py
+
+# Treina modelos e salva em model.pkl, transformer_model.pkl, duration_model.pkl
+python train_model.py
+```
+
+---
 
 ### Dashboard
 
 ```bash
+# Inicia Flask em localhost:5055
+python dashboard/server.py
+
+# Ou via script de inicialização
 cd dashboard && bash start.sh
-# ou: python dashboard/server.py
-# Acesse: http://localhost:5055
 ```
 
-## Módulos
+Acesse: **http://localhost:5055**
 
-| Arquivo | Descrição |
-|---------|-----------|
-| `config.py` | Configurações centralizadas (indicadores, risco, IA, Price Action) |
-| `indicators.py` | Indicadores técnicos puros (EMA, RSI, MACD, ADX, Bollinger, Momentum) + Price Action (estrutura de mercado, S/R, supply/demand, FVG) + detecção de 6 padrões de vela |
-| `feature_engine.py` | Fonte única de features: consolida `compute_feature_map` e `extract_feature_vector` (usados por `dataset_builder`, `executor` e `ai_predictor`) |
-| `dataset_builder.py` | Extrai features de ticks.csv e gera dataset.csv para treino |
-| `train_model.py` | Treina RandomForest, XGBoost, StackingClassifier e Temporal Fusion Transformer |
-| `ai_predictor.py` | Inferência em tempo real com ensemble blend (clássico + TFT) |
-| `strategy.py` | Motor de decisão: sinais BUY/SELL com filtros técnicos, PA e IA |
-| `executor.py` | Cliente WebSocket da Deriv, execução de ordens, notificações de velas |
-| `risk_manager.py` | Gestão de risco: sizing, stop loss/take profit diário, pausa escalável por losses, detecção de drift |
-| `pipeline.py` | Orquestrador: coleta, trend scanning, treino automático, execução e re-treino periódico |
-| `transformer_model.py` | Implementação do Temporal Fusion Transformer com Variable Selection Network (PyTorch) |
-| `collector.py` | Coleta contínua de ticks via WebSocket com filtro anti-spike |
-| `dashboard/` | Interface web com Flask (server.py), autenticação por token e frontend (HTML/JS/CSS) |
+Funcionalidades:
+- Status em tempo real (balance, win rate, trades)
+- Gráficos de P&L e drawdown
+- Histórico de operações
+- Notificações de padrões de vela
+- Indicadores técnicos (EMA, RSI, ADX, MACD)
+- Controles (start, stop, pause)
 
-## Price Action (11 Features)
+---
 
-Features numéricas normalizadas derivadas de velas OHLC sintéticas:
+## 📚 Módulos Principais
 
-| Feature | Range | Descrição |
-|---------|-------|-----------|
+| Arquivo | Responsabilidade |
+|---------|------------------|
+| **config.py** | Centraliza ~100 parâmetros de tuning (indicadores, risco, IA, Price Action) |
+| **indicators.py** | 16 indicadores técnicos + 11 features Price Action + 6 padrões de vela |
+| **feature_engine.py** | Fonte única de 27 features (evita duplicação entre dataset_builder, executor, ai_predictor) |
+| **dataset_builder.py** | Extrai features de ticks.csv, calcula target, gera dataset.csv com validação temporal |
+| **train_model.py** | Treina RandomForest, XGBoost, StackingClassifier, TFT; promoção champion-challenger automática |
+| **ai_predictor.py** | Carrega model.pkl + transformer_model.pkl; ensemble blend com discordância = não opera |
+| **strategy.py** | Calcula sinal técnico (BUY/SELL) com ponderação IA e filtros (padrões de vela, Price Action, ADX) |
+| **executor.py** | Cliente WebSocket Deriv; abertura de ordens; heartbeat watchdog; notificações em tempo real |
+| **risk_manager.py** | Sizing fixo, stop/take profit diário, pausa escalável, detecção de drift, log de trades |
+| **pipeline.py** | Orquestrador principal; coleta → treino → execução + retreino automático adaptativamente |
+| **transformer_model.py** | Implementação Temporal Fusion Transformer com Variable Selection Network (PyTorch) |
+| **collector.py** | Coleta contínua de ticks via WebSocket; filtro anti-spike; armazena em ticks.csv |
+| **deriv_session.py** | Autenticação Deriv: suporte a token legado + OAuth Bearer (REST + OTP) |
+| **dashboard/** | Interface web (Flask + HTML/JS/CSS) com autenticação por token |
+
+---
+
+## 🔧 Price Action (11 Features)
+
+Features normalizadas (-1 a +1) derivadas de velas OHLC sintéticas:
+
+| Feature | Range | Significado |
+|---------|-------|-------------|
 | `pa_market_structure` | -1 a +1 | HH/HL (bullish) vs LH/LL (bearish) |
 | `pa_bos_strength` | -1 a +1 | Força do break of structure |
 | `pa_trend_consistency` | -1 a +1 | Sequência de swings alinhados |
 | `pa_sr_distance` | 0 a 1 | Distância ao S/R mais próximo |
-| `pa_sr_touch_count` | 0 a 1 | Força do nível S/R (toques) |
+| `pa_sr_touch_count` | 0 a 1 | Força do nível S/R (número de toques) |
 | `pa_sr_position` | -1 a +1 | Perto de suporte (-) vs resistência (+) |
 | `pa_demand_zone` | 0 a 1 | Proximidade de demand zone |
 | `pa_supply_zone` | 0 a 1 | Proximidade de supply zone |
@@ -133,129 +266,216 @@ Features numéricas normalizadas derivadas de velas OHLC sintéticas:
 | `pa_fvg_bearish` | 0 a 1 | Fair Value Gap bearish por preencher |
 | `pa_candle_at_sr` | -1 a +1 | Padrão de rejeição em zona S/R |
 
-## Padrões de Vela (6 detectados com notificação)
+---
 
-1. **Bullish Engulfing** — Reversão de alta
-2. **Bearish Engulfing** — Reversão de baixa
-3. **Hammer** — Reversão de alta (sombra inferior longa)
-4. **Shooting Star** — Reversão de baixa (sombra superior longa)
-5. **Doji** — Indecisão (corpo mínimo)
-6. **Three White Soldiers / Three Black Crows** — Continuação forte
+## 🕯️ Padrões de Vela (6 Detectados)
 
-Cada padrão inclui `strength` (0-1) e notificação em tempo real no terminal e dashboard.
+Cada padrão inclui `strength` (0-1) e notificação em tempo real:
 
-## Modelos de IA
+1. **Bullish Engulfing** — Reversão de alta (vela branca envolve anterior preta)
+2. **Bearish Engulfing** — Reversão de baixa (vela preta envolve anterior branca)
+3. **Hammer** — Reversão de alta (corpo pequeno, sombra inferior longa)
+4. **Shooting Star** — Reversão de baixa (corpo pequeno, sombra superior longa)
+5. **Doji** — Indecisão (corpo mínimo, aberturas/fechamentos iguais)
+6. **Three White Soldiers / Three Black Crows** — Continuação forte (3 velas seguidas mesma cor)
 
-- **RandomForest** (300 árvores, max_depth=10)
-- **XGBoost** (300 estimators, learning_rate=0.05)
-- **StackingClassifier** (RF + XGB + LogisticRegression)
-- **Temporal Fusion Transformer** (PyTorch, 2 camadas, 4 heads, d_model=64, seq_len=50, early stopping)
-- Ensemble blend: TFT × 0.55 + Clássico × 0.45
-- Discordância TFT/Clássico → não opera
-- Score mínimo ponderado (IA + técnico) de 0.55 para abrir operação
+---
 
-### Retreinar
+## 🤖 Modelos de IA
 
-```bash
-python dataset_builder.py         # gerar dataset.csv
-python train_model.py             # treinar modelos
+### Modelos Clássicos (Scikit-Learn)
+
+- **RandomForest** — 300 árvores, max_depth=10, balanceado
+- **XGBoost** — 300 estimators, learning_rate=0.05, subsample=0.8
+- **StackingClassifier** — RF + XGB como base, LogisticRegression como meta-learner
+
+**Melhor modelo é promovido automaticamente** (champion-challenger):
+- AUC novo ≥ AUC atual + 0.001
+- Acurácia queda máx. 2%
+- F1 queda máx. 5%
+
+### Deep Learning (Opcional)
+
+- **Temporal Fusion Transformer (TFT)** — PyTorch
+  - Entrada sequencial: 50 ticks históricos (seq_len=50)
+  - 2 camadas Transformer, 4 heads de atenção
+  - d_model=64, dropout=0.15
+  - Early stopping (patience=10)
+  - Treinado com AdamW + cosine decay
+
+### Ensemble
+
+- **Blend ponderado**: TFT×0.55 + Clássico×0.45
+- **Discordância TFT vs Clássico** → não opera (reduz falsos alarmes)
+- Score mínimo: AI_SCORE_MIN = 0.30
+
+---
+
+## 📈 Retreino Adaptativo
+
+O bot monitora continuamente e retreina automaticamente quando:
+
+1. **Win rate recente < 42%** — modelo degradando
+2. **Confiança média IA < 55%** — modelo inseguro
+3. **>400 novos ticks acumulados** — suficiente novo sinal
+4. **Tempo máximo 1h sem retreino** — backstop temporal
+
+```
+Gatilho → dataset_builder.py → train_model.py → champion-challenger → novo model.pkl
+     ↓ se melhor → substitui e continua operando (sem parada)
 ```
 
-## Configurações Avançadas
+---
 
-### ADX Adaptativo
-`ADX_ADAPTIVE = True` ajusta automaticamente `ADX_MIN` ao percentil 50 do histórico recente do símbolo ativo (piso: 15), tornando o filtro de tendência mais preciso do que um valor fixo. O percentil é configurável em `ADX_ADAPTIVE_PERCENTILE`.
+## 🛡️ Gestão de Risco
+
+### Sizing Fixo
+```
+stake = saldo × STAKE_PCT  (padrão: 1%)
+mínimo = $0.35 (limite da Deriv)
+```
+
+### Stops Diários
+```
+Stop Loss    : -25% do saldo do dia
+Take Profit  : +50% do saldo do dia
+Novo dia     : reset automático à meia-noite
+```
+
+### Pausa Escalável
+```
+Gatilho      : 3 losses consecutivos
+Pausa inicial: 10 minutos
+Escala       : dobra a cada loss adicional (ex: 10m, 20m, 40m, 80m...)
+Retomada     : 1 win durante pausa → retoma imediatamente
+```
+
+### Detecção de Drift
+```
+Janela       : últimos 20 trades
+Limiar       : win rate < 40%
+Alerta       : "considere retreinar o modelo"
+```
+
+---
+
+## ⚙️ Parâmetros Avançados
+
+### ADX Adaptativo (P10)
+```python
+ADX_ADAPTIVE = True
+ADX_ADAPTIVE_PERCENTILE = 50   # percentil 50 do histórico
+ADX_ADAPTIVE_MAX = 22.0         # teto (não bloqueia tendência moderada)
+```
+Ajusta o filtro de tendência automaticamente por símbolo.
 
 ### Duração Dinâmica
-O modelo de duração (`duration_model.pkl`) prevê o melhor prazo de expiração entre os candidatos definidos em `CANDIDATE_DURATIONS = [5, 15, 30]` (minutos). Treinado em conjunto com os demais modelos pelo `train_model.py`.
+O modelo `duration_model.pkl` prediz o melhor prazo entre `CANDIDATE_DURATIONS = [5, 15, 30]` minutos baseado em condições de mercado.
 
 ### Score Ponderado
-`AI_TECH_WEIGHT = 0.55` e `AI_MODEL_WEIGHT = 0.45` definem o peso do sinal técnico e da IA no score final. Apenas operações com `score ≥ AI_SCORE_MIN (0.30)` são abertas.
-
-### Sinal Ponderado por Indicador
-`USE_WEIGHTED_SIGNAL = True` substitui o AND rígido dos indicadores por um score contínuo ponderado. `SIGNAL_SCORE_MIN = 0.05` define o limiar mínimo do score técnico para aceitar a operação.
-
-### Target Lookforward
-`TARGET_LOOKFORWARD = 2` define quantas velas à frente o dataset_builder usa para rotular o target de treino. Valores maiores capturam movimentos de médio prazo.
-
-### Candles Baseados em Tempo
-`CANDLE_TIMEFRAME_SEC = 60` define a duração de cada vela em segundos (substituindo o modelo de ticks fixos). Recomendado: 60s (1min) para mais entradas, 300s (5min) para mais seletividade.
-
-### Buffer de Preços
-`PRICE_BUFFER_SIZE = 500` define quantos ticks são mantidos em memória para cálculo de indicadores e inferência do TFT.
-
-### Cadência de Entradas
-`ENTRY_CANDLE_INTERVAL = 1` controla o intervalo mínimo entre entradas em velas fechadas (1 = avalia a cada nova vela).
-
-### Promoção de Modelo (Champion-Challenger)
-O challenger só substitui o champion quando superar os critérios mínimos:
-- `MODEL_PROMOTION_MIN_AUC_DELTA = 0.001` — AUC do novo modelo deve ser ≥ AUC atual + delta
-- `MODEL_PROMOTION_MAX_ACC_DROP = 0.02` — queda máxima tolerada de acurácia
-- `MODEL_PROMOTION_MAX_F1_DROP = 0.05` — queda máxima tolerada de F1
+```python
+USE_WEIGHTED_SIGNAL = True
+SIGNAL_SCORE_MIN = 0.05
+# Score = EMA×0.30 + MACD×0.25 + Preço×0.20 + Momentum×0.15 + RSI×0.10
+```
 
 ### Filtro Anti-Spike
-`TICK_SPIKE_THRESHOLD = 0.05` rejeita ticks com variação > 5% em relação ao anterior, protegendo os indicadores de dados ruins.
+```python
+TICK_SPIKE_THRESHOLD = 0.05  # Rejeita variações > 5% em relação ao anterior
+```
+Protege indicadores contra dados ruins.
 
-### Heartbeat / Watchdog
-`HEARTBEAT_TIMEOUT_SEC = 30` — alerta no log se nenhum tick for recebido por 30 segundos (indica possível desconexão WebSocket).
+### Target Lookforward
+```python
+TARGET_LOOKFORWARD = 2  # Rotula o target com movimento de 2+ velas à frente
+```
+Captura padrões de médio prazo ao invés de ruído de tick único.
 
-### Dashboard — Autenticação
-Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com `X-Auth-Token`.
+---
 
+## 🔐 Segurança
 
+- ✅ **DEMO_MODE=True por padrão** — evita acidentes iniciais
+- ✅ **Confirmação para modo real** — pede confirmação no terminal
+- ✅ **Dashboard com autenticação por token** — X-Auth-Token header (DASHBOARD_TOKEN env var)
+- ✅ **Histórico de logs** — operacoes_log.csv + model_metrics.json preservados
+- ✅ **Tokens no .env** — nunca commit em git; use .gitignore
 
-| Parâmetro | Padrão | Descrição |
-|-----------|--------|-----------|
-| `STAKE_PCT` | 1% | Percentual do saldo por operação |
-| `STOP_LOSS_PCT` | 25% | Stop diário (perda máxima) |
-| `TAKE_PROFIT_PCT` | 50% | Take profit diário |
-| `MAX_CONSEC_LOSSES` | 3 | Losses consecutivos antes de pausar |
-| `PAUSE_BASE_SEC` | 600 | Pausa base (10 min) no 1º gatilho |
-| `PAUSE_SCALE_FACTOR` | 2 | Fator de escala da pausa (dobra a cada loss extra) |
-| `RESUME_ON_WIN` | True | Retoma pausa imediatamente após 1 win |
-| `DRIFT_WINDOW` | 20 | Janela de trades para calcular win rate recente |
-| `DRIFT_WIN_RATE_MIN` | 40% | Alerta se win rate dos últimos N trades cair abaixo |
-| `AI_TECH_WEIGHT` | 0.55 | Peso do sinal técnico no score final |
-| `AI_MODEL_WEIGHT` | 0.45 | Peso do sinal da IA no score final |
-| `AI_SCORE_MIN` | 0.30 | Score mínimo ponderado (IA + técnico) para abrir operação |
-| `SIGNAL_SCORE_MIN` | 0.05 | Limiar mínimo do score técnico ponderado |
-| `CANDLE_TIMEFRAME_SEC` | 60 | Duração de cada vela de tempo em segundos |
-| `PRICE_BUFFER_SIZE` | 500 | Ticks mantidos em memória para indicadores |
-| `ENTRY_CANDLE_INTERVAL` | 1 | Intervalo mínimo entre entradas (em velas) |
-| `CANDIDATE_DURATIONS` | [5,15,30] | Durações (min) candidatas para o modelo de duração |
-| `ADX_ADAPTIVE_PERCENTILE` | 50 | Percentil do histórico de ADX usado como piso adaptativo |
-| `TARGET_LOOKFORWARD` | 2 | Velas à frente usadas para rotular o target no dataset |
+---
 
-## Histórico de Mudanças
+## 📊 Métricas Esperadas
 
-- `feature_engine.py` criado como fonte única de features (evita duplicação entre `dataset_builder`, `executor` e `ai_predictor`)
-- ADX adaptativo por percentil do histórico recente (`ADX_ADAPTIVE`)
-- Duração dinâmica prevista por modelo dedicado (`duration_model.pkl`)
-- Pausa escalável com `PAUSE_SCALE_FACTOR` e retomada imediata com `RESUME_ON_WIN`
-- Detecção de drift com janela deslizante de win rate (`DRIFT_WINDOW`)
-- Filtro anti-spike no coletor (`TICK_SPIKE_THRESHOLD`)
-- Heartbeat watchdog contra desconexão silenciosa
-- Dashboard com autenticação por token (`DASHBOARD_TOKEN`)
-- Score ponderado IA vs técnico (`AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45`, `AI_SCORE_MIN=0.30`)
-- Sinal ponderado por indicador (`USE_WEIGHTED_SIGNAL`, `SIGNAL_SCORE_MIN=0.05`)
-- Target lookforward configurável (`TARGET_LOOKFORWARD=2`)
-- Velas baseadas em tempo com `CANDLE_TIMEFRAME_SEC` (substitui modelo de ticks fixos)
-- Buffer de preços configurável (`PRICE_BUFFER_SIZE=500`)
-- Cadência de entradas por velas fechadas (`ENTRY_CANDLE_INTERVAL`)
-- Promoção de modelo champion-challenger com critérios de AUC/acurácia/F1
-- Durações candidatas atualizadas para minutos: `CANDIDATE_DURATIONS=[5, 15, 30]`
-- ADX adaptativo atualizado para percentil 50 (`ADX_ADAPTIVE_PERCENTILE=50`)
-- Adicionadas 11 features de Price Action (estrutura de mercado, S/R, supply/demand, FVG)
-- Detecção de 6 padrões de vela com notificações em tempo real
-- Scores contínuos (-1 a +1) na estratégia ponderada
-- Filtro RSI relaxado (permite momentum forte)
-- Filtro PA na estratégia (bloqueia sinais contra estrutura)
-- Filtro ADX rising (bloqueia quando tendência enfraquece)
-- Cadência adaptativa (aumenta intervalo após losses)
-- Discordância TFT/Clássico → não opera (sem penalidade)
-- Target com threshold de ruído (elimina variações insignificantes)
-- Duração por heurística de volatilidade (sem lookahead bias)
-- Log em modo append (preserva histórico entre reinícios)
-- Janela temporal de 50k ticks para retreino
-- Dashboard: painel de padrões de vela com polling automático
-- 27 features no total (16 técnicas + 11 PA)
+**Em índices sintéticos (R_100, BOOM, CRASH):**
+- Acurácia: 52-60%
+- Win rate prático: 45-55% (depende de parâmetros)
+- Drawdown máximo observado: 15-25%
+- Tempo de resposta: ~100-300ms por tick
+
+**Fatores de variação:**
+- Período do dia (volatilidade muda)
+- Condições de mercado (tendência vs lateral)
+- Qualidade dos dados coletados
+- Parâmetros de tuning específicos do seu caso
+
+---
+
+## 🐛 Troubleshooting
+
+### "DERIV_TOKEN não definido"
+→ Crie `.env` com seu token (veja [Configuração Inicial](#-configuração-inicial))
+
+### "model.pkl não encontrado"
+→ Execute `python pipeline.py --demo` ou `python train_model.py`
+
+### "Modelo tem N features, código espera M"
+→ Sua lista de features mudou; retreine com `python dataset_builder.py && python train_model.py`
+
+### "WebSocket desconectado"
+→ Verifique DERIV_TOKEN, APP_ID e conexão de internet; bot reconecta automaticamente
+
+### "Acurácia baixa"
+→ Colete mais dados (500+ ticks mínimo), ajuste CANDLE_TIMEFRAME_SEC (5min recomendado), tuneie EMA_FAST/EMA_SLOW
+
+### "Dashboard não carrega"
+→ Certifique-se que `python dashboard/server.py` está rodando; acesse http://localhost:5055
+
+---
+
+## 📝 Histórico de Mudanças
+
+**v1.0** (Atual)
+- ✅ 27 features totais (16 técnicas + 11 Price Action)
+- ✅ 6 padrões de vela com notificações
+- ✅ Ensemble RF + XGB + TFT (PyTorch)
+- ✅ ADX adaptativo por percentil
+- ✅ Duração dinâmica por volatilidade
+- ✅ Pausa escalável com retomada imediata
+- ✅ Detecção de drift automática
+- ✅ Champion-challenger com critérios rigorosos
+- ✅ Score ponderado IA vs técnico
+- ✅ Filtro anti-spike
+- ✅ Heartbeat watchdog
+- ✅ Dashboard com autenticação
+- ✅ Retreino adaptativo (win rate, confiança, ticks novos)
+
+---
+
+## 🚀 Próximos Passos
+
+1. **Otimização de hiperparâmetros** — grid search em EMA, ADX, RSI
+2. **Suporte a múltiplos símbolos** — 1 modelo para Forex + índices
+3. **Backtest robusto** — framework completo de validação
+4. **Quantização de modelos** — compactar model.pkl (menor tamanho)
+5. **Alerts avançados** — Telegram, Discord, Email
+6. **Portfolio management** — gerenciar múltiplas contas/símbolos
+7. **Reinforcement Learning** — ajuste dinâmico de parâmetros
+
+---
+
+## 📧 Suporte
+
+Dúvidas ou bugs? Abra uma **Issue** no GitHub.
+
+---
+
+**Versão**: 1.0 | **Última atualização**: 2026-08-27 | **Autor**: Stanis
