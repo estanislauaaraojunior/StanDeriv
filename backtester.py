@@ -36,6 +36,7 @@ Uso programático:
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import tempfile
@@ -266,85 +267,83 @@ def run_backtest(
         )
 
     # Isola o RiskManager de qualquer estado/arquivo de log ao vivo
-    tmp_dir = tempfile.mkdtemp(prefix="standeriv_backtest_")
-    tmp_log = os.path.join(tmp_dir, "backtest_operations.csv")
     old_ops_log = rm_mod.OPERATIONS_LOG
     old_use_ai = strat_mod.USE_AI_MODEL
-    rm_mod.OPERATIONS_LOG = tmp_log
     if use_ai_model is not None:
         strat_mod.USE_AI_MODEL = use_ai_model
 
     try:
-        risk = RiskManager(initial_balance=initial_balance)
-        trades: list[Trade] = []
+        with tempfile.TemporaryDirectory(prefix="standeriv_backtest_") as tmp_dir:
+            rm_mod.OPERATIONS_LOG = os.path.join(tmp_dir, "backtest_operations.csv")
+            risk = RiskManager(initial_balance=initial_balance)
+            trades: list[Trade] = []
 
-        adx_history: list = []
-        candles_since_last_entry = ENTRY_CANDLE_INTERVAL
-        i = MIN_CANDLES - 1   # índice da última vela (0-based) já "fechada"
-        n = len(closes)
+            adx_history: collections.deque = collections.deque(maxlen=_ADX_HISTORY_MAXLEN)
+            candles_since_last_entry = ENTRY_CANDLE_INTERVAL
+            i = MIN_CANDLES - 1   # índice da última vela (0-based) já "fechada"
+            n = len(closes)
 
-        while i < n - 1:
-            window_start = max(0, i + 1 - _CANDLE_BUFFER_MAXLEN)
-            candle_closes = closes[window_start:i + 1]
+            while i < n - 1:
+                window_start = max(0, i + 1 - _CANDLE_BUFFER_MAXLEN)
+                candle_closes = closes[window_start:i + 1]
 
-            candles_since_last_entry += 1
+                candles_since_last_entry += 1
 
-            adaptive_interval = ENTRY_CANDLE_INTERVAL
-            if risk.consecutive_losses >= 2:
-                adaptive_interval += 1
+                adaptive_interval = ENTRY_CANDLE_INTERVAL
+                if risk.consecutive_losses >= 2:
+                    adaptive_interval += 1
 
-            if not risk.can_trade() or candles_since_last_entry < adaptive_interval:
-                i += 1
-                continue
+                if not risk.can_trade() or candles_since_last_entry < adaptive_interval:
+                    i += 1
+                    continue
 
-            adx_min = get_adaptive_adx_min(adx_history)
-            signal, indicators = get_signal(
-                candle_closes, adx_min=adx_min, adx_history=adx_history,
+                adx_history_list = list(adx_history)
+                adx_min = get_adaptive_adx_min(adx_history_list)
+                signal, indicators = get_signal(
+                    candle_closes, adx_min=adx_min, adx_history=adx_history_list,
+                )
+
+                if indicators.get("adx"):
+                    adx_history.append(indicators["adx"])
+
+                if signal not in ("BUY", "SELL"):
+                    i += 1
+                    continue
+
+                stake = risk.get_stake()
+                duration = ai_predictor.predict_duration(candle_closes) or DURATION
+                candles_ahead = _duration_to_candles(duration, DURATION_UNIT)
+                exit_idx = i + candles_ahead
+                if exit_idx >= n:
+                    break   # dados insuficientes para resolver o contrato — encerra
+
+                entry_price = closes[i]
+                exit_price = closes[exit_idx]
+                win = (exit_price > entry_price) if signal == "BUY" else (exit_price < entry_price)
+                profit = round(stake * payout_ratio, 2) if win else round(-stake, 2)
+
+                risk.record_result(active_symbol, signal, stake, duration, profit, indicators)
+
+                trades.append(Trade(
+                    entry_epoch=epochs[i], exit_epoch=epochs[exit_idx],
+                    direction=signal,
+                    entry_price=entry_price, exit_price=exit_price,
+                    stake=stake, duration=duration, duration_unit=DURATION_UNIT,
+                    profit=profit, result="WIN" if win else "LOSS",
+                    balance_after=risk.balance,
+                ))
+
+                candles_since_last_entry = 0
+                i = exit_idx  # próxima avaliação só após o contrato atual encerrar
+
+            return BacktestResult(
+                symbol=active_symbol,
+                initial_balance=initial_balance,
+                final_balance=risk.balance,
+                trades=trades,
+                candles_used=n,
+                use_ai_model=strat_mod.USE_AI_MODEL,
             )
-
-            if indicators.get("adx"):
-                adx_history.append(indicators["adx"])
-                if len(adx_history) > _ADX_HISTORY_MAXLEN:
-                    adx_history.pop(0)
-
-            if signal not in ("BUY", "SELL"):
-                i += 1
-                continue
-
-            stake = risk.get_stake()
-            duration = ai_predictor.predict_duration(candle_closes) or DURATION
-            candles_ahead = _duration_to_candles(duration, DURATION_UNIT)
-            exit_idx = i + candles_ahead
-            if exit_idx >= n:
-                break   # dados insuficientes para resolver o contrato — encerra
-
-            entry_price = closes[i]
-            exit_price = closes[exit_idx]
-            win = (exit_price > entry_price) if signal == "BUY" else (exit_price < entry_price)
-            profit = round(stake * payout_ratio, 2) if win else -stake
-
-            risk.record_result(active_symbol, signal, stake, duration, profit, indicators)
-
-            trades.append(Trade(
-                entry_epoch=epochs[i], exit_epoch=epochs[exit_idx],
-                direction=signal,
-                entry_price=entry_price, exit_price=exit_price,
-                stake=stake, duration=duration, duration_unit=DURATION_UNIT,
-                profit=profit, result="WIN" if win else "LOSS",
-                balance_after=risk.balance,
-            ))
-
-            candles_since_last_entry = 0
-            i = exit_idx  # próxima avaliação só após o contrato atual encerrar
-
-        return BacktestResult(
-            symbol=active_symbol,
-            initial_balance=initial_balance,
-            final_balance=risk.balance,
-            trades=trades,
-            candles_used=n,
-            use_ai_model=strat_mod.USE_AI_MODEL,
-        )
     finally:
         rm_mod.OPERATIONS_LOG = old_ops_log
         strat_mod.USE_AI_MODEL = old_use_ai
