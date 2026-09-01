@@ -269,6 +269,15 @@ OPERATIONS_LOG   = "operacoes_log.csv"
 DATASET_CSV      = "dataset.csv"
 
 # ─────────────────────────────────────────────────────────────────
+#  Backtesting offline (backtester.py) — NÃO usado em coleta/treino/execução ao vivo
+# ─────────────────────────────────────────────────────────────────
+# Payout assumido para simular contratos históricos (a Deriv só informa o payout
+# real via proposal ao vivo). É apenas uma estimativa para comparar estratégias/
+# modelos — resultados de backtest não garantem o mesmo desempenho ao vivo.
+BACKTEST_PAYOUT_RATIO = 0.85   # ganho líquido de 85% do stake em contratos vencedores
+BACKTEST_REPORTS_DIR  = "backtest_reports"
+
+# ─────────────────────────────────────────────────────────────────
 #  Temporal Fusion Transformer (TFT) — nível hedge fund
 # ─────────────────────────────────────────────────────────────────
 

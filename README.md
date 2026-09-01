@@ -225,6 +225,33 @@ Funcionalidades:
 - Indicadores técnicos (EMA, RSI, ADX, MACD)
 - Controles (start, stop, pause)
 
+### Backtesting Offline
+
+```bash
+# Backtest simples sobre o histórico coletado em ticks.csv
+python backtester.py --ticks ticks.csv --balance 1000
+
+# Compara resultado com e sem o filtro de IA (USE_AI_MODEL)
+python backtester.py --ticks ticks.csv --balance 1000 --compare-ai
+
+# Salva relatório em JSON
+python backtester.py --ticks ticks.csv --balance 1000 --output backtest_reports/run1.json
+```
+
+Reutiliza `strategy.get_signal`, `RiskManager` e `ai_predictor.predict_duration` sobre
+velas agregadas de `ticks.csv` (mesma agregação de `executor.py`/`dataset_builder.py`),
+sem qualquer conexão com a Deriv. Métricas geradas: total de trades, win rate, retorno
+total, profit factor e drawdown máximo.
+
+**Limitações importantes** (não é uma garantia de resultado ao vivo):
+- Payout assumido fixo via `BACKTEST_PAYOUT_RATIO` (config.py) — a Deriv só informa o
+  payout real por proposal ao vivo, que varia por ativo/duração/mercado.
+- Não modela slippage, requotes, latência de rede ou indisponibilidade de duração.
+- O stop/take profit diário do `RiskManager` usa a data real do sistema (não a data
+  simulada dos candles); em backtests que cobrem vários dias históricos, esses limites
+  funcionam como um guard-rail sobre o saldo inicial da simulação inteira, não por dia
+  civil simulado.
+
 ---
 
 ## 📚 Módulos Principais
@@ -243,6 +270,7 @@ Funcionalidades:
 | **pipeline.py** | Orquestrador principal; coleta → treino → execução + retreino automático adaptativamente |
 | **transformer_model.py** | Implementação Temporal Fusion Transformer com Variable Selection Network (PyTorch) |
 | **collector.py** | Coleta contínua de ticks via WebSocket; filtro anti-spike; armazena em ticks.csv |
+| **backtester.py** | Backtesting offline: simula sinais/risco/duração sobre ticks.csv sem conexão com a Deriv |
 | **deriv_session.py** | Autenticação Deriv: suporte a token legado + OAuth Bearer (REST + OTP) |
 | **dashboard/** | Interface web (Flask + HTML/JS/CSS) com autenticação por token |
 
@@ -462,13 +490,14 @@ Captura padrões de médio prazo ao invés de ruído de tick único.
 
 ## 🚀 Próximos Passos
 
-1. **Otimização de hiperparâmetros** — grid search em EMA, ADX, RSI
+1. **Otimização de hiperparâmetros** — grid search em EMA, ADX, RSI com validação temporal
 2. **Suporte a múltiplos símbolos** — 1 modelo para Forex + índices
-3. **Backtest robusto** — framework completo de validação
-4. **Quantização de modelos** — compactar model.pkl (menor tamanho)
-5. **Alerts avançados** — Telegram, Discord, Email
-6. **Portfolio management** — gerenciar múltiplas contas/símbolos
-7. **Reinforcement Learning** — ajuste dinâmico de parâmetros
+3. **Quantização de modelos** — compactar model.pkl (menor tamanho)
+4. **Alerts avançados** — Telegram, Discord, Email
+5. **Portfolio management** — gerenciar múltiplas contas/símbolos
+6. **Reinforcement Learning** — ajuste dinâmico de parâmetros (somente após validação rigorosa via `backtester.py`)
+
+> ✅ **Backtest robusto** (`backtester.py`) já implementado — veja a seção [Backtesting Offline](#backtesting-offline).
 
 ---
 

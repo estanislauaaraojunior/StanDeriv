@@ -562,13 +562,18 @@ Quando acionado:
 
 ## Próximos Passos para Desenvolvimento
 
-1. **Otimização de Hiperparâmetros**: Grid search em EMA_FAST, EMA_SLOW, ADX_MIN
+1. **Otimização de Hiperparâmetros**: Grid search em EMA_FAST, EMA_SLOW, ADX_MIN com validação temporal
 2. **Suporte a múltiplos símbolos**: Treinar modelo único para Forex, índices sintéticos, ações
 3. **Quantização de modelos**: Reduzir tamanho de model.pkl, transformer_model.pkl
-4. **Backtest robusto**: Framework completo para validar estratégias antes de produção
-5. **Alerts avançados**: Integração com Telegram, Discord, Email
-6. **Portfolio management**: Gerenciar múltiplas contas/símbolos simultaneamente
-7. **Reinforcement Learning**: Ajuste dinâmico de parâmetros via RL (futuro)
+4. **Alerts avançados**: Integração com Telegram, Discord, Email
+5. **Portfolio management**: Gerenciar múltiplas contas/símbolos simultaneamente
+6. **Reinforcement Learning**: Ajuste dinâmico de parâmetros via RL (somente após validação rigorosa via `backtester.py`)
+
+> ✅ **Backtest robusto** (`backtester.py`) já implementado. Simula sinais, risco e
+> duração dinâmica sobre `ticks.csv` sem conexão com a Deriv, reutilizando
+> `strategy.get_signal`, `RiskManager` e `ai_predictor.predict_duration`. Payout é
+> uma estimativa fixa (`BACKTEST_PAYOUT_RATIO`); não modela slippage/latência e não
+> garante desempenho ao vivo. Ver seção "Backtesting Offline" no README.md.
 
 ---
 

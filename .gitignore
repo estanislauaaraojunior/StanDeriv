@@ -11,6 +11,9 @@ ticks.csv
 dataset.csv
 operacoes_log.csv
 
+# ── Relatórios de backtest (gerados localmente) ──────────────────
+backtest_reports/
+
 # ── Python ──────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
