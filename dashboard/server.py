@@ -11,13 +11,16 @@ Acesso: http://localhost:5055
 """
 
 import collections
+import datetime as dt
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from functools import wraps
 from pathlib import Path
 
@@ -67,12 +70,15 @@ MODEL_PKL      = _ROOT / "model.pkl"
 TFT_PKL        = _ROOT / "transformer_model.pkl"
 DURATION_PKL   = _ROOT / "duration_model.pkl"
 PIPELINE_PY    = _ROOT / "pipeline.py"
+BACKTEST_PY    = _ROOT / "backtest.py"
 PID_FILE       = _ROOT / "dashboard" / "bot.pid"
 STATIC_DIR     = Path(__file__).resolve().parent
 RISK_STATE_JSON = _ROOT / "risk_state.json"
 STATE_JSON      = _ROOT / "state.json"
 MODEL_METRICS_JSON = _ROOT / "model_metrics.json"
 PIPELINE_LOG_TXT = _ROOT / "pipeline.log"
+BACKTEST_ROOT = _ROOT / "backtest_reports" / "dashboard"
+BACKTEST_STATE_JSON = BACKTEST_ROOT / "state.json"
 
 # ─── Flask App ────────────────────────────────────────────────────────────────
 
@@ -110,6 +116,13 @@ app.json = _SafeJSONProvider(app)
 _bot_log_buffer: collections.deque = collections.deque(maxlen=200)
 _bot_process: subprocess.Popen | None = None
 _bot_log_lock = threading.Lock()
+
+# Backtests rodam em subprocesso para não bloquear o servidor Flask nem
+# compartilhar estado dos modelos com o processo do bot.
+_backtest_process: subprocess.Popen | None = None
+_backtest_log_buffer: collections.deque = collections.deque(maxlen=200)
+_backtest_lock = threading.RLock()
+_backtest_state: dict = {}
 
 
 def _read_bot_output(proc: subprocess.Popen) -> None:
@@ -205,6 +218,124 @@ def _bot_running() -> tuple[bool, int | None]:
             return True, pid
         except (ProcessLookupError, PermissionError):
             return False, None
+
+
+def _persist_backtest_state(state: dict) -> None:
+    """Persiste o estado da execução com substituição atômica."""
+    BACKTEST_ROOT.mkdir(parents=True, exist_ok=True)
+    temp_path = BACKTEST_STATE_JSON.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    os.replace(temp_path, BACKTEST_STATE_JSON)
+
+
+def _get_backtest_state() -> dict:
+    global _backtest_state
+    with _backtest_lock:
+        if not _backtest_state and BACKTEST_STATE_JSON.exists():
+            try:
+                loaded = json.loads(BACKTEST_STATE_JSON.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    _backtest_state = loaded
+            except (OSError, json.JSONDecodeError):
+                pass
+        return dict(_backtest_state)
+
+
+def _set_backtest_state(**updates) -> dict:
+    global _backtest_state
+    with _backtest_lock:
+        current = _get_backtest_state()
+        current.update(updates)
+        _backtest_state = current
+        _persist_backtest_state(current)
+        return dict(current)
+
+
+def _backtest_running() -> tuple[bool, int | None]:
+    with _backtest_lock:
+        if _backtest_process is not None and _backtest_process.poll() is None:
+            return True, _backtest_process.pid
+        state = _get_backtest_state()
+    pid = state.get("pid")
+    # Após reinício do servidor, não confia apenas em um PID persistido: ele
+    # pode já ter sido reutilizado por outro processo. O status será marcado
+    # como interrompido, sem risco de terminar um processo alheio.
+    return False, int(pid) if isinstance(pid, int) else None
+
+
+def _read_backtest_output(proc: subprocess.Popen, run_id: str, run_dir: Path) -> None:
+    """Captura logs e finaliza o estado persistido do backtest."""
+    log_path = run_dir / "backtest.log"
+    try:
+        stdout = proc.stdout
+        with log_path.open("a", encoding="utf-8") as log_file:
+            if stdout is not None:
+                for line in stdout:
+                    decoded = line.rstrip()
+                    if not decoded:
+                        continue
+                    log_file.write(decoded + "\n")
+                    log_file.flush()
+                    with _backtest_lock:
+                        _backtest_log_buffer.append(decoded)
+                stdout.close()
+        returncode = proc.wait()
+    except Exception as exc:
+        returncode = proc.poll()
+        with _backtest_lock:
+            _backtest_log_buffer.append(f"Falha ao ler processo: {exc}")
+
+    report_path = run_dir / "backtest_report.json"
+    current = _get_backtest_state()
+    if current.get("run_id") != run_id:
+        return
+    requested_stop = current.get("status") == "stopping"
+    completed = returncode == 0 and report_path.exists() and not requested_stop
+    error = ""
+    if not completed and not requested_stop:
+        error = f"Backtest finalizado com código {returncode}"
+    try:
+        _set_backtest_state(
+            status="completed" if completed else ("stopped" if requested_stop else "failed"),
+            running=False,
+            returncode=returncode,
+            finished_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            report_available=report_path.exists(),
+            error=error,
+        )
+    except OSError:
+        pass
+
+
+def _validated_number(
+    data: dict,
+    key: str,
+    default: float,
+    minimum: float,
+    maximum: float,
+    integer: bool = False,
+):
+    try:
+        value = int(data.get(key, default)) if integer else float(data.get(key, default))
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} deve ser numérico") from None
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{key} deve estar entre {minimum} e {maximum}")
+    return value
+
+
+def _safe_report_path(state: dict) -> Path | None:
+    raw = state.get("report_path")
+    if not raw:
+        return None
+    try:
+        path = Path(raw).resolve()
+        root = BACKTEST_ROOT.resolve()
+        if not path.is_relative_to(root):
+            return None
+        return path
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 # ─── Rotas estáticas ─────────────────────────────────────────────────────────
@@ -460,6 +591,12 @@ def api_bot_start():
     running, pid = _bot_running()
     if running:
         return jsonify({"ok": False, "msg": f"Bot já está rodando (PID {pid})."}), 409
+    backtest_running, backtest_pid = _backtest_running()
+    if backtest_running:
+        return jsonify({
+            "ok": False,
+            "msg": f"Backtest em execução (PID {backtest_pid}). Aguarde ou cancele antes de iniciar o bot.",
+        }), 409
 
     data = request.get_json(silent=True) or {}
     mode = data.get("mode", "demo")
@@ -653,6 +790,270 @@ def api_bot_logs():
     if not lines:
         lines = _read_recent_pipeline_logs()
     return jsonify({"lines": lines})
+
+
+# ─── API: Backtesting offline ────────────────────────────────────────────────
+
+@app.route("/api/backtest/status")
+def api_backtest_status():
+    running, pid = _backtest_running()
+    state = _get_backtest_state()
+    with _backtest_lock:
+        process_known = _backtest_process is not None
+    if (
+        state.get("status") in {"running", "stopping"}
+        and not running
+        and not process_known
+    ):
+        state = _set_backtest_state(
+            status="failed",
+            running=False,
+            finished_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            error="Processo interrompido antes de concluir",
+        )
+    with _backtest_lock:
+        logs = list(_backtest_log_buffer)[-50:]
+    return jsonify({
+        "status": state.get("status", "idle"),
+        "running": running,
+        "pid": pid,
+        "run_id": state.get("run_id"),
+        "started_at": state.get("started_at"),
+        "finished_at": state.get("finished_at"),
+        "params": state.get("params", {}),
+        "report_available": bool(state.get("report_available", False)),
+        "error": state.get("error", ""),
+        "logs": logs,
+    })
+
+
+@app.route("/api/backtest/start", methods=["POST"])
+@_require_token
+def api_backtest_start():
+    global _backtest_process
+
+    bot_is_running, _ = _bot_running()
+    if bot_is_running:
+        return jsonify({
+            "ok": False,
+            "msg": "Pare o bot antes de executar o backtest.",
+        }), 409
+    running, pid = _backtest_running()
+    if running:
+        return jsonify({
+            "ok": False,
+            "msg": f"Backtest já está em execução (PID {pid}).",
+        }), 409
+    if not BACKTEST_PY.exists() or not TICKS_CSV.exists():
+        return jsonify({
+            "ok": False,
+            "msg": "backtest.py ou ticks.csv não encontrado.",
+        }), 404
+
+    data = request.get_json(silent=True) or {}
+    try:
+        symbol = str(data.get("symbol", "")).strip()
+        if symbol and not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", symbol):
+            raise ValueError("symbol contém caracteres inválidos")
+        balance = _validated_number(data, "balance", 1000.0, 0.35, 1_000_000_000)
+        payout = _validated_number(data, "payout", 0.85, 0.0, 10.0)
+        cost_rate = _validated_number(data, "cost_rate", 0.0, 0.0, 1.0)
+        fixed_cost = _validated_number(data, "fixed_cost", 0.0, 0.0, 1_000_000)
+        duration = _validated_number(data, "duration", 15, 1, 1440, integer=True)
+        timeframe = _validated_number(data, "timeframe", 60, 1, 86400, integer=True)
+        max_ticks = _validated_number(
+            data,
+            "max_ticks",
+            100_000,
+            500,
+            2_000_000,
+            integer=True,
+        )
+        duration_unit = str(data.get("duration_unit", "m"))
+        if duration_unit not in {"m", "s", "t"}:
+            raise ValueError("duration_unit deve ser 'm', 's' ou 't'")
+        for key in ("with_ai", "dynamic_duration", "candle_patterns"):
+            if key in data and not isinstance(data[key], bool):
+                raise ValueError(f"{key} deve ser booleano")
+    except ValueError as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 400
+
+    params = {
+        "symbol": symbol,
+        "balance": balance,
+        "payout": payout,
+        "cost_rate": cost_rate,
+        "fixed_cost": fixed_cost,
+        "duration": duration,
+        "duration_unit": duration_unit,
+        "timeframe": timeframe,
+        "max_ticks": max_ticks,
+        "with_ai": bool(data.get("with_ai", False)),
+        "dynamic_duration": bool(data.get("dynamic_duration", False)),
+        "candle_patterns": bool(data.get("candle_patterns", True)),
+    }
+    run_id = (
+        dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + uuid.uuid4().hex[:8]
+    )
+    run_dir = BACKTEST_ROOT / run_id
+    report_path = run_dir / "backtest_report.json"
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 500
+
+    cmd = [
+        sys.executable,
+        "-u",
+        str(BACKTEST_PY),
+        "--input",
+        str(TICKS_CSV),
+        "--output-dir",
+        str(run_dir),
+        "--balance",
+        str(balance),
+        "--payout",
+        str(payout),
+        "--cost-rate",
+        str(cost_rate),
+        "--fixed-cost",
+        str(fixed_cost),
+        "--duration",
+        str(duration),
+        "--duration-unit",
+        duration_unit,
+        "--timeframe",
+        str(timeframe),
+        "--max-ticks",
+        str(max_ticks),
+    ]
+    if symbol:
+        cmd += ["--symbol", symbol]
+    if params["with_ai"]:
+        cmd.append("--with-ai")
+    if params["dynamic_duration"]:
+        cmd.append("--dynamic-duration")
+    if not params["candle_patterns"]:
+        cmd.append("--no-candle-patterns")
+
+    proc = None
+    try:
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env.pop("DASHBOARD_TOKEN", None)
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+            env=env,
+        )
+        _backtest_process = proc
+        with _backtest_lock:
+            _backtest_log_buffer.clear()
+        _set_backtest_state(
+            run_id=run_id,
+            status="running",
+            running=True,
+            pid=proc.pid,
+            started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            finished_at=None,
+            params=params,
+            report_path=str(report_path),
+            report_available=False,
+            returncode=None,
+            error="",
+        )
+        threading.Thread(
+            target=_read_backtest_output,
+            args=(proc, run_id, run_dir),
+            daemon=True,
+            name=f"Backtest-{run_id}",
+        ).start()
+        return jsonify({"ok": True, "run_id": run_id, "pid": proc.pid}), 202
+    except Exception as exc:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        try:
+            _set_backtest_state(
+                run_id=run_id,
+                status="failed",
+                running=False,
+                finished_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                params=params,
+                report_path=str(report_path),
+                report_available=False,
+                error=str(exc),
+            )
+        except OSError:
+            pass
+        return jsonify({"ok": False, "msg": str(exc)}), 500
+
+
+@app.route("/api/backtest/stop", methods=["POST"])
+@_require_token
+def api_backtest_stop():
+    running, pid = _backtest_running()
+    if not running or pid is None:
+        return jsonify({"ok": False, "msg": "Backtest não está em execução."}), 409
+    try:
+        _set_backtest_state(status="stopping", running=True)
+        if _PSUTIL:
+            proc = psutil.Process(pid)
+            for child in proc.children(recursive=True):
+                child.terminate()
+            proc.terminate()
+        else:
+            os.kill(pid, signal.SIGTERM)
+        return jsonify({"ok": True, "pid": pid})
+    except Exception as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 500
+
+
+@app.route("/api/backtest/result")
+def api_backtest_result():
+    state = _get_backtest_state()
+    report_path = _safe_report_path(state)
+    if report_path is None or not report_path.exists():
+        return jsonify({"ok": False, "msg": "Nenhum relatório disponível."}), 404
+    try:
+        try:
+            n = min(max(int(request.args.get("n", 200)), 1), 1000)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "msg": "n deve ser inteiro"}), 400
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if not isinstance(report, dict):
+            raise ValueError("formato de relatório inválido")
+        trades = report.pop("trades", [])
+        if not isinstance(trades, list):
+            trades = []
+        initial_balance = float(report.get("metrics", {}).get("initial_balance", 0.0))
+        equity_curve = []
+        if trades:
+            equity_curve.append({
+                "epoch": int(trades[0].get("entry_epoch", 0)),
+                "balance": initial_balance,
+            })
+            equity_curve.extend({
+                "epoch": int(trade.get("expiry_epoch", 0)),
+                "balance": float(trade.get("balance_after", 0.0)),
+            } for trade in trades)
+        if len(equity_curve) > 500:
+            step = _math.ceil(len(equity_curve) / 500)
+            sampled = equity_curve[::step]
+            if sampled[-1] != equity_curve[-1]:
+                sampled.append(equity_curve[-1])
+            equity_curve = sampled
+        report["trades"] = list(reversed(trades[-n:]))
+        report["equity_curve"] = equity_curve
+        return jsonify({"ok": True, "report": report})
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 500
 
 
 # ─── API: Equity curve ────────────────────────────────────────────────────────

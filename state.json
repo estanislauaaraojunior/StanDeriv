@@ -1,1 +1,1 @@
-{"symbol": "frxEURUSD", "active_contract": {"has_active": true, "contract_id": "11630799819", "symbol": "frxEURUSD", "direction": "SELL", "duration": 15, "buy_timestamp": 1788482341.4081428, "entry_epoch": 1788482341, "entry_price": 1.16257}, "session_start": "2026-09-03T19:30:20.637351", "min_ticks_target": 200}
+{"symbol": "frxAUDNZD", "active_contract": null, "session_start": "2026-09-04T10:23:31.653087", "min_ticks_target": 200}

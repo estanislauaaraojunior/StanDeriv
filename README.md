@@ -132,6 +132,12 @@ cd dashboard && bash start.sh
 # Acesse: http://localhost:5055
 ```
 
+A aba **Backtest** permite configurar e executar a simulação offline, acompanhar
+o processo e visualizar métricas, curva de equity e operações. A execução usa o
+mesmo `DASHBOARD_TOKEN` das demais ações de controle e só é permitida enquanto o
+bot ao vivo estiver parado. Os relatórios ficam isolados por execução em
+`backtest_reports/dashboard/`.
+
 ## Módulos
 
 | Arquivo | Descrição |

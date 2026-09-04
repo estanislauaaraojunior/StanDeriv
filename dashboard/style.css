@@ -159,6 +159,7 @@ html, body {
   border: 1px solid var(--border-light);
 }
 .btn-outline:hover { background: var(--bg-card2); color: var(--text-primary); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ─── Tabs ────────────────────────────────────────────────── */
 .tab {
@@ -188,6 +189,98 @@ html, body {
 .card-label  { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
 .card-value  { font-size: 26px; font-weight: 600; font-family: var(--font-mono); line-height: 1; }
 .card-sub    { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+/* ─── Backtest ─────────────────────────────────────────────── */
+.backtest-control-card { margin-bottom: 20px; }
+.backtest-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.backtest-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.backtest-form-grid input,
+.backtest-form-grid select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  outline: none;
+}
+.backtest-form-grid input:focus,
+.backtest-form-grid select:focus { border-color: var(--blue); }
+.backtest-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 14px;
+}
+.backtest-warning {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,184,48,0.35);
+  border-radius: 6px;
+  background: rgba(255,184,48,0.08);
+  color: var(--yellow);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.backtest-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.backtest-status-detail { color: var(--text-secondary); font-size: 12px; }
+.backtest-status {
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+}
+.backtest-status.running,
+.backtest-status.stopping { color: var(--yellow); background: rgba(255,184,48,0.12); }
+.backtest-status.completed { color: var(--green); background: rgba(0,255,136,0.12); }
+.backtest-status.failed,
+.backtest-status.stopped { color: var(--red); background: rgba(255,71,87,0.12); }
+.backtest-logs {
+  max-height: 130px;
+  overflow: auto;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+}
+.backtest-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 11px 18px;
+  align-items: center;
+  padding-top: 6px;
+  font-size: 13px;
+}
+.backtest-summary-grid span { color: var(--text-secondary); }
+.backtest-summary-grid strong { color: var(--text-primary); font-family: var(--font-mono); text-align: right; }
+.backtest-table-wrap { max-height: 360px; }
+.badge-tie { background: rgba(255,184,48,0.15); color: var(--yellow); }
 
 .positive { color: var(--green) !important; }
 .negative { color: var(--red)   !important; }
@@ -1130,6 +1223,8 @@ html, body {
   /* AI risk 2-col */
   .ai-risk-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
 
+  .backtest-form-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+
   /* Model info */
   .model-info-grid { gap: 8px; }
   .info-item { min-width: 100px; padding: 10px 12px; }
@@ -1194,6 +1289,9 @@ html, body {
   /* AI risk 1 col */
   .ai-risk-grid { grid-template-columns: 1fr; gap: 8px; }
 
+  .backtest-form-grid { grid-template-columns: 1fr; }
+  .backtest-options { flex-direction: column; gap: 8px; }
+
   /* Gauge smaller */
   .gauge-svg { width: 110px; }
   .gauge-value { font-size: 18px; }
@@ -1240,4 +1338,3 @@ html, body {
   .consec-dot { width: 18px; height: 18px; }
   .consec-value { font-size: 18px; }
 }
-

@@ -28,6 +28,7 @@
       <span class="nav-icon">⬡</span>
       <span class="nav-label">Overview</span>
     </li>
+    <li class="nav-item" data-tab="technical">
       <span class="nav-icon">⬢</span>
       <span class="nav-label">Análise Técnica</span>
     </li>
@@ -42,6 +43,10 @@
     <li class="nav-item" data-tab="stats">
       <span class="nav-icon">◉</span>
       <span class="nav-label">Estatísticas</span>
+    </li>
+    <li class="nav-item" data-tab="backtest">
+      <span class="nav-icon">◫</span>
+      <span class="nav-label">Backtest</span>
     </li>
     <li class="nav-item" data-tab="pipeline">
       <span class="nav-icon">▤</span>
@@ -399,6 +404,146 @@
         <div id="dirStatsWrap" class="dir-stats-wrap">
           <div class="candle-pattern-empty">Aguardando dados...</div>
         </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ════════════════════ TAB: BACKTEST ════════════════════════ -->
+  <section id="tab-backtest" class="tab">
+
+    <div class="chart-card full-width backtest-control-card">
+      <div class="chart-title">
+        Backtest Offline
+        <span id="backtestStatus" class="backtest-status idle">Aguardando</span>
+      </div>
+
+      <form id="backtestForm" onsubmit="event.preventDefault(); startBacktest()">
+        <div class="backtest-form-grid">
+          <label>Símbolo
+            <input id="backtestSymbol" type="text" value="R_100" maxlength="32" autocomplete="off" />
+          </label>
+          <label>Saldo inicial (USD)
+            <input id="backtestBalance" type="number" value="1000" min="0.35" step="10" />
+          </label>
+          <label>Payout líquido
+            <input id="backtestPayout" type="number" value="0.85" min="0" max="10" step="0.01" />
+          </label>
+          <label>Duração
+            <input id="backtestDuration" type="number" value="15" min="1" max="1440" step="1" />
+          </label>
+          <label>Unidade da duração
+            <select id="backtestDurationUnit">
+              <option value="m" selected>Minutos</option>
+              <option value="s">Segundos</option>
+              <option value="t">Ticks</option>
+            </select>
+          </label>
+          <label>Timeframe da vela (s)
+            <input id="backtestTimeframe" type="number" value="60" min="1" max="86400" step="1" />
+          </label>
+          <label>Máximo de ticks
+            <input id="backtestMaxTicks" type="number" value="100000" min="500" max="2000000" step="500" />
+          </label>
+          <label>Custo proporcional
+            <input id="backtestCostRate" type="number" value="0" min="0" max="1" step="0.001" />
+          </label>
+          <label>Custo fixo (USD)
+            <input id="backtestFixedCost" type="number" value="0" min="0" step="0.01" />
+          </label>
+          <label>Token da dashboard
+            <input id="backtestAuthToken" type="password" placeholder="Somente se configurado" autocomplete="current-password" />
+          </label>
+        </div>
+
+        <div class="backtest-options">
+          <label class="checkbox-label">
+            <input id="backtestCandlePatterns" type="checkbox" checked /> Filtro de padrões de vela
+          </label>
+          <label class="checkbox-label">
+            <input id="backtestWithAi" type="checkbox" /> Usar ensemble de IA
+          </label>
+          <label class="checkbox-label">
+            <input id="backtestDynamicDuration" type="checkbox" /> Duração dinâmica
+          </label>
+        </div>
+
+        <div class="backtest-warning">
+          O backtest só pode rodar com o bot parado. Ative IA ou duração dinâmica apenas para um período fora da amostra.
+        </div>
+        <div class="backtest-actions">
+          <button id="backtestStartBtn" class="btn btn-green" type="submit">▶ Executar backtest</button>
+          <button id="backtestStopBtn" class="btn btn-red" type="button" onclick="stopBacktest()" style="display:none">■ Cancelar</button>
+          <span id="backtestStatusDetail" class="backtest-status-detail">Nenhuma execução iniciada.</span>
+        </div>
+      </form>
+      <pre id="backtestLogs" class="backtest-logs" style="display:none"></pre>
+    </div>
+
+    <div class="cards-grid backtest-metrics">
+      <div class="card">
+        <div class="card-label">Operações</div>
+        <div class="card-value" id="backtestTrades">—</div>
+        <div class="card-sub" id="backtestWinsLosses">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Win Rate</div>
+        <div class="card-value" id="backtestWinRate">—</div>
+        <div class="card-sub">empates contam como perda</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Retorno Líquido</div>
+        <div class="card-value" id="backtestReturn">—</div>
+        <div class="card-sub" id="backtestNetProfit">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Drawdown Máximo</div>
+        <div class="card-value" id="backtestDrawdown">—</div>
+        <div class="card-sub" id="backtestDrawdownUsd">—</div>
+      </div>
+    </div>
+
+    <div class="chart-section">
+      <div class="chart-card" style="flex:1.5">
+        <div class="chart-title">Curva de Equity Simulada</div>
+        <div class="chart-wrap chart-tall"><canvas id="backtestEquityChart"></canvas></div>
+      </div>
+      <div class="chart-card" style="flex:1">
+        <div class="chart-title">Resumo da Execução</div>
+        <div class="backtest-summary-grid">
+          <span>Saldo final</span><strong id="backtestFinalBalance">—</strong>
+          <span>Profit factor</span><strong id="backtestProfitFactor">—</strong>
+          <span>Expectância</span><strong id="backtestExpectancy">—</strong>
+          <span>Total apostado</span><strong id="backtestTotalStaked">—</strong>
+          <span>Custos</span><strong id="backtestTotalCosts">—</strong>
+          <span>Máx. perdas seguidas</span><strong id="backtestMaxLosses">—</strong>
+          <span>Símbolo</span><strong id="backtestResultSymbol">—</strong>
+          <span>Modo</span><strong id="backtestMode">—</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-card full-width">
+      <div class="chart-title">Últimas Operações Simuladas</div>
+      <div class="table-wrap backtest-table-wrap">
+        <table class="hist-table">
+          <thead>
+            <tr>
+              <th>Expiração</th>
+              <th>Direção</th>
+              <th>Entrada</th>
+              <th>Saída</th>
+              <th>Duração</th>
+              <th>Resultado</th>
+              <th>Stake</th>
+              <th>P&amp;L</th>
+              <th>Saldo</th>
+            </tr>
+          </thead>
+          <tbody id="backtestTradesBody">
+            <tr><td colspan="9" class="empty-msg">Execute um backtest para visualizar as operações.</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 

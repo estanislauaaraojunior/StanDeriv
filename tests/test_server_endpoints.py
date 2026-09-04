@@ -10,7 +10,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -37,6 +37,8 @@ def client():
         empty_risk = tmp / "risk_state.json"
         empty_state = tmp / "state.json"
         empty_metrics = tmp / "model_metrics.json"
+        backtest_root = tmp / "backtest_reports"
+        backtest_state = backtest_root / "state.json"
 
         empty_ops.write_text("")
         empty_ticks.write_text("")
@@ -48,11 +50,17 @@ def client():
              patch.object(srv, "TICKS_CSV", empty_ticks), \
              patch.object(srv, "RISK_STATE_JSON", empty_risk), \
              patch.object(srv, "STATE_JSON", empty_state), \
-             patch.object(srv, "MODEL_METRICS_JSON", empty_metrics):
+             patch.object(srv, "MODEL_METRICS_JSON", empty_metrics), \
+             patch.object(srv, "BACKTEST_ROOT", backtest_root), \
+             patch.object(srv, "BACKTEST_STATE_JSON", backtest_state):
 
+            srv._backtest_state = {}
+            srv._backtest_process = None
             srv.app.config["TESTING"] = True
             with srv.app.test_client() as c:
                 yield c
+            srv._backtest_state = {}
+            srv._backtest_process = None
 
 
 # ─── Endpoints estáticos ──────────────────────────────────────────────────────
@@ -60,6 +68,14 @@ def client():
 def test_index_returns_200(client):
     r = client.get("/")
     assert r.status_code == 200
+
+
+def test_index_contains_backtest_panel(client):
+    html = client.get("/").get_data(as_text=True)
+
+    assert 'data-tab="backtest"' in html
+    assert 'id="backtestForm"' in html
+    assert 'id="backtestEquityChart"' in html
 
 
 def test_favicon_no_error(client):
@@ -216,6 +232,18 @@ def test_bot_start_negative_balance_returns_400(client):
         assert r.status_code == 400
 
 
+def test_bot_start_refuses_while_backtest_is_running(client):
+    """Evita competição de recursos entre execução ao vivo e backtest."""
+    import dashboard.server as srv
+
+    with patch.object(srv, "_bot_running", return_value=(False, None)), \
+         patch.object(srv, "_backtest_running", return_value=(True, 4242)):
+        response = client.post("/api/bot/start", json={"mode": "demo", "balance": 1000})
+
+    assert response.status_code == 409
+    assert "Backtest em execução" in response.get_json()["msg"]
+
+
 # ─── /api/bot/logs ───────────────────────────────────────────────────────────
 
 def test_bot_logs_returns_200(client):
@@ -342,3 +370,138 @@ def test_stats_returns_200(client):
 def test_stats_empty_data_returns_empty_dict(client):
     data = json.loads(client.get("/api/stats").data)
     assert isinstance(data, dict)
+
+
+# ─── /api/backtest ───────────────────────────────────────────────────────────
+
+def test_backtest_status_is_idle_without_execution(client):
+    import dashboard.server as srv
+
+    srv._backtest_state = {}
+    with patch.object(srv, "_backtest_process", None):
+        data = client.get("/api/backtest/status").get_json()
+
+    assert data["status"] == "idle"
+    assert data["running"] is False
+    assert isinstance(data["logs"], list)
+
+
+def test_backtest_result_returns_404_without_report(client):
+    import dashboard.server as srv
+
+    srv._backtest_state = {}
+    response = client.get("/api/backtest/result")
+
+    assert response.status_code == 404
+    assert response.get_json()["ok"] is False
+
+
+def test_backtest_start_requires_token_when_configured(client):
+    import dashboard.server as srv
+
+    with patch.object(srv, "_DASHBOARD_TOKEN", "secret123"):
+        response = client.post("/api/backtest/start", json={})
+
+    assert response.status_code == 401
+
+
+def test_backtest_start_refuses_when_live_bot_is_running(client):
+    import dashboard.server as srv
+
+    with patch.object(srv, "_bot_running", return_value=(True, 123)):
+        response = client.post("/api/backtest/start", json={})
+
+    assert response.status_code == 409
+    assert "Pare o bot" in response.get_json()["msg"]
+
+
+def test_backtest_start_validates_parameters(client):
+    import dashboard.server as srv
+
+    with patch.object(srv, "_bot_running", return_value=(False, None)), \
+         patch.object(srv, "_backtest_running", return_value=(False, None)):
+        response = client.post("/api/backtest/start", json={"payout": -0.1})
+
+    assert response.status_code == 400
+    assert "payout" in response.get_json()["msg"]
+
+
+def test_backtest_start_rejects_non_boolean_flags(client):
+    import dashboard.server as srv
+
+    with patch.object(srv, "_bot_running", return_value=(False, None)), \
+         patch.object(srv, "_backtest_running", return_value=(False, None)):
+        response = client.post(
+            "/api/backtest/start",
+            json={"with_ai": "false"},
+        )
+
+    assert response.status_code == 400
+    assert "with_ai" in response.get_json()["msg"]
+
+
+def test_backtest_start_builds_safe_subprocess_command(client):
+    import dashboard.server as srv
+
+    fake_process = MagicMock()
+    fake_process.pid = 4242
+    fake_process.poll.return_value = None
+    fake_process.stdout = []
+    with patch.object(srv, "_bot_running", return_value=(False, None)), \
+         patch.object(srv, "_backtest_running", return_value=(False, None)), \
+         patch.object(srv.subprocess, "Popen", return_value=fake_process) as popen, \
+         patch.object(srv.threading, "Thread") as thread:
+        response = client.post(
+            "/api/backtest/start",
+            json={
+                "symbol": "R_100",
+                "balance": 1000,
+                "payout": 0.85,
+                "duration": 15,
+                "duration_unit": "m",
+                "timeframe": 60,
+                "max_ticks": 5000,
+                "with_ai": False,
+            },
+        )
+
+    assert response.status_code == 202
+    assert response.get_json()["ok"] is True
+    command = popen.call_args.args[0]
+    assert command[:3] == [sys.executable, "-u", str(srv.BACKTEST_PY)]
+    assert "--symbol" in command
+    assert "R_100" in command
+    assert "--with-ai" not in command
+    assert popen.call_args.kwargs.get("shell") is None
+    thread.return_value.start.assert_called_once()
+
+
+def test_backtest_result_returns_metrics_curve_and_limited_trades(client):
+    import dashboard.server as srv
+
+    run_dir = srv.BACKTEST_ROOT / "test-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    report_path = run_dir / "backtest_report.json"
+    report_path.write_text(json.dumps({
+        "symbol": "R_100",
+        "settings": {"payout_ratio": 0.85},
+        "metrics": {"initial_balance": 1000.0, "trades": 2},
+        "trades": [
+            {"entry_epoch": 100, "expiry_epoch": 200, "balance_after": 1008.5},
+            {"entry_epoch": 300, "expiry_epoch": 400, "balance_after": 998.5},
+        ],
+    }), encoding="utf-8")
+    srv._backtest_state = {
+        "status": "completed",
+        "report_path": str(report_path),
+        "report_available": True,
+    }
+
+    response = client.get("/api/backtest/result?n=1")
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["ok"] is True
+    assert len(data["report"]["trades"]) == 1
+    assert len(data["report"]["equity_curve"]) == 3
+    assert data["report"]["equity_curve"][-1]["balance"] == 998.5

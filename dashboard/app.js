@@ -17,6 +17,8 @@ const state = {
   histFilter:   'all',
   allTrades:    [],
   activeContract: null,
+  backtestRunId: null,
+  backtestResultRunId: null,
 
   // Chart instances
   charts: {
@@ -25,6 +27,7 @@ const state = {
     rsi:    null,
     macd:   null,
     rtContract: null,
+    backtestEquity: null,
   },
 
   // Dados locais para RSI/MACD (série temporal de indicadores)
@@ -41,6 +44,7 @@ const POLL_IND      = 5_000;
 const POLL_MODEL    = 10_000;
 const POLL_LOGS     = 2_000;
 const POLL_CONTRACT = 2_000;
+const POLL_BACKTEST = 2_000;
 
 // Candlestick desativado por padrão para evitar renderização distorcida de velas.
 const ENABLE_CANDLESTICK = false;
@@ -59,6 +63,14 @@ function el(id)             { return document.getElementById(id); }
 function setClass(elem, cls, flag) {
   if (typeof elem === 'string') elem = el(elem);
   elem?.classList[flag ? 'add' : 'remove'](cls);
+}
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 // ─── Toast ──────────────────────────────────────────────────────────────────
@@ -107,6 +119,10 @@ document.querySelectorAll('.nav-item').forEach(item => {
     }
     if (tab === 'ai') {
       pollModelMetrics();
+    }
+    if (tab === 'backtest') {
+      setTimeout(() => { state.charts.backtestEquity?.resize(); }, 50);
+      pollBacktestStatus();
     }
   });
 });
@@ -1273,7 +1289,8 @@ function stopStartupPolling() {
 
 // Quick Start: inicia no modo demo com valores padr\u00e3o, sem precisar da modal
 function _authHeaders(extra = {}) {
-  const token = (el('authToken') ? el('authToken').value.trim() : '') ||
+  const token = (el('backtestAuthToken') ? el('backtestAuthToken').value.trim() : '') ||
+                (el('authToken') ? el('authToken').value.trim() : '') ||
                 localStorage.getItem('dashboardToken') || '';
   if (token) localStorage.setItem('dashboardToken', token);
   return { 'Content-Type': 'application/json', ...(token ? { 'X-Auth-Token': token } : {}), ...extra };
@@ -1579,12 +1596,247 @@ async function pollSystem() {
   } catch (_) {}
 }
 
+// ─── Backtest offline ───────────────────────────────────────────────────────
+
+function initBacktestChart() {
+  const canvas = el('backtestEquityChart');
+  if (!canvas) return;
+  state.charts.backtestEquity = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'Saldo simulado',
+        data: [],
+        borderColor: '#58a6ff',
+        backgroundColor: 'rgba(88,166,255,0.10)',
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.15,
+        fill: true,
+      }],
+    },
+    options: {
+      ...baseChartOptions,
+      parsing: false,
+      scales: {
+        x: {
+          type: 'time',
+          grid: { display: false },
+          ticks: { maxTicksLimit: 6, maxRotation: 0 },
+        },
+        y: { ...baseChartOptions.scales.y },
+      },
+    },
+  });
+}
+
+function _setBacktestStatus(status, detail = '') {
+  const badge = el('backtestStatus');
+  const allowed = ['idle', 'running', 'completed', 'failed', 'stopped', 'stopping'];
+  const normalized = allowed.includes(status) ? status : 'idle';
+  const labels = {
+    idle: 'Aguardando',
+    running: 'Executando',
+    completed: 'Concluído',
+    failed: 'Falhou',
+    stopped: 'Cancelado',
+    stopping: 'Cancelando',
+  };
+  if (badge) {
+    badge.className = `backtest-status ${normalized}`;
+    badge.textContent = labels[normalized];
+  }
+  if (el('backtestStatusDetail') && detail) {
+    el('backtestStatusDetail').textContent = detail;
+  }
+  const running = normalized === 'running' || normalized === 'stopping';
+  if (el('backtestStartBtn')) {
+    el('backtestStartBtn').disabled = running || state.botRunning;
+  }
+  if (el('backtestStopBtn')) {
+    el('backtestStopBtn').style.display = running ? '' : 'none';
+    el('backtestStopBtn').disabled = normalized === 'stopping';
+  }
+}
+
+async function startBacktest() {
+  if (state.botRunning) {
+    showToast('Pare o bot antes de executar o backtest.', 'err');
+    return;
+  }
+  const numericIds = [
+    'backtestBalance', 'backtestPayout', 'backtestDuration',
+    'backtestTimeframe', 'backtestMaxTicks', 'backtestCostRate',
+    'backtestFixedCost',
+  ];
+  for (const id of numericIds) {
+    if (!el(id)?.checkValidity()) {
+      el(id).reportValidity();
+      return;
+    }
+  }
+  const withAi = !!el('backtestWithAi')?.checked;
+  const dynamicDuration = !!el('backtestDynamicDuration')?.checked;
+  if ((withAi || dynamicDuration) && !confirm(
+    'Os modelos só podem ser avaliados em dados fora da amostra. Confirma que estes ticks não participaram do treinamento?'
+  )) return;
+
+  const payload = {
+    symbol: el('backtestSymbol')?.value.trim() || '',
+    balance: Number(el('backtestBalance')?.value),
+    payout: Number(el('backtestPayout')?.value),
+    duration: Number(el('backtestDuration')?.value),
+    duration_unit: el('backtestDurationUnit')?.value || 'm',
+    timeframe: Number(el('backtestTimeframe')?.value),
+    max_ticks: Number(el('backtestMaxTicks')?.value),
+    cost_rate: Number(el('backtestCostRate')?.value),
+    fixed_cost: Number(el('backtestFixedCost')?.value),
+    with_ai: withAi,
+    dynamic_duration: dynamicDuration,
+    candle_patterns: !!el('backtestCandlePatterns')?.checked,
+  };
+
+  try {
+    _setBacktestStatus('running', 'Preparando execução offline...');
+    const response = await fetch(API_BASE_URL + '/api/backtest/start', {
+      method: 'POST',
+      headers: _authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      _setBacktestStatus('failed', data.msg || 'Não foi possível iniciar.');
+      showToast(data.msg || 'Falha ao iniciar backtest.', 'err');
+      return;
+    }
+    state.backtestRunId = data.run_id;
+    state.backtestResultRunId = null;
+    _setBacktestStatus('running', `Execução ${data.run_id} iniciada.`);
+    showToast('Backtest iniciado.', 'ok');
+    pollBacktestStatus();
+  } catch (error) {
+    _setBacktestStatus('failed', error.message);
+    showToast('Falha ao iniciar backtest: ' + error.message, 'err');
+  }
+}
+
+async function stopBacktest() {
+  if (!confirm('Cancelar o backtest em execução?')) return;
+  try {
+    _setBacktestStatus('stopping', 'Solicitando cancelamento...');
+    const response = await fetch(API_BASE_URL + '/api/backtest/stop', {
+      method: 'POST',
+      headers: _authHeaders(),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      showToast(data.msg || 'Não foi possível cancelar.', 'err');
+      return;
+    }
+    showToast('Cancelamento solicitado.', 'ok');
+  } catch (error) {
+    showToast('Falha ao cancelar: ' + error.message, 'err');
+  }
+}
+
+async function pollBacktestStatus() {
+  try {
+    const response = await fetch(API_BASE_URL + '/api/backtest/status', { cache: 'no-store' });
+    const data = await response.json();
+    state.backtestRunId = data.run_id || state.backtestRunId;
+    let detail = 'Nenhuma execução iniciada.';
+    if (data.run_id) detail = `Execução ${data.run_id}`;
+    if (data.error) detail += ` — ${data.error}`;
+    _setBacktestStatus(data.status || 'idle', detail);
+
+    const logs = el('backtestLogs');
+    if (logs) {
+      logs.textContent = Array.isArray(data.logs) ? data.logs.join('\n') : '';
+      logs.style.display = logs.textContent ? '' : 'none';
+    }
+    if (
+      data.report_available
+      && data.status === 'completed'
+      && state.backtestResultRunId !== data.run_id
+    ) {
+      await loadBacktestResult(data.run_id);
+    }
+  } catch (_) {}
+}
+
+async function loadBacktestResult(runId = state.backtestRunId) {
+  try {
+    const response = await fetch(API_BASE_URL + '/api/backtest/result?n=200', { cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) return;
+    renderBacktestResult(data.report);
+    state.backtestResultRunId = runId;
+  } catch (_) {}
+}
+
+function renderBacktestResult(report) {
+  const metrics = report?.metrics || {};
+  const settings = report?.settings || {};
+  const trades = Array.isArray(report?.trades) ? report.trades : [];
+
+  el('backtestTrades').textContent = metrics.trades ?? 0;
+  el('backtestWinsLosses').textContent = `${metrics.wins ?? 0} wins / ${metrics.losses ?? 0} losses`;
+  el('backtestWinRate').textContent = fmtPct(metrics.win_rate_pct);
+  el('backtestReturn').textContent = (metrics.return_pct > 0 ? '+' : '') + fmtPct(metrics.return_pct);
+  el('backtestReturn').className = 'card-value ' + (metrics.return_pct > 0 ? 'positive' : metrics.return_pct < 0 ? 'negative' : '');
+  el('backtestNetProfit').textContent = (metrics.net_profit > 0 ? '+' : '') + fmtUsd(metrics.net_profit);
+  el('backtestDrawdown').textContent = fmtPct(metrics.max_drawdown_pct);
+  el('backtestDrawdownUsd').textContent = fmtUsd(metrics.max_drawdown_abs);
+  el('backtestFinalBalance').textContent = fmtUsd(metrics.final_balance);
+  el('backtestProfitFactor').textContent = metrics.profit_factor == null ? '—' : fmt(metrics.profit_factor, 3);
+  el('backtestExpectancy').textContent = fmtUsd(metrics.expectancy);
+  el('backtestTotalStaked').textContent = fmtUsd(metrics.total_staked);
+  el('backtestTotalCosts').textContent = fmtUsd(metrics.total_costs);
+  el('backtestMaxLosses').textContent = metrics.max_consecutive_losses ?? '—';
+  el('backtestResultSymbol').textContent = report.symbol || '—';
+  el('backtestMode').textContent = settings.use_ai ? 'Técnico + IA' : 'Somente técnico';
+
+  const chart = state.charts.backtestEquity;
+  if (chart) {
+    chart.data.datasets[0].data = (report.equity_curve || []).map(point => ({
+      x: Number(point.epoch) * 1000,
+      y: Number(point.balance),
+    }));
+    chart.update();
+  }
+
+  const tbody = el('backtestTradesBody');
+  if (!tbody) return;
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-msg">Nenhuma operação simulada.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map(trade => {
+    const direction = trade.direction === 'BUY' ? 'BUY' : 'SELL';
+    const outcome = ['WIN', 'LOSS', 'TIE'].includes(trade.outcome) ? trade.outcome : 'LOSS';
+    const expiry = new Date(Number(trade.expiry_epoch) * 1000).toLocaleString('pt-BR');
+    const profit = Number(trade.net_profit || 0);
+    return `<tr>
+      <td class="td-mono">${escapeHtml(expiry)}</td>
+      <td><span class="badge badge-${direction.toLowerCase()}">${direction}</span></td>
+      <td class="td-mono">${fmt(trade.entry_price, 5)}</td>
+      <td class="td-mono">${fmt(trade.exit_price, 5)}</td>
+      <td class="td-mono">${Number(trade.duration)}${escapeHtml(trade.duration_unit)}</td>
+      <td><span class="badge badge-${outcome.toLowerCase()}">${outcome}</span></td>
+      <td class="td-mono">${fmtUsd(trade.stake)}</td>
+      <td class="td-mono ${profit >= 0 ? 'positive' : 'negative'}">${profit > 0 ? '+' : ''}${fmtUsd(profit)}</td>
+      <td class="td-mono">${fmtUsd(trade.balance_after)}</td>
+    </tr>`;
+  }).join('');
+}
+
 // ─── Inicialização ────────────────────────────────────────────────────────────
 
 function init() {
   // Restore saved auth token into field if present
   const savedToken = localStorage.getItem('dashboardToken');
   if (savedToken && el('authToken')) el('authToken').value = savedToken;
+  if (savedToken && el('backtestAuthToken')) el('backtestAuthToken').value = savedToken;
 
   // Solicitar permissão para notificações push
   if ('Notification' in window && Notification.permission === 'default') {
@@ -1597,6 +1849,7 @@ function init() {
   initRsiChart();
   initMacdChart();
   _initProfitDistChart();
+  initBacktestChart();
   _loadIndicatorSeries();
 
   // Primeira carga (estado consolidado + outros)
@@ -1609,6 +1862,7 @@ function init() {
   pollModelMetrics();
   pollStats();
   pollSystem();
+  pollBacktestStatus();
 
   // Polls contínuos — pollState() substitui pollBotStatus + pollSummary + pollModel
   setInterval(pollState,    POLL_SUMMARY);
@@ -1623,6 +1877,7 @@ function init() {
   setInterval(pollModelMetrics, POLL_MODEL);
   setInterval(pollStats,    POLL_TRADES);
   setInterval(pollSystem,   5_000);
+  setInterval(pollBacktestStatus, POLL_BACKTEST);
 
   pollLogs();
   setInterval(pollLogs, POLL_LOGS);
