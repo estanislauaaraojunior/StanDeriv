@@ -1,5 +1,1 @@
-<<<<<<< HEAD
-{"session_start": "2026-06-23T10:26:26.000015", "active_contract": null, "min_ticks_target": 1000, "symbol": "R_75"}
-=======
-{"symbol": "frxUSDCAD", "session_start": "2026-05-18T12:02:40.686095", "active_contract": {"has_active": true, "contract_id": "487356279", "symbol": "frxUSDCAD", "direction": "BUY", "duration": 30, "buy_timestamp": 1779121742.0073018, "entry_epoch": 1779121741, "entry_price": 1.37463}, "min_ticks_target": 200}
->>>>>>> parent of f2a05db (Funcionalidade: aprimoramento do pipeline de negociação com validação de símbolos e gerenciamento de saldo de conta melhorados)
+{"symbol": "frxEURUSD", "active_contract": {"has_active": true, "contract_id": "11630799819", "symbol": "frxEURUSD", "direction": "SELL", "duration": 15, "buy_timestamp": 1788482341.4081428, "entry_epoch": 1788482341, "entry_price": 1.16257}, "session_start": "2026-09-03T19:30:20.637351", "min_ticks_target": 200}

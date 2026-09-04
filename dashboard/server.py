@@ -1035,11 +1035,12 @@ def api_model_history():
 def api_model_metrics():
     data = _read_json_safe(MODEL_METRICS_JSON)
     if not isinstance(data, list) or not data:
-        return jsonify({})
-    # Prefere a última entrada com stage "final" (que contém models_comparison).
-    # Fallback para a última entrada disponível.
-    final_entries = [e for e in data if e.get("stage") == "final"]
-    entry = final_entries[-1] if final_entries else data[-1]
+        entry = {}
+    else:
+        # Prefere a última entrada com stage "final" (que contém models_comparison).
+        # Fallback para a última entrada disponível.
+        final_entries = [e for e in data if e.get("stage") == "final"]
+        entry = final_entries[-1] if final_entries else data[-1]
     resp = jsonify(entry)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"

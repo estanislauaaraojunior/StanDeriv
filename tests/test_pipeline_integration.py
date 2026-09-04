@@ -165,7 +165,10 @@ class TestModelMetricsInApiState:
         pipeline_path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
         with open(pipeline_path) as f:
             source = f.read()
-        matches = re.findall(r"_trim_ticks\(tmp_ticks,\s*max_ticks=(\d+)\)", source)
+        matches = re.findall(
+            r"_trim_ticks\(\s*tmp_ticks,\s*max_ticks=(\d+),?\s*\)",
+            source,
+        )
         assert matches, "_trim_ticks com max_ticks não encontrado em pipeline.py"
         for val in matches:
             assert int(val) >= 200000, (
