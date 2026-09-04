@@ -1,4 +1,4 @@
-#!/home/stanis/projetos/Binarias/Deriv/.venv/bin/python3
+#!/usr/bin/env python3
 """
 bot.py — orquestrador principal (entry point).
 

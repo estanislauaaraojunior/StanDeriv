@@ -1,9 +1,9 @@
-#!/home/stanis/.venv/bin/python3
+#!/usr/bin/env python3
 """
 dashboard/server.py — Backend Flask do Dashboard do Bot Deriv.
 
 Uso:
-    cd /home/stanis/Repositorios/Binary
+    cd /caminho/para/StanDeriv
     .venv/bin/python3 dashboard/server.py
     # ou: python3 dashboard/server.py (com venv ativo)
 
