@@ -1,1 +1,1 @@
-{"is_paused": false, "pause_remaining_sec": 0, "daily_pnl": 0.0, "daily_pnl_pct": 0.0, "consec_losses": 0, "drift_detected": false, "win_rate_recent": 0.0, "date": "2026-09-04", "balance": 1000.0, "pause_until_epoch": 0.0, "recent_results": []}
+{"is_paused": false, "pause_remaining_sec": 0, "daily_pnl": 17.85, "daily_pnl_pct": 0.2, "consec_losses": 0, "drift_detected": false, "win_rate_recent": 100.0, "date": "2026-09-04", "balance": 1017.85, "pause_until_epoch": 0.0, "recent_results": [1, 1]}

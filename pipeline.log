@@ -9,40 +9,40 @@
   Pressione Ctrl+C para encerrar tudo
 ============================================================
 [AUTH] Token PAT detectado (fluxo novo da Deriv).
-[AUTH] Token Bearer validado | Conta Options: DOT91528180 (demo) | Saldo: 8822.93 USD
+[AUTH] Token Bearer validado | Conta Options: DOT91528180 (demo) | Saldo: 8799.15 USD
 [TENDÊNCIA] ── Scan forex (pares de moedas) ────────────────
 [TENDÊNCIA] Candidatos: frxEURUSD, frxGBPUSD, frxUSDJPY, frxAUDUSD, frxUSDCAD, frxUSDCHF, frxNZDUSD, frxEURGBP, frxEURJPY, frxEURCHF, frxEURCAD, frxEURNZD, frxEURAUD, frxGBPJPY, frxGBPCHF, frxGBPCAD, frxGBPAUD, frxGBPNZD, frxAUDJPY, frxAUDCAD, frxAUDNZD, frxAUDCHF, frxCADJPY, frxCADCHF, frxCHFJPY, frxNZDJPY, frxNZDCAD
-  frxEURUSD    score= 56.62 ↓
-  frxNZDUSD    score= 57.24 ↓
-  frxGBPJPY    score= 41.54 ↑
-  frxNZDCAD    score= 54.38 ↑
-  frxEURNZD    score= 49.23 ↓
-  frxEURCAD    score= 24.49 ↓
-  frxCADCHF    score= 36.92 ↑
-  frxUSDCAD    score= 53.10 ↑
-  frxUSDCHF    score= 45.37 ↑
-  frxCHFJPY    score= 32.66 ↑
-  frxCADJPY    score= 36.42 ↑
-  frxUSDJPY    score= 39.81 ↑
-  frxGBPCHF    score= 42.83 ↑
-  frxAUDCAD    score= 47.15 ↑
-  frxAUDJPY    score= 38.31 ↑
-  frxNZDJPY    score= 22.29 ↑
-  frxAUDCHF    score= 45.54 ↑
-  frxGBPNZD    score= 52.71 ↑
-  frxGBPCAD    score= 26.79 ↑
-  frxEURAUD    score= 52.09 ↓
-  frxEURJPY    score= 29.80 ↑
-  frxGBPUSD    score= 35.53 ↓
-  frxGBPAUD    score= 42.48 ↓
-  frxAUDNZD    score= 81.50 ↑
-  frxAUDUSD    score= 21.01 ↑
-  frxEURGBP    score= 34.33 ↓
-  frxEURCHF    score= 26.36 ↑
-[TENDÊNCIA] ✔ Melhor par forex: frxAUDNZD — Australian Dollar / New Zealand Dollar (score=81.50)
-[TENDÊNCIA] Símbolo alterado: R_100 → frxAUDNZD
-[HISTÓRICO] Buscando os últimos 2,000 candles de 1 min de 'frxAUDNZD — Australian Dollar / New Zealand Dollar'...
-[HISTÓRICO] 1,000 candles de 1min gravados — total no CSV: 311,444
+  frxEURUSD    score= 52.84 ↓
+  frxEURJPY    score= 47.03 ↑
+  frxEURCHF    score= 34.17 ↑
+  frxAUDJPY    score= 54.58 ↑
+  frxGBPUSD    score= 39.64 ↓
+  frxUSDCHF    score= 55.75 ↑
+  frxUSDJPY    score= 60.32 ↑
+  frxUSDCAD    score= 83.21 ↑
+  frxAUDUSD    score= 47.47 ↓
+  frxGBPJPY    score= 44.28 ↑
+  frxGBPCAD    score= 29.37 ↑
+  frxGBPCHF    score= 38.85 ↑
+  frxCADJPY    score= 38.96 ↑
+  frxNZDCAD    score= 32.02 ↓
+  frxAUDCAD    score= 24.77 ↑
+  frxAUDNZD    score= 44.97 ↑
+  frxNZDJPY    score= 34.98 ↑
+  frxGBPNZD    score= 27.83 ↑
+  frxAUDCHF    score= 28.89 ↑
+  frxEURCAD    score= 17.56 ↑
+  frxEURAUD    score= 24.49 ↓
+  frxCHFJPY    score= 20.21 ↑
+  frxEURNZD    score= 29.48 ↑
+  frxCADCHF    score= 57.02 ↑
+  frxEURGBP    score= 28.94 ↓
+  frxGBPAUD    score= 19.02 ↓
+  frxNZDUSD    score= 63.34 ↓
+[TENDÊNCIA] ✔ Melhor par forex: frxUSDCAD — US Dollar / Canadian Dollar (score=83.21)
+[TENDÊNCIA] Símbolo alterado: R_100 → frxUSDCAD
+[HISTÓRICO] Buscando os últimos 2,000 candles de 1 min de 'frxUSDCAD — US Dollar / Canadian Dollar'...
+[HISTÓRICO] 1,000 candles de 1min gravados — total no CSV: 326,614
 [PIPELINE] Fase 1: Coletor iniciado em background (sem duplicatas).
 [PIPELINE] Fases 2-4: model.pkl encontrado — treino inicial ignorado.
            Use --force-retrain para forçar novo treino.
@@ -51,176 +51,2704 @@
 [RISCO] Estado restaurado: consec_losses=0, saldo=1000.00
 =======================================================
   Deriv Trading Bot — Modo: DEMO
-  Símbolo : frxAUDNZD
+  Símbolo : frxUSDCAD
   Duração : 5 m
   Saldo   : 1000.00 USD
   Stake   : 10.00 USD (1% do saldo)
 =======================================================
-[COLETOR] Conectado | frxAUDNZD — Australian Dollar / New Zealand Dollar
+[COLETOR] Conectado | frxUSDCAD — US Dollar / Canadian Dollar
 [BOT] Conectado à Deriv WebSocket API
-[BOT] Baixando 100 candles históricos de frxAUDNZD (60s)...
+[BOT] Baixando 100 candles históricos de frxUSDCAD (60s)...
 [BOT] 99 candles históricos carregados via API — aquecimento instantâneo.
-[COLETOR] Ticks:       1 | 1.22508 @ 2026-09-04T10:23:45
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:       2 | 1.22507 @ 2026-09-04T10:23:46
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:       3 | 1.22507 @ 2026-09-04T10:23:47
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:       4 | 1.22507 @ 2026-09-04T10:23:48
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:       5 | 1.22504 @ 2026-09-04T10:23:49
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:       6 | 1.22503 @ 2026-09-04T10:23:50
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:       7 | 1.22501 @ 2026-09-04T10:23:51
-[COLETOR] Ticks:       8 | 1.22502 @ 2026-09-04T10:23:52
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:       9 | 1.22504 @ 2026-09-04T10:23:53
-[COLETOR] Ticks:      10 | 1.22504 @ 2026-09-04T10:23:54
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:      11 | 1.22502 @ 2026-09-04T10:23:55
-[COLETOR] Ticks:      12 | 1.22502 @ 2026-09-04T10:23:56
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:      13 | 1.22502 @ 2026-09-04T10:23:57
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:      14 | 1.22503 @ 2026-09-04T10:23:58
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 99)
-[COLETOR] Ticks:      15 | 1.22504 @ 2026-09-04T10:23:59
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 99)
+[COLETOR] Ticks:       1 | 1.38359 @ 2026-09-04T16:14:53
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 99)
+[COLETOR] Ticks:       2 | 1.38359 @ 2026-09-04T16:14:54
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 99)
+[COLETOR] Ticks:       3 | 1.38359 @ 2026-09-04T16:14:55
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 99)
+[COLETOR] Ticks:       4 | 1.38359 @ 2026-09-04T16:14:56
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 99)
+[COLETOR] Ticks:       5 | 1.38359 @ 2026-09-04T16:14:57
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 99)
+[COLETOR] Ticks:       6 | 1.38359 @ 2026-09-04T16:14:58
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 99)
+[COLETOR] Ticks:       7 | 1.38359 @ 2026-09-04T16:14:59[IA] Modelo carregado: XGBoost (model.pkl)
+[IA] Modelo TFT carregado (transformer_model.pkl)
+[TICK] 1.3836 | EMA9:1.3837 EMA21:1.3838 | RSI:29.6 ADX:40.3 MACD_H:-0.00003 [→ SELL]          [IA] Modelo de duração carregado (duration_model.pkl)
+[COLETOR] Ticks:       8 | 1.38359 @ 2026-09-04T16:15:00
+[BOT] → SELL | Stake: 10.00 USD | Duração: 15m | ADX:40.3 RSI:29.6
+[BOT] 1.3836 | Aguardando fechamento da vela... (candles ok: 100)
+[COLETOR] Ticks:       9 | 1.38358 @ 2026-09-04T16:15:01
+[COLETOR] Ticks:      10 | 1.38358 @ 2026-09-04T16:15:02[BOT] Contrato aberto | ID: 11720417099
+[COLETOR] Ticks:      11 | 1.38358 @ 2026-09-04T16:15:03
+[COLETOR] Ticks:      12 | 1.38358 @ 2026-09-04T16:15:04
+[COLETOR] Ticks:      13 | 1.38358 @ 2026-09-04T16:15:05
+[COLETOR] Ticks:      14 | 1.38358 @ 2026-09-04T16:15:06
+[COLETOR] Ticks:      15 | 1.38353 @ 2026-09-04T16:15:07
+[COLETOR] Ticks:      16 | 1.38353 @ 2026-09-04T16:15:08
+[COLETOR] Ticks:      17 | 1.38353 @ 2026-09-04T16:15:09
+[COLETOR] Ticks:      18 | 1.38353 @ 2026-09-04T16:15:10
+[COLETOR] Ticks:      19 | 1.38353 @ 2026-09-04T16:15:11
+[COLETOR] Ticks:      20 | 1.38352 @ 2026-09-04T16:15:12
+[COLETOR] Ticks:      21 | 1.38352 @ 2026-09-04T16:15:13
+[COLETOR] Ticks:      22 | 1.38351 @ 2026-09-04T16:15:14
+[COLETOR] Ticks:      23 | 1.38351 @ 2026-09-04T16:15:15
+[COLETOR] Ticks:      24 | 1.38351 @ 2026-09-04T16:15:16
+[COLETOR] Ticks:      25 | 1.38352 @ 2026-09-04T16:15:17
+[COLETOR] Ticks:      26 | 1.38352 @ 2026-09-04T16:15:18
+[COLETOR] Ticks:      27 | 1.38347 @ 2026-09-04T16:15:19
+[COLETOR] Ticks:      28 | 1.38347 @ 2026-09-04T16:15:20
+[COLETOR] Ticks:      29 | 1.38347 @ 2026-09-04T16:15:21
+[COLETOR] Ticks:      30 | 1.38347 @ 2026-09-04T16:15:22
+[COLETOR] Ticks:      31 | 1.38347 @ 2026-09-04T16:15:23
+[COLETOR] Ticks:      32 | 1.38346 @ 2026-09-04T16:15:24
+[COLETOR] Ticks:      33 | 1.38347 @ 2026-09-04T16:15:25
+[COLETOR] Ticks:      34 | 1.38347 @ 2026-09-04T16:15:26
+[COLETOR] Ticks:      35 | 1.38347 @ 2026-09-04T16:15:27
+[COLETOR] Ticks:      36 | 1.38347 @ 2026-09-04T16:15:28
+[COLETOR] Ticks:      37 | 1.38347 @ 2026-09-04T16:15:29
+[COLETOR] Ticks:      38 | 1.38347 @ 2026-09-04T16:15:30
+[COLETOR] Ticks:      39 | 1.38347 @ 2026-09-04T16:15:31
+[COLETOR] Ticks:      40 | 1.38348 @ 2026-09-04T16:15:32
+[COLETOR] Ticks:      41 | 1.38348 @ 2026-09-04T16:15:33
+[COLETOR] Ticks:      42 | 1.38348 @ 2026-09-04T16:15:34
+[COLETOR] Ticks:      43 | 1.38348 @ 2026-09-04T16:15:35
+[COLETOR] Ticks:      44 | 1.38348 @ 2026-09-04T16:15:36
+[COLETOR] Ticks:      45 | 1.38347 @ 2026-09-04T16:15:37
+[COLETOR] Ticks:      46 | 1.38348 @ 2026-09-04T16:15:38
+[COLETOR] Ticks:      47 | 1.38347 @ 2026-09-04T16:15:39
+[COLETOR] Ticks:      48 | 1.38347 @ 2026-09-04T16:15:40
+[COLETOR] Ticks:      49 | 1.38348 @ 2026-09-04T16:15:41
+[COLETOR] Ticks:      50 | 1.38348 @ 2026-09-04T16:15:42
+[COLETOR] Ticks:      51 | 1.38347 @ 2026-09-04T16:15:43
+[COLETOR] Ticks:      52 | 1.38347 @ 2026-09-04T16:15:44
+[COLETOR] Ticks:      53 | 1.38347 @ 2026-09-04T16:15:45
+[COLETOR] Ticks:      54 | 1.38347 @ 2026-09-04T16:15:46
+[COLETOR] Ticks:      55 | 1.38347 @ 2026-09-04T16:15:47
+[COLETOR] Ticks:      56 | 1.38347 @ 2026-09-04T16:15:48
+[COLETOR] Ticks:      57 | 1.38347 @ 2026-09-04T16:15:49
+[COLETOR] Ticks:      58 | 1.38347 @ 2026-09-04T16:15:50
+[COLETOR] Ticks:      59 | 1.38347 @ 2026-09-04T16:15:51
+[COLETOR] Ticks:      60 | 1.38344 @ 2026-09-04T16:15:52
+[COLETOR] Ticks:      61 | 1.38344 @ 2026-09-04T16:15:53
+[COLETOR] Ticks:      62 | 1.38345 @ 2026-09-04T16:15:54
+[COLETOR] Ticks:      63 | 1.38345 @ 2026-09-04T16:15:55
+[COLETOR] Ticks:      64 | 1.38345 @ 2026-09-04T16:15:56
+[COLETOR] Ticks:      65 | 1.38345 @ 2026-09-04T16:15:57
+[COLETOR] Ticks:      66 | 1.38346 @ 2026-09-04T16:15:58
+[COLETOR] Ticks:      67 | 1.38346 @ 2026-09-04T16:15:59
+[COLETOR] Ticks:      68 | 1.38347 @ 2026-09-04T16:16:00
+[COLETOR] Ticks:      69 | 1.38346 @ 2026-09-04T16:16:01
+[COLETOR] Ticks:      70 | 1.38346 @ 2026-09-04T16:16:02
+[COLETOR] Ticks:      71 | 1.38345 @ 2026-09-04T16:16:03
+[COLETOR] Ticks:      72 | 1.38345 @ 2026-09-04T16:16:04
+[COLETOR] Ticks:      73 | 1.38344 @ 2026-09-04T16:16:05
+[COLETOR] Ticks:      74 | 1.38344 @ 2026-09-04T16:16:06
+[COLETOR] Ticks:      75 | 1.38344 @ 2026-09-04T16:16:07
+[COLETOR] Ticks:      76 | 1.38344 @ 2026-09-04T16:16:08
+[COLETOR] Ticks:      77 | 1.38344 @ 2026-09-04T16:16:09
+[COLETOR] Ticks:      78 | 1.38344 @ 2026-09-04T16:16:10
+[COLETOR] Ticks:      79 | 1.3834 @ 2026-09-04T16:16:11
+[COLETOR] Ticks:      80 | 1.38339 @ 2026-09-04T16:16:12
+[COLETOR] Ticks:      81 | 1.38339 @ 2026-09-04T16:16:13
+[COLETOR] Ticks:      82 | 1.38338 @ 2026-09-04T16:16:14
+[COLETOR] Ticks:      83 | 1.38337 @ 2026-09-04T16:16:15
+[COLETOR] Ticks:      84 | 1.38338 @ 2026-09-04T16:16:16
+[COLETOR] Ticks:      85 | 1.38338 @ 2026-09-04T16:16:17
+[COLETOR] Ticks:      86 | 1.38338 @ 2026-09-04T16:16:18
+[COLETOR] Ticks:      87 | 1.38338 @ 2026-09-04T16:16:19
+[COLETOR] Ticks:      88 | 1.38337 @ 2026-09-04T16:16:20
+[COLETOR] Ticks:      89 | 1.38337 @ 2026-09-04T16:16:21
+[COLETOR] Ticks:      90 | 1.38338 @ 2026-09-04T16:16:22
+[COLETOR] Ticks:      91 | 1.38338 @ 2026-09-04T16:16:23
+[COLETOR] Ticks:      92 | 1.38338 @ 2026-09-04T16:16:24
+[COLETOR] Ticks:      93 | 1.38337 @ 2026-09-04T16:16:25
+[COLETOR] Ticks:      94 | 1.38337 @ 2026-09-04T16:16:26
+[COLETOR] Ticks:      95 | 1.38337 @ 2026-09-04T16:16:27
+[COLETOR] Ticks:      96 | 1.38337 @ 2026-09-04T16:16:28
+[COLETOR] Ticks:      97 | 1.38337 @ 2026-09-04T16:16:29
+[COLETOR] Ticks:      98 | 1.38337 @ 2026-09-04T16:16:30
+[COLETOR] Ticks:      99 | 1.38337 @ 2026-09-04T16:16:31
+[COLETOR] Ticks:     100 | 1.38337 @ 2026-09-04T16:16:32
+[COLETOR] Ticks:     101 | 1.38338 @ 2026-09-04T16:16:33
+[COLETOR] Ticks:     102 | 1.38337 @ 2026-09-04T16:16:34
+[COLETOR] Ticks:     103 | 1.38337 @ 2026-09-04T16:16:35
+[COLETOR] Ticks:     104 | 1.38337 @ 2026-09-04T16:16:36
+[COLETOR] Ticks:     105 | 1.38337 @ 2026-09-04T16:16:37
+[COLETOR] Ticks:     106 | 1.38337 @ 2026-09-04T16:16:38
+[COLETOR] Ticks:     107 | 1.38337 @ 2026-09-04T16:16:39
+[COLETOR] Ticks:     108 | 1.38337 @ 2026-09-04T16:16:40
+[COLETOR] Ticks:     109 | 1.38337 @ 2026-09-04T16:16:41
+[COLETOR] Ticks:     110 | 1.38338 @ 2026-09-04T16:16:42
+[COLETOR] Ticks:     111 | 1.38338 @ 2026-09-04T16:16:43
+[COLETOR] Ticks:     112 | 1.38338 @ 2026-09-04T16:16:44
+[COLETOR] Ticks:     113 | 1.38338 @ 2026-09-04T16:16:45
+[COLETOR] Ticks:     114 | 1.38338 @ 2026-09-04T16:16:46
+[COLETOR] Ticks:     115 | 1.38338 @ 2026-09-04T16:16:47
+[COLETOR] Ticks:     116 | 1.38338 @ 2026-09-04T16:16:48
+[COLETOR] Ticks:     117 | 1.38338 @ 2026-09-04T16:16:49
+[COLETOR] Ticks:     118 | 1.38338 @ 2026-09-04T16:16:50
+[COLETOR] Ticks:     119 | 1.38338 @ 2026-09-04T16:16:51
+[COLETOR] Ticks:     120 | 1.38338 @ 2026-09-04T16:16:52
+[COLETOR] Ticks:     121 | 1.38338 @ 2026-09-04T16:16:53
+[COLETOR] Ticks:     122 | 1.38338 @ 2026-09-04T16:16:54
+[COLETOR] Ticks:     123 | 1.38338 @ 2026-09-04T16:16:55
+[COLETOR] Ticks:     124 | 1.38337 @ 2026-09-04T16:16:56
+[COLETOR] Ticks:     125 | 1.38339 @ 2026-09-04T16:16:57
+[COLETOR] Ticks:     126 | 1.3834 @ 2026-09-04T16:16:58
+[COLETOR] Ticks:     127 | 1.3834 @ 2026-09-04T16:16:59
+[COLETOR] Ticks:     128 | 1.3834 @ 2026-09-04T16:17:00
+[COLETOR] Ticks:     129 | 1.38341 @ 2026-09-04T16:17:01
+[COLETOR] Ticks:     130 | 1.38341 @ 2026-09-04T16:17:02
+[COLETOR] Ticks:     131 | 1.38341 @ 2026-09-04T16:17:03
+[COLETOR] Ticks:     132 | 1.38342 @ 2026-09-04T16:17:04
+[COLETOR] Ticks:     133 | 1.38342 @ 2026-09-04T16:17:05
+[COLETOR] Ticks:     134 | 1.38344 @ 2026-09-04T16:17:06
+[COLETOR] Ticks:     135 | 1.38344 @ 2026-09-04T16:17:07
+[COLETOR] Ticks:     136 | 1.38344 @ 2026-09-04T16:17:08
+[COLETOR] Ticks:     137 | 1.38344 @ 2026-09-04T16:17:09
+[COLETOR] Ticks:     138 | 1.38344 @ 2026-09-04T16:17:10
+[COLETOR] Ticks:     139 | 1.38343 @ 2026-09-04T16:17:11
+[COLETOR] Ticks:     140 | 1.38343 @ 2026-09-04T16:17:12
+[COLETOR] Ticks:     141 | 1.38343 @ 2026-09-04T16:17:13
+[COLETOR] Ticks:     142 | 1.38342 @ 2026-09-04T16:17:14
+[COLETOR] Ticks:     143 | 1.38337 @ 2026-09-04T16:17:15
+[COLETOR] Ticks:     144 | 1.38337 @ 2026-09-04T16:17:16
+[COLETOR] Ticks:     145 | 1.38338 @ 2026-09-04T16:17:17
+[COLETOR] Ticks:     146 | 1.38338 @ 2026-09-04T16:17:18
+[COLETOR] Ticks:     147 | 1.38338 @ 2026-09-04T16:17:19
+[COLETOR] Ticks:     148 | 1.38338 @ 2026-09-04T16:17:20
+[COLETOR] Ticks:     149 | 1.38338 @ 2026-09-04T16:17:21
+[COLETOR] Ticks:     150 | 1.38337 @ 2026-09-04T16:17:22
+[COLETOR] Ticks:     151 | 1.38337 @ 2026-09-04T16:17:23
+[COLETOR] Ticks:     152 | 1.38337 @ 2026-09-04T16:17:24
+[COLETOR] Ticks:     153 | 1.38337 @ 2026-09-04T16:17:25
+[COLETOR] Ticks:     154 | 1.38337 @ 2026-09-04T16:17:26
+[COLETOR] Ticks:     155 | 1.38337 @ 2026-09-04T16:17:27
+[COLETOR] Ticks:     156 | 1.38337 @ 2026-09-04T16:17:28
+[COLETOR] Ticks:     157 | 1.38337 @ 2026-09-04T16:17:29
+[COLETOR] Ticks:     158 | 1.38337 @ 2026-09-04T16:17:30
+[COLETOR] Ticks:     159 | 1.38335 @ 2026-09-04T16:17:31
+[COLETOR] Ticks:     160 | 1.38335 @ 2026-09-04T16:17:32
+[COLETOR] Ticks:     161 | 1.38335 @ 2026-09-04T16:17:33
+[COLETOR] Ticks:     162 | 1.38335 @ 2026-09-04T16:17:34
+[COLETOR] Ticks:     163 | 1.38335 @ 2026-09-04T16:17:35
+[COLETOR] Ticks:     164 | 1.38336 @ 2026-09-04T16:17:36
+[COLETOR] Ticks:     165 | 1.38336 @ 2026-09-04T16:17:37
+[COLETOR] Ticks:     166 | 1.38336 @ 2026-09-04T16:17:38
+[COLETOR] Ticks:     167 | 1.38335 @ 2026-09-04T16:17:39
+[COLETOR] Ticks:     168 | 1.38335 @ 2026-09-04T16:17:40
+[COLETOR] Ticks:     169 | 1.38335 @ 2026-09-04T16:17:41
+[COLETOR] Ticks:     170 | 1.38335 @ 2026-09-04T16:17:42
+[COLETOR] Ticks:     171 | 1.38334 @ 2026-09-04T16:17:43
+[COLETOR] Ticks:     172 | 1.38335 @ 2026-09-04T16:17:44
+[COLETOR] Ticks:     173 | 1.38335 @ 2026-09-04T16:17:45
+[COLETOR] Ticks:     174 | 1.38335 @ 2026-09-04T16:17:46
+[COLETOR] Ticks:     175 | 1.38336 @ 2026-09-04T16:17:47
+[COLETOR] Ticks:     176 | 1.38336 @ 2026-09-04T16:17:48
+[COLETOR] Ticks:     177 | 1.38335 @ 2026-09-04T16:17:49
+[COLETOR] Ticks:     178 | 1.38335 @ 2026-09-04T16:17:50
+[COLETOR] Ticks:     179 | 1.38335 @ 2026-09-04T16:17:51
+[COLETOR] Ticks:     180 | 1.38334 @ 2026-09-04T16:17:52
+[COLETOR] Ticks:     181 | 1.38334 @ 2026-09-04T16:17:53
+[COLETOR] Ticks:     182 | 1.38334 @ 2026-09-04T16:17:54
+[COLETOR] Ticks:     183 | 1.38334 @ 2026-09-04T16:17:55
+[COLETOR] Ticks:     184 | 1.38335 @ 2026-09-04T16:17:56
+[COLETOR] Ticks:     185 | 1.38335 @ 2026-09-04T16:17:57
+[COLETOR] Ticks:     186 | 1.38335 @ 2026-09-04T16:17:58
+[COLETOR] Ticks:     187 | 1.38335 @ 2026-09-04T16:17:59
+[COLETOR] Ticks:     188 | 1.38339 @ 2026-09-04T16:18:00
+[COLETOR] Ticks:     189 | 1.38339 @ 2026-09-04T16:18:01
+[COLETOR] Ticks:     190 | 1.38337 @ 2026-09-04T16:18:02
+[COLETOR] Ticks:     191 | 1.38337 @ 2026-09-04T16:18:03
+[COLETOR] Ticks:     192 | 1.38337 @ 2026-09-04T16:18:04
+[COLETOR] Ticks:     193 | 1.38337 @ 2026-09-04T16:18:05
+[COLETOR] Ticks:     194 | 1.38338 @ 2026-09-04T16:18:06
+[COLETOR] Ticks:     195 | 1.38338 @ 2026-09-04T16:18:07
+[COLETOR] Ticks:     196 | 1.38338 @ 2026-09-04T16:18:08
+[COLETOR] Ticks:     197 | 1.38338 @ 2026-09-04T16:18:09
+[COLETOR] Ticks:     198 | 1.38339 @ 2026-09-04T16:18:10
+[COLETOR] Ticks:     199 | 1.38339 @ 2026-09-04T16:18:11
+[COLETOR] Ticks:     200 | 1.38339 @ 2026-09-04T16:18:12
+[COLETOR] Ticks:     201 | 1.38339 @ 2026-09-04T16:18:13
+[COLETOR] Ticks:     202 | 1.38339 @ 2026-09-04T16:18:14
+[COLETOR] Ticks:     203 | 1.38339 @ 2026-09-04T16:18:15
+[COLETOR] Ticks:     204 | 1.38339 @ 2026-09-04T16:18:16
+[COLETOR] Ticks:     205 | 1.38339 @ 2026-09-04T16:18:17
+[COLETOR] Ticks:     206 | 1.38339 @ 2026-09-04T16:18:18
+[COLETOR] Ticks:     207 | 1.38339 @ 2026-09-04T16:18:19
+[COLETOR] Ticks:     208 | 1.38339 @ 2026-09-04T16:18:20
+[COLETOR] Ticks:     209 | 1.38339 @ 2026-09-04T16:18:21
+[COLETOR] Ticks:     210 | 1.38339 @ 2026-09-04T16:18:22
+[COLETOR] Ticks:     211 | 1.38339 @ 2026-09-04T16:18:23
+[COLETOR] Ticks:     212 | 1.38337 @ 2026-09-04T16:18:24
+[COLETOR] Ticks:     213 | 1.38337 @ 2026-09-04T16:18:25
+[COLETOR] Ticks:     214 | 1.38337 @ 2026-09-04T16:18:26
+[COLETOR] Ticks:     215 | 1.38337 @ 2026-09-04T16:18:27
+[COLETOR] Ticks:     216 | 1.38337 @ 2026-09-04T16:18:28
+[COLETOR] Ticks:     217 | 1.38337 @ 2026-09-04T16:18:29
+[COLETOR] Ticks:     218 | 1.38337 @ 2026-09-04T16:18:30
+[COLETOR] Ticks:     219 | 1.38337 @ 2026-09-04T16:18:31
+[COLETOR] Ticks:     220 | 1.38337 @ 2026-09-04T16:18:32
+[COLETOR] Ticks:     221 | 1.38337 @ 2026-09-04T16:18:33
+[COLETOR] Ticks:     222 | 1.38337 @ 2026-09-04T16:18:34
+[COLETOR] Ticks:     223 | 1.38336 @ 2026-09-04T16:18:35
+[COLETOR] Ticks:     224 | 1.38336 @ 2026-09-04T16:18:36
+[COLETOR] Ticks:     225 | 1.38336 @ 2026-09-04T16:18:37
+[COLETOR] Ticks:     226 | 1.38337 @ 2026-09-04T16:18:38
+[COLETOR] Ticks:     227 | 1.38336 @ 2026-09-04T16:18:39
+[COLETOR] Ticks:     228 | 1.38337 @ 2026-09-04T16:18:40
+[COLETOR] Ticks:     229 | 1.38337 @ 2026-09-04T16:18:41
+[COLETOR] Ticks:     230 | 1.38337 @ 2026-09-04T16:18:42
+[COLETOR] Ticks:     231 | 1.38337 @ 2026-09-04T16:18:43
+[COLETOR] Ticks:     232 | 1.38335 @ 2026-09-04T16:18:44
+[COLETOR] Ticks:     233 | 1.38335 @ 2026-09-04T16:18:45
+[COLETOR] Ticks:     234 | 1.38336 @ 2026-09-04T16:18:46
+[COLETOR] Ticks:     235 | 1.38335 @ 2026-09-04T16:18:47
+[COLETOR] Ticks:     236 | 1.38335 @ 2026-09-04T16:18:48
+[COLETOR] Ticks:     237 | 1.38335 @ 2026-09-04T16:18:49
+[COLETOR] Ticks:     238 | 1.38335 @ 2026-09-04T16:18:50
+[COLETOR] Ticks:     239 | 1.38335 @ 2026-09-04T16:18:51
+[COLETOR] Ticks:     240 | 1.38335 @ 2026-09-04T16:18:52
+[COLETOR] Ticks:     241 | 1.38334 @ 2026-09-04T16:18:53
+[COLETOR] Ticks:     242 | 1.38334 @ 2026-09-04T16:18:54
+[COLETOR] Ticks:     243 | 1.38334 @ 2026-09-04T16:18:55
+[COLETOR] Ticks:     244 | 1.38334 @ 2026-09-04T16:18:56
+[COLETOR] Ticks:     245 | 1.38335 @ 2026-09-04T16:18:57
+[COLETOR] Ticks:     246 | 1.38335 @ 2026-09-04T16:18:58
+[COLETOR] Ticks:     247 | 1.38335 @ 2026-09-04T16:18:59
+[COLETOR] Ticks:     248 | 1.38335 @ 2026-09-04T16:19:00
+[COLETOR] Ticks:     249 | 1.38335 @ 2026-09-04T16:19:01
+[COLETOR] Ticks:     250 | 1.38335 @ 2026-09-04T16:19:02
+[COLETOR] Ticks:     251 | 1.38335 @ 2026-09-04T16:19:03
+[COLETOR] Ticks:     252 | 1.38335 @ 2026-09-04T16:19:04
+[COLETOR] Ticks:     253 | 1.38335 @ 2026-09-04T16:19:05
+[COLETOR] Ticks:     254 | 1.38334 @ 2026-09-04T16:19:06
+[COLETOR] Ticks:     255 | 1.38334 @ 2026-09-04T16:19:07
+[COLETOR] Ticks:     256 | 1.38334 @ 2026-09-04T16:19:08
+[COLETOR] Ticks:     257 | 1.38334 @ 2026-09-04T16:19:09
+[COLETOR] Ticks:     258 | 1.38334 @ 2026-09-04T16:19:10
+[COLETOR] Ticks:     259 | 1.38334 @ 2026-09-04T16:19:11
+[COLETOR] Ticks:     260 | 1.38335 @ 2026-09-04T16:19:12
+[COLETOR] Ticks:     261 | 1.38334 @ 2026-09-04T16:19:13
+[COLETOR] Ticks:     262 | 1.38334 @ 2026-09-04T16:19:14
+[COLETOR] Ticks:     263 | 1.38334 @ 2026-09-04T16:19:15
+[COLETOR] Ticks:     264 | 1.38335 @ 2026-09-04T16:19:16
+[COLETOR] Ticks:     265 | 1.38334 @ 2026-09-04T16:19:17
+[COLETOR] Ticks:     266 | 1.38334 @ 2026-09-04T16:19:18
+[COLETOR] Ticks:     267 | 1.38335 @ 2026-09-04T16:19:19
+[COLETOR] Ticks:     268 | 1.38334 @ 2026-09-04T16:19:20
+[COLETOR] Ticks:     269 | 1.38334 @ 2026-09-04T16:19:21
+[COLETOR] Ticks:     270 | 1.38334 @ 2026-09-04T16:19:22
+[COLETOR] Ticks:     271 | 1.38334 @ 2026-09-04T16:19:23
+[COLETOR] Ticks:     272 | 1.38334 @ 2026-09-04T16:19:24
+[COLETOR] Ticks:     273 | 1.38334 @ 2026-09-04T16:19:25
+[COLETOR] Ticks:     274 | 1.38334 @ 2026-09-04T16:19:26
+[COLETOR] Ticks:     275 | 1.38334 @ 2026-09-04T16:19:27
+[COLETOR] Ticks:     276 | 1.38335 @ 2026-09-04T16:19:28
+[COLETOR] Ticks:     277 | 1.38335 @ 2026-09-04T16:19:29
+[COLETOR] Ticks:     278 | 1.38335 @ 2026-09-04T16:19:30
+[COLETOR] Ticks:     279 | 1.38335 @ 2026-09-04T16:19:31
+[COLETOR] Ticks:     280 | 1.38335 @ 2026-09-04T16:19:32
+[COLETOR] Ticks:     281 | 1.38335 @ 2026-09-04T16:19:33
+[COLETOR] Ticks:     282 | 1.38335 @ 2026-09-04T16:19:34
+[COLETOR] Ticks:     283 | 1.38335 @ 2026-09-04T16:19:35
+[COLETOR] Ticks:     284 | 1.38335 @ 2026-09-04T16:19:36
+[COLETOR] Ticks:     285 | 1.38335 @ 2026-09-04T16:19:37
+[COLETOR] Ticks:     286 | 1.38334 @ 2026-09-04T16:19:38
+[COLETOR] Ticks:     287 | 1.38334 @ 2026-09-04T16:19:39
+[COLETOR] Ticks:     288 | 1.38334 @ 2026-09-04T16:19:40
+[COLETOR] Ticks:     289 | 1.38334 @ 2026-09-04T16:19:41
+[COLETOR] Ticks:     290 | 1.38335 @ 2026-09-04T16:19:42
+[COLETOR] Ticks:     291 | 1.38334 @ 2026-09-04T16:19:43
+[COLETOR] Ticks:     292 | 1.38334 @ 2026-09-04T16:19:44
+[COLETOR] Ticks:     293 | 1.38334 @ 2026-09-04T16:19:45
+[COLETOR] Ticks:     294 | 1.38335 @ 2026-09-04T16:19:46
+[COLETOR] Ticks:     295 | 1.38335 @ 2026-09-04T16:19:47
+[COLETOR] Ticks:     296 | 1.38335 @ 2026-09-04T16:19:48
+[COLETOR] Ticks:     297 | 1.38334 @ 2026-09-04T16:19:49
+[COLETOR] Ticks:     298 | 1.38334 @ 2026-09-04T16:19:50
+[COLETOR] Ticks:     299 | 1.38334 @ 2026-09-04T16:19:51
+[COLETOR] Ticks:     300 | 1.38334 @ 2026-09-04T16:19:52
+[COLETOR] Ticks:     301 | 1.38334 @ 2026-09-04T16:19:53
+[COLETOR] Ticks:     302 | 1.38334 @ 2026-09-04T16:19:54
+[COLETOR] Ticks:     303 | 1.38334 @ 2026-09-04T16:19:55
+[COLETOR] Ticks:     304 | 1.38334 @ 2026-09-04T16:19:56
+[COLETOR] Ticks:     305 | 1.38334 @ 2026-09-04T16:19:57
+[COLETOR] Ticks:     306 | 1.38334 @ 2026-09-04T16:19:58
+[COLETOR] Ticks:     307 | 1.38334 @ 2026-09-04T16:19:59
 [VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  🟢 Bullish Engulfing (força: 1.00)
-  Preço: 1.2250 | Contexto: Demand Zone + FVG Bullish
-  Ação sugerida: BUY favorecido
+  🔴 Three Black Crows (força: 0.90)
+  Preço: 1.3833 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
 [VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[TICK] 1.2250 | EMA9:1.2249 EMA21:1.2250 | RSI:51.5 ADX:27.2 MACD_H:+0.00002
-[COLETOR] Ticks:      16 | 1.22504 @ 2026-09-04T10:24:00
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      17 | 1.22504 @ 2026-09-04T10:24:01
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      18 | 1.22505 @ 2026-09-04T10:24:02
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      19 | 1.22504 @ 2026-09-04T10:24:03
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      20 | 1.22503 @ 2026-09-04T10:24:04
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      21 | 1.22504 @ 2026-09-04T10:24:05
-[COLETOR] Ticks:      22 | 1.22504 @ 2026-09-04T10:24:06
-[COLETOR] Ticks:      23 | 1.22503 @ 2026-09-04T10:24:07
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      24 | 1.22503 @ 2026-09-04T10:24:08
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      25 | 1.22504 @ 2026-09-04T10:24:09
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      26 | 1.22505 @ 2026-09-04T10:24:10
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      27 | 1.22505 @ 2026-09-04T10:24:11
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      28 | 1.22508 @ 2026-09-04T10:24:12
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      29 | 1.2251 @ 2026-09-04T10:24:13
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      30 | 1.22511 @ 2026-09-04T10:24:14
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      31 | 1.22513 @ 2026-09-04T10:24:15
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      32 | 1.22512 @ 2026-09-04T10:24:16
-[COLETOR] Ticks:      33 | 1.22512 @ 2026-09-04T10:24:17
-[COLETOR] Ticks:      34 | 1.2251 @ 2026-09-04T10:24:18
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      35 | 1.22509 @ 2026-09-04T10:24:19
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      36 | 1.22509 @ 2026-09-04T10:24:20
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      37 | 1.22508 @ 2026-09-04T10:24:21
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      38 | 1.22507 @ 2026-09-04T10:24:22
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      39 | 1.22508 @ 2026-09-04T10:24:23
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      40 | 1.22508 @ 2026-09-04T10:24:24
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      41 | 1.22507 @ 2026-09-04T10:24:25
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      42 | 1.22506 @ 2026-09-04T10:24:26
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      43 | 1.22506 @ 2026-09-04T10:24:27
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      44 | 1.22503 @ 2026-09-04T10:24:28
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      45 | 1.22502 @ 2026-09-04T10:24:29
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      46 | 1.22502 @ 2026-09-04T10:24:30
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      47 | 1.22503 @ 2026-09-04T10:24:31
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      48 | 1.22503 @ 2026-09-04T10:24:32
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      49 | 1.22506 @ 2026-09-04T10:24:33
-[COLETOR] Ticks:      50 | 1.22507 @ 2026-09-04T10:24:34
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      51 | 1.22504 @ 2026-09-04T10:24:35
-[COLETOR] Ticks:      52 | 1.22503 @ 2026-09-04T10:24:36
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      53 | 1.22504 @ 2026-09-04T10:24:37
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      54 | 1.22503 @ 2026-09-04T10:24:38
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      55 | 1.22504 @ 2026-09-04T10:24:39
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      56 | 1.22501 @ 2026-09-04T10:24:40
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      57 | 1.22504 @ 2026-09-04T10:24:41
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      58 | 1.22504 @ 2026-09-04T10:24:42
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      59 | 1.22502 @ 2026-09-04T10:24:43
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      60 | 1.22503 @ 2026-09-04T10:24:44
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      61 | 1.22501 @ 2026-09-04T10:24:45
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      62 | 1.22501 @ 2026-09-04T10:24:46
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      63 | 1.22501 @ 2026-09-04T10:24:47
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      64 | 1.22502 @ 2026-09-04T10:24:48
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      65 | 1.22504 @ 2026-09-04T10:24:49
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      66 | 1.22504 @ 2026-09-04T10:24:50
-[COLETOR] Ticks:      67 | 1.22505 @ 2026-09-04T10:24:51
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      68 | 1.22505 @ 2026-09-04T10:24:52
-[COLETOR] Ticks:      69 | 1.22505 @ 2026-09-04T10:24:53
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2250 | Aguardando fechamento da vela... (candles ok: 100)
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      70 | 1.22509 @ 2026-09-04T10:24:54
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      71 | 1.2251 @ 2026-09-04T10:24:55
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      72 | 1.2251 @ 2026-09-04T10:24:56
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      73 | 1.22513 @ 2026-09-04T10:24:57
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      74 | 1.22511 @ 2026-09-04T10:24:58
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 100)
-[COLETOR] Ticks:      75 | 1.22514 @ 2026-09-04T10:24:59
+[COLETOR] Ticks:     308 | 1.38334 @ 2026-09-04T16:20:00
+[COLETOR] Ticks:     309 | 1.38335 @ 2026-09-04T16:20:01
+[COLETOR] Ticks:     310 | 1.38334 @ 2026-09-04T16:20:02
+[COLETOR] Ticks:     311 | 1.38334 @ 2026-09-04T16:20:03
+[COLETOR] Ticks:     312 | 1.38334 @ 2026-09-04T16:20:04
+[COLETOR] Ticks:     313 | 1.38335 @ 2026-09-04T16:20:05
+[COLETOR] Ticks:     314 | 1.38334 @ 2026-09-04T16:20:06
+[COLETOR] Ticks:     315 | 1.3834 @ 2026-09-04T16:20:07
+[COLETOR] Ticks:     316 | 1.38341 @ 2026-09-04T16:20:08
+[COLETOR] Ticks:     317 | 1.38343 @ 2026-09-04T16:20:09
+[COLETOR] Ticks:     318 | 1.38343 @ 2026-09-04T16:20:10
+[COLETOR] Ticks:     319 | 1.38344 @ 2026-09-04T16:20:11
+[COLETOR] Ticks:     320 | 1.38343 @ 2026-09-04T16:20:12
+[COLETOR] Ticks:     321 | 1.38342 @ 2026-09-04T16:20:13
+[COLETOR] Ticks:     322 | 1.38343 @ 2026-09-04T16:20:14
+[COLETOR] Ticks:     323 | 1.38343 @ 2026-09-04T16:20:15
+[COLETOR] Ticks:     324 | 1.38343 @ 2026-09-04T16:20:16
+[COLETOR] Ticks:     325 | 1.38343 @ 2026-09-04T16:20:17
+[COLETOR] Ticks:     326 | 1.38343 @ 2026-09-04T16:20:18
+[COLETOR] Ticks:     327 | 1.38343 @ 2026-09-04T16:20:19
+[COLETOR] Ticks:     328 | 1.38343 @ 2026-09-04T16:20:20
+[COLETOR] Ticks:     329 | 1.38338 @ 2026-09-04T16:20:21
+[COLETOR] Ticks:     330 | 1.38337 @ 2026-09-04T16:20:22
+[COLETOR] Ticks:     331 | 1.38338 @ 2026-09-04T16:20:23
+[COLETOR] Ticks:     332 | 1.38338 @ 2026-09-04T16:20:24
+[COLETOR] Ticks:     333 | 1.38338 @ 2026-09-04T16:20:25
+[COLETOR] Ticks:     334 | 1.38338 @ 2026-09-04T16:20:26
+[COLETOR] Ticks:     335 | 1.38338 @ 2026-09-04T16:20:27
+[COLETOR] Ticks:     336 | 1.38338 @ 2026-09-04T16:20:28
+[COLETOR] Ticks:     337 | 1.38338 @ 2026-09-04T16:20:29
+[COLETOR] Ticks:     338 | 1.38338 @ 2026-09-04T16:20:30
+[COLETOR] Ticks:     339 | 1.38338 @ 2026-09-04T16:20:31
+[COLETOR] Ticks:     340 | 1.38338 @ 2026-09-04T16:20:32
+[COLETOR] Ticks:     341 | 1.38338 @ 2026-09-04T16:20:33
+[COLETOR] Ticks:     342 | 1.38338 @ 2026-09-04T16:20:34
+[COLETOR] Ticks:     343 | 1.38337 @ 2026-09-04T16:20:35
+[COLETOR] Ticks:     344 | 1.38337 @ 2026-09-04T16:20:36
+[COLETOR] Ticks:     345 | 1.38337 @ 2026-09-04T16:20:37
+[COLETOR] Ticks:     346 | 1.38337 @ 2026-09-04T16:20:38
+[COLETOR] Ticks:     347 | 1.38338 @ 2026-09-04T16:20:39
+[COLETOR] Ticks:     348 | 1.38339 @ 2026-09-04T16:20:40
+[COLETOR] Ticks:     349 | 1.38338 @ 2026-09-04T16:20:41
+[COLETOR] Ticks:     350 | 1.38339 @ 2026-09-04T16:20:42
+[COLETOR] Ticks:     351 | 1.38338 @ 2026-09-04T16:20:43
+[COLETOR] Ticks:     352 | 1.38338 @ 2026-09-04T16:20:44
+[COLETOR] Ticks:     353 | 1.38339 @ 2026-09-04T16:20:45
+[COLETOR] Ticks:     354 | 1.38339 @ 2026-09-04T16:20:46
+[COLETOR] Ticks:     355 | 1.38338 @ 2026-09-04T16:20:47
+[COLETOR] Ticks:     356 | 1.38337 @ 2026-09-04T16:20:48
+[COLETOR] Ticks:     357 | 1.38337 @ 2026-09-04T16:20:49
+[COLETOR] Ticks:     358 | 1.38337 @ 2026-09-04T16:20:50
+[COLETOR] Ticks:     359 | 1.38337 @ 2026-09-04T16:20:51
+[COLETOR] Ticks:     360 | 1.38337 @ 2026-09-04T16:20:52
+[COLETOR] Ticks:     361 | 1.38337 @ 2026-09-04T16:20:53
+[COLETOR] Ticks:     362 | 1.38336 @ 2026-09-04T16:20:54
+[COLETOR] Ticks:     363 | 1.38336 @ 2026-09-04T16:20:55
+[COLETOR] Ticks:     364 | 1.38336 @ 2026-09-04T16:20:56
+[COLETOR] Ticks:     365 | 1.38336 @ 2026-09-04T16:20:57
+[COLETOR] Ticks:     366 | 1.38336 @ 2026-09-04T16:20:58
+[COLETOR] Ticks:     367 | 1.38336 @ 2026-09-04T16:20:59
 [VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  🟢 Bullish Engulfing (força: 1.00)
-  Preço: 1.2251 | Contexto: Demand Zone + FVG Bullish
-  Ação sugerida: BUY favorecido
+  🔴 Three Black Crows (força: 0.90)
+  Preço: 1.3834 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
 [VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[TICK] 1.2251 | EMA9:1.2249 EMA21:1.2250 | RSI:54.9 ADX:25.4 MACD_H:+0.00003
-[COLETOR] Ticks:      76 | 1.22514 @ 2026-09-04T10:25:00
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 101)
-[COLETOR] Ticks:      77 | 1.22514 @ 2026-09-04T10:25:01
-[BOT] 1.2251 | Aguardando fechamento da vela... (candles ok: 101)
+[COLETOR] Ticks:     368 | 1.38336 @ 2026-09-04T16:21:00
+[COLETOR] Ticks:     369 | 1.38336 @ 2026-09-04T16:21:01
+[COLETOR] Ticks:     370 | 1.38337 @ 2026-09-04T16:21:02
+[COLETOR] Ticks:     371 | 1.38337 @ 2026-09-04T16:21:03
+[COLETOR] Ticks:     372 | 1.38337 @ 2026-09-04T16:21:04
+[COLETOR] Ticks:     373 | 1.38336 @ 2026-09-04T16:21:05
+[COLETOR] Ticks:     374 | 1.38336 @ 2026-09-04T16:21:06
+[COLETOR] Ticks:     375 | 1.38336 @ 2026-09-04T16:21:07
+[COLETOR] Ticks:     376 | 1.38336 @ 2026-09-04T16:21:08
+[COLETOR] Ticks:     377 | 1.38336 @ 2026-09-04T16:21:09
+[COLETOR] Ticks:     378 | 1.38336 @ 2026-09-04T16:21:10
+[COLETOR] Ticks:     379 | 1.38336 @ 2026-09-04T16:21:11
+[COLETOR] Ticks:     380 | 1.38337 @ 2026-09-04T16:21:12
+[COLETOR] Ticks:     381 | 1.38337 @ 2026-09-04T16:21:13
+[COLETOR] Ticks:     382 | 1.38337 @ 2026-09-04T16:21:14
+[COLETOR] Ticks:     383 | 1.38336 @ 2026-09-04T16:21:15
+[COLETOR] Ticks:     384 | 1.38337 @ 2026-09-04T16:21:16
+[COLETOR] Ticks:     385 | 1.38336 @ 2026-09-04T16:21:17
+[COLETOR] Ticks:     386 | 1.38336 @ 2026-09-04T16:21:18
+[COLETOR] Ticks:     387 | 1.38336 @ 2026-09-04T16:21:19
+[COLETOR] Ticks:     388 | 1.3834 @ 2026-09-04T16:21:20
+[COLETOR] Ticks:     389 | 1.38337 @ 2026-09-04T16:21:21
+[COLETOR] Ticks:     390 | 1.38337 @ 2026-09-04T16:21:22
+[COLETOR] Ticks:     391 | 1.38337 @ 2026-09-04T16:21:23
+[COLETOR] Ticks:     392 | 1.38337 @ 2026-09-04T16:21:24
+[COLETOR] Ticks:     393 | 1.38337 @ 2026-09-04T16:21:25
+[COLETOR] Ticks:     394 | 1.38337 @ 2026-09-04T16:21:26
+[COLETOR] Ticks:     395 | 1.38337 @ 2026-09-04T16:21:27
+[COLETOR] Ticks:     396 | 1.38337 @ 2026-09-04T16:21:28
+[COLETOR] Ticks:     397 | 1.38335 @ 2026-09-04T16:21:29
+[COLETOR] Ticks:     398 | 1.38335 @ 2026-09-04T16:21:30
+[COLETOR] Ticks:     399 | 1.38336 @ 2026-09-04T16:21:31
+[COLETOR] Ticks:     400 | 1.38336 @ 2026-09-04T16:21:32
+[COLETOR] Ticks:     401 | 1.38335 @ 2026-09-04T16:21:33
+[COLETOR] Ticks:     402 | 1.38335 @ 2026-09-04T16:21:34
+[COLETOR] Ticks:     403 | 1.38335 @ 2026-09-04T16:21:35
+[COLETOR] Ticks:     404 | 1.38335 @ 2026-09-04T16:21:36
+[COLETOR] Ticks:     405 | 1.38334 @ 2026-09-04T16:21:37
+[COLETOR] Ticks:     406 | 1.38335 @ 2026-09-04T16:21:38
+[COLETOR] Ticks:     407 | 1.38335 @ 2026-09-04T16:21:39
+[COLETOR] Ticks:     408 | 1.38335 @ 2026-09-04T16:21:40
+[COLETOR] Ticks:     409 | 1.38331 @ 2026-09-04T16:21:41
+[COLETOR] Ticks:     410 | 1.38331 @ 2026-09-04T16:21:42
+[COLETOR] Ticks:     411 | 1.38331 @ 2026-09-04T16:21:43
+[COLETOR] Ticks:     412 | 1.38331 @ 2026-09-04T16:21:44
+[COLETOR] Ticks:     413 | 1.38332 @ 2026-09-04T16:21:45
+[COLETOR] Ticks:     414 | 1.38332 @ 2026-09-04T16:21:46
+[COLETOR] Ticks:     415 | 1.38332 @ 2026-09-04T16:21:47
+[COLETOR] Ticks:     416 | 1.38333 @ 2026-09-04T16:21:48
+[COLETOR] Ticks:     417 | 1.38334 @ 2026-09-04T16:21:49
+[COLETOR] Ticks:     418 | 1.38334 @ 2026-09-04T16:21:50
+[RE-TREINO] Gatilho: 418 novos ticks acumulados (limiar: 400) (327,032 ticks disponíveis). Iniciando re-treino...
+[PIPELINE] ── Fase 3: Construindo dataset ──
+[COLETOR] Ticks:     419 | 1.38334 @ 2026-09-04T16:21:51[PIPELINE] Ticks trimados: 127,032 removidos, 200,000 mantidos.
+[DATASET] Lendo ticks de 'ticks.csv.train_snapshot'...
+[DATASET] Sem epochs — usando 200,000 preços diretamente.
+[DATASET] 200,000 pontos de preço para features.
+[COLETOR] Ticks:     420 | 1.38334 @ 2026-09-04T16:21:52
+[COLETOR] Ticks:     421 | 1.38334 @ 2026-09-04T16:21:53
+[COLETOR] Ticks:     422 | 1.38334 @ 2026-09-04T16:21:54
+[COLETOR] Ticks:     423 | 1.38334 @ 2026-09-04T16:21:55
+[COLETOR] Ticks:     424 | 1.38334 @ 2026-09-04T16:21:56
+[COLETOR] Ticks:     425 | 1.38333 @ 2026-09-04T16:21:57
+[COLETOR] Ticks:     426 | 1.38333 @ 2026-09-04T16:21:58
+[COLETOR] Ticks:     427 | 1.38334 @ 2026-09-04T16:21:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.90)
+  Preço: 1.3833 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:     428 | 1.38333 @ 2026-09-04T16:22:00
+[COLETOR] Ticks:     429 | 1.38333 @ 2026-09-04T16:22:01
+[COLETOR] Ticks:     430 | 1.38334 @ 2026-09-04T16:22:02
+[COLETOR] Ticks:     431 | 1.38332 @ 2026-09-04T16:22:03
+[COLETOR] Ticks:     432 | 1.38332 @ 2026-09-04T16:22:04
+[COLETOR] Ticks:     433 | 1.38333 @ 2026-09-04T16:22:05
+[COLETOR] Ticks:     434 | 1.38332 @ 2026-09-04T16:22:06
+[COLETOR] Ticks:     435 | 1.38332 @ 2026-09-04T16:22:07
+[COLETOR] Ticks:     436 | 1.38332 @ 2026-09-04T16:22:08
+[COLETOR] Ticks:     437 | 1.38332 @ 2026-09-04T16:22:09
+[COLETOR] Ticks:     438 | 1.38329 @ 2026-09-04T16:22:10
+[COLETOR] Ticks:     439 | 1.3833 @ 2026-09-04T16:22:11
+[COLETOR] Ticks:     440 | 1.3833 @ 2026-09-04T16:22:12
+[COLETOR] Ticks:     441 | 1.3833 @ 2026-09-04T16:22:13
+[COLETOR] Ticks:     442 | 1.3833 @ 2026-09-04T16:22:14
+[COLETOR] Ticks:     443 | 1.38329 @ 2026-09-04T16:22:15
+[COLETOR] Ticks:     444 | 1.38327 @ 2026-09-04T16:22:16
+[COLETOR] Ticks:     445 | 1.38328 @ 2026-09-04T16:22:17
+[COLETOR] Ticks:     446 | 1.38328 @ 2026-09-04T16:22:18
+[COLETOR] Ticks:     447 | 1.38329 @ 2026-09-04T16:22:19
+[COLETOR] Ticks:     448 | 1.38328 @ 2026-09-04T16:22:20
+[COLETOR] Ticks:     449 | 1.38328 @ 2026-09-04T16:22:21
+[COLETOR] Ticks:     450 | 1.38328 @ 2026-09-04T16:22:22
+[COLETOR] Ticks:     451 | 1.38328 @ 2026-09-04T16:22:23
+[COLETOR] Ticks:     452 | 1.38328 @ 2026-09-04T16:22:24
+[COLETOR] Ticks:     453 | 1.38328 @ 2026-09-04T16:22:25[DATASET] Horizonte target: 2 tick(s)
+[DATASET] Linhas geradas  : 111,391
+[DATASET] Linhas ignoradas: 88,557 (indicadores insuficientes)
+[DATASET] Distribuição do target:
+           Sobe (1): 55,702 (50.0%)
+           Cai  (0): 55,689 (50.0%)
+[DATASET] Salvo em 'dataset.csv.tmp'
+[PIPELINE] ── Fase 4: Treinando modelo ──
+[TREINO] Lendo dataset de 'dataset.csv.tmp'...
+[TREINO] Total de amostras : 111,391
+[TREINO] Treino            : 89,112 (80%)
+[TREINO] Gap temporal      : 2,227 amostras
+[TREINO] Teste             : 20,052 (18.0%)
+[TREINO] Classe 1 (sobe): 44,519 | Classe 0 (cai): 44,593 | SPW=1.00
+[TREINO] Treinando modelos...
+  → RandomForest...
+[COLETOR] Ticks:     454 | 1.38328 @ 2026-09-04T16:22:26
+[COLETOR] Ticks:     455 | 1.38328 @ 2026-09-04T16:22:27
+[COLETOR] Ticks:     456 | 1.38328 @ 2026-09-04T16:22:28
+[COLETOR] Ticks:     457 | 1.38329 @ 2026-09-04T16:22:29
+[COLETOR] Ticks:     458 | 1.3833 @ 2026-09-04T16:22:30
+[COLETOR] Ticks:     459 | 1.3833 @ 2026-09-04T16:22:31
+[COLETOR] Ticks:     460 | 1.3833 @ 2026-09-04T16:22:32
+[COLETOR] Ticks:     461 | 1.3833 @ 2026-09-04T16:22:33
+[COLETOR] Ticks:     462 | 1.3833 @ 2026-09-04T16:22:34
+[COLETOR] Ticks:     463 | 1.3833 @ 2026-09-04T16:22:35
+[COLETOR] Ticks:     464 | 1.38329 @ 2026-09-04T16:22:36
+[COLETOR] Ticks:     465 | 1.38329 @ 2026-09-04T16:22:37
+[COLETOR] Ticks:     466 | 1.38329 @ 2026-09-04T16:22:38
+[COLETOR] Ticks:     467 | 1.3833 @ 2026-09-04T16:22:39OK
+  → XGBoost...
+[COLETOR] Ticks:     468 | 1.38332 @ 2026-09-04T16:22:40
+[COLETOR] Ticks:     469 | 1.38333 @ 2026-09-04T16:22:41OK
+  → Stacking (RF+XGB+LR meta) — pode demorar...
+[COLETOR] Ticks:     470 | 1.38333 @ 2026-09-04T16:22:42
+[COLETOR] Ticks:     471 | 1.38333 @ 2026-09-04T16:22:43
+[COLETOR] Ticks:     472 | 1.38333 @ 2026-09-04T16:22:44
+[COLETOR] Ticks:     473 | 1.38332 @ 2026-09-04T16:22:45
+[COLETOR] Ticks:     474 | 1.38332 @ 2026-09-04T16:22:46
+[COLETOR] Ticks:     475 | 1.38333 @ 2026-09-04T16:22:47
+[COLETOR] Ticks:     476 | 1.38333 @ 2026-09-04T16:22:48
+[COLETOR] Ticks:     477 | 1.38332 @ 2026-09-04T16:22:49
+[COLETOR] Ticks:     478 | 1.38332 @ 2026-09-04T16:22:50
+[COLETOR] Ticks:     479 | 1.38333 @ 2026-09-04T16:22:51
+[COLETOR] Ticks:     480 | 1.38332 @ 2026-09-04T16:22:52
+[COLETOR] Ticks:     481 | 1.38332 @ 2026-09-04T16:22:53
+[COLETOR] Ticks:     482 | 1.38333 @ 2026-09-04T16:22:54
+[COLETOR] Ticks:     483 | 1.38333 @ 2026-09-04T16:22:55
+[COLETOR] Ticks:     484 | 1.38333 @ 2026-09-04T16:22:56
+[COLETOR] Ticks:     485 | 1.38332 @ 2026-09-04T16:22:57
+[COLETOR] Ticks:     486 | 1.38332 @ 2026-09-04T16:22:58
+[COLETOR] Ticks:     487 | 1.38332 @ 2026-09-04T16:22:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.90)
+  Preço: 1.3833 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:     488 | 1.38329 @ 2026-09-04T16:23:00
+[COLETOR] Ticks:     489 | 1.38329 @ 2026-09-04T16:23:01
+[COLETOR] Ticks:     490 | 1.38329 @ 2026-09-04T16:23:02
+[COLETOR] Ticks:     491 | 1.38327 @ 2026-09-04T16:23:03
+[COLETOR] Ticks:     492 | 1.38328 @ 2026-09-04T16:23:04
+[COLETOR] Ticks:     493 | 1.38329 @ 2026-09-04T16:23:05
+[COLETOR] Ticks:     494 | 1.38329 @ 2026-09-04T16:23:06
+[COLETOR] Ticks:     495 | 1.38329 @ 2026-09-04T16:23:07
+[COLETOR] Ticks:     496 | 1.38329 @ 2026-09-04T16:23:08
+[COLETOR] Ticks:     497 | 1.38328 @ 2026-09-04T16:23:09
+[COLETOR] Ticks:     498 | 1.38329 @ 2026-09-04T16:23:10
+[COLETOR] Ticks:     499 | 1.38329 @ 2026-09-04T16:23:11
+[COLETOR] Ticks:     500 | 1.38328 @ 2026-09-04T16:23:12
+[COLETOR] Ticks:     501 | 1.38328 @ 2026-09-04T16:23:13
+[COLETOR] Ticks:     502 | 1.38328 @ 2026-09-04T16:23:14
+[COLETOR] Ticks:     503 | 1.38328 @ 2026-09-04T16:23:15
+[COLETOR] Ticks:     504 | 1.38328 @ 2026-09-04T16:23:16
+[COLETOR] Ticks:     505 | 1.38328 @ 2026-09-04T16:23:17
+[COLETOR] Ticks:     506 | 1.38328 @ 2026-09-04T16:23:18
+[COLETOR] Ticks:     507 | 1.38328 @ 2026-09-04T16:23:19
+[COLETOR] Ticks:     508 | 1.38328 @ 2026-09-04T16:23:20
+[COLETOR] Ticks:     509 | 1.38328 @ 2026-09-04T16:23:21
+[COLETOR] Ticks:     510 | 1.38329 @ 2026-09-04T16:23:22
+[COLETOR] Ticks:     511 | 1.38328 @ 2026-09-04T16:23:23
+[COLETOR] Ticks:     512 | 1.38328 @ 2026-09-04T16:23:24
+[COLETOR] Ticks:     513 | 1.38328 @ 2026-09-04T16:23:25
+[COLETOR] Ticks:     514 | 1.38328 @ 2026-09-04T16:23:26
+[COLETOR] Ticks:     515 | 1.38328 @ 2026-09-04T16:23:27
+[COLETOR] Ticks:     516 | 1.38328 @ 2026-09-04T16:23:28
+[COLETOR] Ticks:     517 | 1.38328 @ 2026-09-04T16:23:29
+[COLETOR] Ticks:     518 | 1.38329 @ 2026-09-04T16:23:30
+[COLETOR] Ticks:     519 | 1.38329 @ 2026-09-04T16:23:31
+[COLETOR] Ticks:     520 | 1.38329 @ 2026-09-04T16:23:32
+[COLETOR] Ticks:     521 | 1.38328 @ 2026-09-04T16:23:33
+[COLETOR] Ticks:     522 | 1.38328 @ 2026-09-04T16:23:34
+[COLETOR] Ticks:     523 | 1.38328 @ 2026-09-04T16:23:35
+[COLETOR] Ticks:     524 | 1.38328 @ 2026-09-04T16:23:36
+[COLETOR] Ticks:     525 | 1.38328 @ 2026-09-04T16:23:37
+[COLETOR] Ticks:     526 | 1.38328 @ 2026-09-04T16:23:38
+[COLETOR] Ticks:     527 | 1.38328 @ 2026-09-04T16:23:39
+[COLETOR] Ticks:     528 | 1.38329 @ 2026-09-04T16:23:40
+[COLETOR] Ticks:     529 | 1.38328 @ 2026-09-04T16:23:41
+[COLETOR] Ticks:     530 | 1.38328 @ 2026-09-04T16:23:42
+[COLETOR] Ticks:     531 | 1.38328 @ 2026-09-04T16:23:43
+[COLETOR] Ticks:     532 | 1.38328 @ 2026-09-04T16:23:44
+[COLETOR] Ticks:     533 | 1.38328 @ 2026-09-04T16:23:45
+[COLETOR] Ticks:     534 | 1.38328 @ 2026-09-04T16:23:46
+[COLETOR] Ticks:     535 | 1.38328 @ 2026-09-04T16:23:47
+[COLETOR] Ticks:     536 | 1.38328 @ 2026-09-04T16:23:48
+[COLETOR] Ticks:     537 | 1.38328 @ 2026-09-04T16:23:49
+[COLETOR] Ticks:     538 | 1.38328 @ 2026-09-04T16:23:50
+[COLETOR] Ticks:     539 | 1.38328 @ 2026-09-04T16:23:51
+[COLETOR] Ticks:     540 | 1.38328 @ 2026-09-04T16:23:52
+[COLETOR] Ticks:     541 | 1.38328 @ 2026-09-04T16:23:53
+[COLETOR] Ticks:     542 | 1.38327 @ 2026-09-04T16:23:54
+[COLETOR] Ticks:     543 | 1.38327 @ 2026-09-04T16:23:55
+[COLETOR] Ticks:     544 | 1.38328 @ 2026-09-04T16:23:56
+[COLETOR] Ticks:     545 | 1.38327 @ 2026-09-04T16:23:57
+[COLETOR] Ticks:     546 | 1.38328 @ 2026-09-04T16:23:58
+[COLETOR] Ticks:     547 | 1.38328 @ 2026-09-04T16:23:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.90)
+  Preço: 1.3833 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:     548 | 1.38331 @ 2026-09-04T16:24:00
+[COLETOR] Ticks:     549 | 1.38327 @ 2026-09-04T16:24:01
+[COLETOR] Ticks:     550 | 1.38328 @ 2026-09-04T16:24:02
+[COLETOR] Ticks:     551 | 1.38328 @ 2026-09-04T16:24:03
+[COLETOR] Ticks:     552 | 1.38328 @ 2026-09-04T16:24:04
+[COLETOR] Ticks:     553 | 1.38328 @ 2026-09-04T16:24:05
+[COLETOR] Ticks:     554 | 1.38328 @ 2026-09-04T16:24:06
+[COLETOR] Ticks:     555 | 1.38328 @ 2026-09-04T16:24:07
+[COLETOR] Ticks:     556 | 1.38328 @ 2026-09-04T16:24:08
+[COLETOR] Ticks:     557 | 1.38328 @ 2026-09-04T16:24:09
+[COLETOR] Ticks:     558 | 1.38328 @ 2026-09-04T16:24:10
+[COLETOR] Ticks:     559 | 1.38328 @ 2026-09-04T16:24:11
+[COLETOR] Ticks:     560 | 1.38327 @ 2026-09-04T16:24:12
+[COLETOR] Ticks:     561 | 1.38327 @ 2026-09-04T16:24:13
+[COLETOR] Ticks:     562 | 1.38327 @ 2026-09-04T16:24:14
+[COLETOR] Ticks:     563 | 1.38327 @ 2026-09-04T16:24:15
+[COLETOR] Ticks:     564 | 1.38327 @ 2026-09-04T16:24:16
+[COLETOR] Ticks:     565 | 1.38328 @ 2026-09-04T16:24:17OK
+[TREINO] Resultados no conjunto de teste:
+  ─── RandomForest ───
+  Acurácia  : 0.5033
+  Precisão  : 0.5044
+  Recall    : 0.5913
+  F1        : 0.5444
+  ROC-AUC   : 0.5050
+  ─── XGBoost ───
+  Acurácia  : 0.5049
+  Precisão  : 0.5075
+  Recall    : 0.4519
+  F1        : 0.4781
+  ROC-AUC   : 0.5053
+[COLETOR] Ticks:     566 | 1.38328 @ 2026-09-04T16:24:18
+  ─── Stacking ───
+  Acurácia  : 0.5028
+  Precisão  : 0.5054
+  Recall    : 0.4379
+  F1        : 0.4693
+  ROC-AUC   : 0.5036
+  Top features (RandomForest):
+    ema21                0.0838  ███
+    ema9                 0.0820  ███
+    volatility_20        0.0709  ██
+    macd_line            0.0690  ██
+    bb_width             0.0687  ██
+    volatility_10        0.0645  ██
+    macd_hist            0.0642  ██
+    adx                  0.0639  ██
+[TREINO] Métricas salvas em model_metrics.json (melhor clássico: XGBoost)
+[TREINO] Treinando Temporal Fusion Transformer (seq_len=50, d_model=64)...
+[COLETOR] Ticks:     567 | 1.38328 @ 2026-09-04T16:24:19
+[COLETOR] Ticks:     568 | 1.38328 @ 2026-09-04T16:24:20
+[COLETOR] Ticks:     569 | 1.38327 @ 2026-09-04T16:24:21
+[COLETOR] Ticks:     570 | 1.38328 @ 2026-09-04T16:24:22
+[COLETOR] Ticks:     571 | 1.38328 @ 2026-09-04T16:24:23
+[COLETOR] Ticks:     572 | 1.38328 @ 2026-09-04T16:24:24
+[COLETOR] Ticks:     573 | 1.38328 @ 2026-09-04T16:24:25
+[COLETOR] Ticks:     574 | 1.38328 @ 2026-09-04T16:24:26
+[COLETOR] Ticks:     575 | 1.38328 @ 2026-09-04T16:24:27
+[COLETOR] Ticks:     576 | 1.38328 @ 2026-09-04T16:24:28
+[COLETOR] Ticks:     577 | 1.38328 @ 2026-09-04T16:24:29
+[COLETOR] Ticks:     578 | 1.38328 @ 2026-09-04T16:24:30
+[COLETOR] Ticks:     579 | 1.38328 @ 2026-09-04T16:24:31
+[COLETOR] Ticks:     580 | 1.38328 @ 2026-09-04T16:24:32
+[COLETOR] Ticks:     581 | 1.38328 @ 2026-09-04T16:24:33
+[COLETOR] Ticks:     582 | 1.38328 @ 2026-09-04T16:24:34
+[COLETOR] Ticks:     583 | 1.38328 @ 2026-09-04T16:24:35
+[COLETOR] Ticks:     584 | 1.38328 @ 2026-09-04T16:24:36
+[COLETOR] Ticks:     585 | 1.38328 @ 2026-09-04T16:24:37
+[COLETOR] Ticks:     586 | 1.38328 @ 2026-09-04T16:24:38
+[COLETOR] Ticks:     587 | 1.38328 @ 2026-09-04T16:24:39
+[COLETOR] Ticks:     588 | 1.38327 @ 2026-09-04T16:24:40
+[COLETOR] Ticks:     589 | 1.38327 @ 2026-09-04T16:24:41
+[COLETOR] Ticks:     590 | 1.38328 @ 2026-09-04T16:24:42
+[COLETOR] Ticks:     591 | 1.38327 @ 2026-09-04T16:24:43
+[COLETOR] Ticks:     592 | 1.38328 @ 2026-09-04T16:24:44
+[COLETOR] Ticks:     593 | 1.38328 @ 2026-09-04T16:24:45
+[COLETOR] Ticks:     594 | 1.38328 @ 2026-09-04T16:24:46
+[COLETOR] Ticks:     595 | 1.38328 @ 2026-09-04T16:24:47
+[COLETOR] Ticks:     596 | 1.38328 @ 2026-09-04T16:24:48
+[COLETOR] Ticks:     597 | 1.38328 @ 2026-09-04T16:24:49
+[COLETOR] Ticks:     598 | 1.38328 @ 2026-09-04T16:24:50
+[COLETOR] Ticks:     599 | 1.38328 @ 2026-09-04T16:24:51
+[COLETOR] Ticks:     600 | 1.38328 @ 2026-09-04T16:24:52
+[COLETOR] Ticks:     601 | 1.38328 @ 2026-09-04T16:24:53
+[COLETOR] Ticks:     602 | 1.38328 @ 2026-09-04T16:24:54
+[COLETOR] Ticks:     603 | 1.38328 @ 2026-09-04T16:24:55
+[COLETOR] Ticks:     604 | 1.38328 @ 2026-09-04T16:24:56
+[COLETOR] Ticks:     605 | 1.38328 @ 2026-09-04T16:24:57
+[COLETOR] Ticks:     606 | 1.38328 @ 2026-09-04T16:24:58
+[COLETOR] Ticks:     607 | 1.38328 @ 2026-09-04T16:24:59
+[COLETOR] Ticks:     608 | 1.38328 @ 2026-09-04T16:25:00
+[COLETOR] Ticks:     609 | 1.38328 @ 2026-09-04T16:25:01
+[COLETOR] Ticks:     610 | 1.38328 @ 2026-09-04T16:25:02
+[COLETOR] Ticks:     611 | 1.38328 @ 2026-09-04T16:25:03
+[COLETOR] Ticks:     612 | 1.38328 @ 2026-09-04T16:25:04
+[COLETOR] Ticks:     613 | 1.38328 @ 2026-09-04T16:25:05
+[COLETOR] Ticks:     614 | 1.38328 @ 2026-09-04T16:25:06
+[COLETOR] Ticks:     615 | 1.38328 @ 2026-09-04T16:25:07
+[COLETOR] Ticks:     616 | 1.38328 @ 2026-09-04T16:25:08
+[COLETOR] Ticks:     617 | 1.38328 @ 2026-09-04T16:25:09
+[COLETOR] Ticks:     618 | 1.38328 @ 2026-09-04T16:25:10
+[COLETOR] Ticks:     619 | 1.38327 @ 2026-09-04T16:25:11
+[COLETOR] Ticks:     620 | 1.38327 @ 2026-09-04T16:25:12
+[COLETOR] Ticks:     621 | 1.38327 @ 2026-09-04T16:25:13
+[COLETOR] Ticks:     622 | 1.38327 @ 2026-09-04T16:25:14
+[COLETOR] Ticks:     623 | 1.38326 @ 2026-09-04T16:25:15
+[COLETOR] Ticks:     624 | 1.38326 @ 2026-09-04T16:25:16
+[COLETOR] Ticks:     625 | 1.38326 @ 2026-09-04T16:25:17
+[COLETOR] Ticks:     626 | 1.38323 @ 2026-09-04T16:25:18
+[COLETOR] Ticks:     627 | 1.38323 @ 2026-09-04T16:25:19
+[COLETOR] Ticks:     628 | 1.38323 @ 2026-09-04T16:25:20
+[COLETOR] Ticks:     629 | 1.38323 @ 2026-09-04T16:25:21
+[COLETOR] Ticks:     630 | 1.38323 @ 2026-09-04T16:25:22
+[COLETOR] Ticks:     631 | 1.38323 @ 2026-09-04T16:25:23
+[COLETOR] Ticks:     632 | 1.38324 @ 2026-09-04T16:25:24
+[COLETOR] Ticks:     633 | 1.38324 @ 2026-09-04T16:25:25
+[COLETOR] Ticks:     634 | 1.38324 @ 2026-09-04T16:25:26
+[COLETOR] Ticks:     635 | 1.38324 @ 2026-09-04T16:25:27
+[COLETOR] Ticks:     636 | 1.38324 @ 2026-09-04T16:25:28
+[COLETOR] Ticks:     637 | 1.38324 @ 2026-09-04T16:25:29
+[COLETOR] Ticks:     638 | 1.38324 @ 2026-09-04T16:25:30
+[COLETOR] Ticks:     639 | 1.38324 @ 2026-09-04T16:25:31
+[COLETOR] Ticks:     640 | 1.38324 @ 2026-09-04T16:25:32
+[COLETOR] Ticks:     641 | 1.38325 @ 2026-09-04T16:25:33
+[COLETOR] Ticks:     642 | 1.38324 @ 2026-09-04T16:25:34
+[COLETOR] Ticks:     643 | 1.38324 @ 2026-09-04T16:25:35
+[COLETOR] Ticks:     644 | 1.38324 @ 2026-09-04T16:25:36
+[COLETOR] Ticks:     645 | 1.38324 @ 2026-09-04T16:25:37
+[COLETOR] Ticks:     646 | 1.38324 @ 2026-09-04T16:25:38
+[COLETOR] Ticks:     647 | 1.38324 @ 2026-09-04T16:25:39
+[COLETOR] Ticks:     648 | 1.38324 @ 2026-09-04T16:25:40
+[COLETOR] Ticks:     649 | 1.38324 @ 2026-09-04T16:25:41
+[COLETOR] Ticks:     650 | 1.38324 @ 2026-09-04T16:25:42
+[COLETOR] Ticks:     651 | 1.38324 @ 2026-09-04T16:25:43
+[COLETOR] Ticks:     652 | 1.38324 @ 2026-09-04T16:25:44
+[COLETOR] Ticks:     653 | 1.38324 @ 2026-09-04T16:25:45
+[COLETOR] Ticks:     654 | 1.38325 @ 2026-09-04T16:25:46
+[COLETOR] Ticks:     655 | 1.38326 @ 2026-09-04T16:25:47
+[COLETOR] Ticks:     656 | 1.38326 @ 2026-09-04T16:25:48
+[COLETOR] Ticks:     657 | 1.38327 @ 2026-09-04T16:25:49
+[COLETOR] Ticks:     658 | 1.38328 @ 2026-09-04T16:25:50
+[COLETOR] Ticks:     659 | 1.38328 @ 2026-09-04T16:25:51
+[COLETOR] Ticks:     660 | 1.38328 @ 2026-09-04T16:25:52
+[COLETOR] Ticks:     661 | 1.38328 @ 2026-09-04T16:25:53
+[COLETOR] Ticks:     662 | 1.38328 @ 2026-09-04T16:25:54
+[COLETOR] Ticks:     663 | 1.38328 @ 2026-09-04T16:25:55
+[COLETOR] Ticks:     664 | 1.38328 @ 2026-09-04T16:25:56
+[COLETOR] Ticks:     665 | 1.38328 @ 2026-09-04T16:25:57
+[COLETOR] Ticks:     666 | 1.38328 @ 2026-09-04T16:25:58
+[COLETOR] Ticks:     667 | 1.38328 @ 2026-09-04T16:25:59
+[COLETOR] Ticks:     668 | 1.38328 @ 2026-09-04T16:26:00
+[COLETOR] Ticks:     669 | 1.38328 @ 2026-09-04T16:26:01
+[COLETOR] Ticks:     670 | 1.38328 @ 2026-09-04T16:26:02
+[COLETOR] Ticks:     671 | 1.38328 @ 2026-09-04T16:26:03
+[COLETOR] Ticks:     672 | 1.38327 @ 2026-09-04T16:26:04
+[COLETOR] Ticks:     673 | 1.38327 @ 2026-09-04T16:26:05
+[COLETOR] Ticks:     674 | 1.38327 @ 2026-09-04T16:26:06
+[COLETOR] Ticks:     675 | 1.38327 @ 2026-09-04T16:26:07
+[COLETOR] Ticks:     676 | 1.38327 @ 2026-09-04T16:26:08
+[COLETOR] Ticks:     677 | 1.38327 @ 2026-09-04T16:26:09
+[COLETOR] Ticks:     678 | 1.38327 @ 2026-09-04T16:26:10
+[COLETOR] Ticks:     679 | 1.38327 @ 2026-09-04T16:26:11
+[COLETOR] Ticks:     680 | 1.38327 @ 2026-09-04T16:26:12
+[COLETOR] Ticks:     681 | 1.38326 @ 2026-09-04T16:26:13
+[COLETOR] Ticks:     682 | 1.38326 @ 2026-09-04T16:26:14
+[COLETOR] Ticks:     683 | 1.38326 @ 2026-09-04T16:26:15
+[COLETOR] Ticks:     684 | 1.38326 @ 2026-09-04T16:26:16
+[COLETOR] Ticks:     685 | 1.38326 @ 2026-09-04T16:26:17
+[COLETOR] Ticks:     686 | 1.38326 @ 2026-09-04T16:26:18
+[COLETOR] Ticks:     687 | 1.38327 @ 2026-09-04T16:26:19
+[COLETOR] Ticks:     688 | 1.38326 @ 2026-09-04T16:26:20
+[COLETOR] Ticks:     689 | 1.38326 @ 2026-09-04T16:26:21
+[COLETOR] Ticks:     690 | 1.38326 @ 2026-09-04T16:26:22
+[COLETOR] Ticks:     691 | 1.38326 @ 2026-09-04T16:26:23
+[COLETOR] Ticks:     692 | 1.38326 @ 2026-09-04T16:26:24
+[COLETOR] Ticks:     693 | 1.38326 @ 2026-09-04T16:26:25
+[COLETOR] Ticks:     694 | 1.38327 @ 2026-09-04T16:26:26
+[COLETOR] Ticks:     695 | 1.38327 @ 2026-09-04T16:26:27
+[COLETOR] Ticks:     696 | 1.38327 @ 2026-09-04T16:26:28
+[COLETOR] Ticks:     697 | 1.38327 @ 2026-09-04T16:26:29
+[COLETOR] Ticks:     698 | 1.38327 @ 2026-09-04T16:26:30
+[COLETOR] Ticks:     699 | 1.38326 @ 2026-09-04T16:26:31
+[COLETOR] Ticks:     700 | 1.38327 @ 2026-09-04T16:26:32
+[COLETOR] Ticks:     701 | 1.38326 @ 2026-09-04T16:26:33
+[COLETOR] Ticks:     702 | 1.38326 @ 2026-09-04T16:26:34
+[COLETOR] Ticks:     703 | 1.38326 @ 2026-09-04T16:26:35
+[COLETOR] Ticks:     704 | 1.38325 @ 2026-09-04T16:26:36
+[COLETOR] Ticks:     705 | 1.38325 @ 2026-09-04T16:26:37
+[COLETOR] Ticks:     706 | 1.38325 @ 2026-09-04T16:26:38
+[COLETOR] Ticks:     707 | 1.38325 @ 2026-09-04T16:26:39
+[COLETOR] Ticks:     708 | 1.38326 @ 2026-09-04T16:26:40
+[COLETOR] Ticks:     709 | 1.38326 @ 2026-09-04T16:26:41
+[COLETOR] Ticks:     710 | 1.38326 @ 2026-09-04T16:26:42
+[COLETOR] Ticks:     711 | 1.38325 @ 2026-09-04T16:26:43
+[COLETOR] Ticks:     712 | 1.38325 @ 2026-09-04T16:26:44
+[COLETOR] Ticks:     713 | 1.38325 @ 2026-09-04T16:26:45
+[COLETOR] Ticks:     714 | 1.38324 @ 2026-09-04T16:26:46
+[COLETOR] Ticks:     715 | 1.38325 @ 2026-09-04T16:26:47
+[COLETOR] Ticks:     716 | 1.38324 @ 2026-09-04T16:26:48
+[COLETOR] Ticks:     717 | 1.38324 @ 2026-09-04T16:26:49
+[COLETOR] Ticks:     718 | 1.38324 @ 2026-09-04T16:26:50
+[COLETOR] Ticks:     719 | 1.38324 @ 2026-09-04T16:26:51
+[COLETOR] Ticks:     720 | 1.38324 @ 2026-09-04T16:26:52
+[COLETOR] Ticks:     721 | 1.38325 @ 2026-09-04T16:26:53
+[COLETOR] Ticks:     722 | 1.38325 @ 2026-09-04T16:26:54
+[COLETOR] Ticks:     723 | 1.38324 @ 2026-09-04T16:26:55
+[COLETOR] Ticks:     724 | 1.38325 @ 2026-09-04T16:26:56
+[COLETOR] Ticks:     725 | 1.38324 @ 2026-09-04T16:26:57
+[COLETOR] Ticks:     726 | 1.38324 @ 2026-09-04T16:26:58
+[COLETOR] Ticks:     727 | 1.38324 @ 2026-09-04T16:26:59
+[COLETOR] Ticks:     728 | 1.38325 @ 2026-09-04T16:27:00
+[COLETOR] Ticks:     729 | 1.38326 @ 2026-09-04T16:27:01
+[COLETOR] Ticks:     730 | 1.38326 @ 2026-09-04T16:27:02
+[COLETOR] Ticks:     731 | 1.38327 @ 2026-09-04T16:27:03
+[COLETOR] Ticks:     732 | 1.38326 @ 2026-09-04T16:27:04
+[COLETOR] Ticks:     733 | 1.38326 @ 2026-09-04T16:27:05
+[COLETOR] Ticks:     734 | 1.38327 @ 2026-09-04T16:27:06
+[COLETOR] Ticks:     735 | 1.38327 @ 2026-09-04T16:27:07
+[COLETOR] Ticks:     736 | 1.38326 @ 2026-09-04T16:27:08
+[COLETOR] Ticks:     737 | 1.38326 @ 2026-09-04T16:27:09
+[COLETOR] Ticks:     738 | 1.38326 @ 2026-09-04T16:27:10
+[COLETOR] Ticks:     739 | 1.38326 @ 2026-09-04T16:27:11
+[COLETOR] Ticks:     740 | 1.38326 @ 2026-09-04T16:27:12
+[COLETOR] Ticks:     741 | 1.38326 @ 2026-09-04T16:27:13
+[COLETOR] Ticks:     742 | 1.38326 @ 2026-09-04T16:27:14
+[COLETOR] Ticks:     743 | 1.38321 @ 2026-09-04T16:27:15
+[COLETOR] Ticks:     744 | 1.3832 @ 2026-09-04T16:27:16
+[COLETOR] Ticks:     745 | 1.3832 @ 2026-09-04T16:27:17
+[COLETOR] Ticks:     746 | 1.3832 @ 2026-09-04T16:27:18
+[COLETOR] Ticks:     747 | 1.3832 @ 2026-09-04T16:27:19
+[COLETOR] Ticks:     748 | 1.38319 @ 2026-09-04T16:27:20
+[COLETOR] Ticks:     749 | 1.38319 @ 2026-09-04T16:27:21
+[COLETOR] Ticks:     750 | 1.38319 @ 2026-09-04T16:27:22
+[COLETOR] Ticks:     751 | 1.38319 @ 2026-09-04T16:27:23
+[COLETOR] Ticks:     752 | 1.38318 @ 2026-09-04T16:27:24
+[COLETOR] Ticks:     753 | 1.38319 @ 2026-09-04T16:27:25
+[COLETOR] Ticks:     754 | 1.38319 @ 2026-09-04T16:27:26
+[COLETOR] Ticks:     755 | 1.3832 @ 2026-09-04T16:27:27
+[COLETOR] Ticks:     756 | 1.38319 @ 2026-09-04T16:27:28
+[COLETOR] Ticks:     757 | 1.3832 @ 2026-09-04T16:27:29
+[COLETOR] Ticks:     758 | 1.3832 @ 2026-09-04T16:27:30
+[COLETOR] Ticks:     759 | 1.3832 @ 2026-09-04T16:27:31
+[COLETOR] Ticks:     760 | 1.3832 @ 2026-09-04T16:27:32
+[COLETOR] Ticks:     761 | 1.3832 @ 2026-09-04T16:27:33
+[COLETOR] Ticks:     762 | 1.38319 @ 2026-09-04T16:27:34
+[COLETOR] Ticks:     763 | 1.38319 @ 2026-09-04T16:27:35
+[COLETOR] Ticks:     764 | 1.38319 @ 2026-09-04T16:27:36
+[COLETOR] Ticks:     765 | 1.38319 @ 2026-09-04T16:27:37
+[COLETOR] Ticks:     766 | 1.38319 @ 2026-09-04T16:27:38
+[COLETOR] Ticks:     767 | 1.38319 @ 2026-09-04T16:27:39
+[COLETOR] Ticks:     768 | 1.38319 @ 2026-09-04T16:27:40
+[COLETOR] Ticks:     769 | 1.38318 @ 2026-09-04T16:27:41
+[COLETOR] Ticks:     770 | 1.38319 @ 2026-09-04T16:27:42
+[COLETOR] Ticks:     771 | 1.38318 @ 2026-09-04T16:27:43
+[COLETOR] Ticks:     772 | 1.38319 @ 2026-09-04T16:27:44
+[COLETOR] Ticks:     773 | 1.38319 @ 2026-09-04T16:27:45
+[COLETOR] Ticks:     774 | 1.38318 @ 2026-09-04T16:27:46
+[COLETOR] Ticks:     775 | 1.38319 @ 2026-09-04T16:27:47
+[COLETOR] Ticks:     776 | 1.38318 @ 2026-09-04T16:27:48
+[COLETOR] Ticks:     777 | 1.38318 @ 2026-09-04T16:27:49
+[COLETOR] Ticks:     778 | 1.38318 @ 2026-09-04T16:27:50
+[COLETOR] Ticks:     779 | 1.38318 @ 2026-09-04T16:27:51
+[COLETOR] Ticks:     780 | 1.38319 @ 2026-09-04T16:27:52
+[COLETOR] Ticks:     781 | 1.38319 @ 2026-09-04T16:27:53
+[COLETOR] Ticks:     782 | 1.3832 @ 2026-09-04T16:27:54
+[COLETOR] Ticks:     783 | 1.3832 @ 2026-09-04T16:27:55
+[COLETOR] Ticks:     784 | 1.3832 @ 2026-09-04T16:27:56
+[COLETOR] Ticks:     785 | 1.3832 @ 2026-09-04T16:27:57
+[COLETOR] Ticks:     786 | 1.3832 @ 2026-09-04T16:27:58
+[COLETOR] Ticks:     787 | 1.3832 @ 2026-09-04T16:27:59
+[COLETOR] Ticks:     788 | 1.3832 @ 2026-09-04T16:28:00
+[COLETOR] Ticks:     789 | 1.38319 @ 2026-09-04T16:28:01
+[COLETOR] Ticks:     790 | 1.38319 @ 2026-09-04T16:28:02
+[COLETOR] Ticks:     791 | 1.38318 @ 2026-09-04T16:28:03
+[COLETOR] Ticks:     792 | 1.38318 @ 2026-09-04T16:28:04
+[COLETOR] Ticks:     793 | 1.38319 @ 2026-09-04T16:28:05
+[COLETOR] Ticks:     794 | 1.38319 @ 2026-09-04T16:28:06
+[COLETOR] Ticks:     795 | 1.38318 @ 2026-09-04T16:28:07
+[COLETOR] Ticks:     796 | 1.38319 @ 2026-09-04T16:28:08
+[COLETOR] Ticks:     797 | 1.38318 @ 2026-09-04T16:28:09
+[COLETOR] Ticks:     798 | 1.38319 @ 2026-09-04T16:28:10
+[COLETOR] Ticks:     799 | 1.38318 @ 2026-09-04T16:28:11
+[COLETOR] Ticks:     800 | 1.38318 @ 2026-09-04T16:28:12
+[COLETOR] Ticks:     801 | 1.38318 @ 2026-09-04T16:28:13
+[COLETOR] Ticks:     802 | 1.38319 @ 2026-09-04T16:28:14
+[COLETOR] Ticks:     803 | 1.38318 @ 2026-09-04T16:28:15
+[COLETOR] Ticks:     804 | 1.38318 @ 2026-09-04T16:28:16
+[COLETOR] Ticks:     805 | 1.38316 @ 2026-09-04T16:28:17
+[COLETOR] Ticks:     806 | 1.38316 @ 2026-09-04T16:28:18
+[COLETOR] Ticks:     807 | 1.38317 @ 2026-09-04T16:28:19
+[COLETOR] Ticks:     808 | 1.38316 @ 2026-09-04T16:28:20
+[COLETOR] Ticks:     809 | 1.38316 @ 2026-09-04T16:28:21
+[COLETOR] Ticks:     810 | 1.38316 @ 2026-09-04T16:28:22
+[COLETOR] Ticks:     811 | 1.38317 @ 2026-09-04T16:28:23
+[COLETOR] Ticks:     812 | 1.38317 @ 2026-09-04T16:28:24
+[COLETOR] Ticks:     813 | 1.38317 @ 2026-09-04T16:28:25
+[COLETOR] Ticks:     814 | 1.38317 @ 2026-09-04T16:28:26
+[COLETOR] Ticks:     815 | 1.38317 @ 2026-09-04T16:28:27
+[COLETOR] Ticks:     816 | 1.38318 @ 2026-09-04T16:28:28
+[COLETOR] Ticks:     817 | 1.38317 @ 2026-09-04T16:28:29
+[COLETOR] Ticks:     818 | 1.38317 @ 2026-09-04T16:28:30
+[COLETOR] Ticks:     819 | 1.38317 @ 2026-09-04T16:28:31
+[COLETOR] Ticks:     820 | 1.38317 @ 2026-09-04T16:28:32
+[COLETOR] Ticks:     821 | 1.38316 @ 2026-09-04T16:28:33
+[COLETOR] Ticks:     822 | 1.38317 @ 2026-09-04T16:28:34
+[COLETOR] Ticks:     823 | 1.38317 @ 2026-09-04T16:28:35
+[COLETOR] Ticks:     824 | 1.38317 @ 2026-09-04T16:28:36
+[COLETOR] Ticks:     825 | 1.38317 @ 2026-09-04T16:28:37
+[COLETOR] Ticks:     826 | 1.38317 @ 2026-09-04T16:28:38
+[COLETOR] Ticks:     827 | 1.38317 @ 2026-09-04T16:28:39
+[COLETOR] Ticks:     828 | 1.38317 @ 2026-09-04T16:28:40
+[COLETOR] Ticks:     829 | 1.38317 @ 2026-09-04T16:28:41
+[COLETOR] Ticks:     830 | 1.38317 @ 2026-09-04T16:28:42
+[COLETOR] Ticks:     831 | 1.38317 @ 2026-09-04T16:28:43
+[COLETOR] Ticks:     832 | 1.38317 @ 2026-09-04T16:28:44
+[COLETOR] Ticks:     833 | 1.38317 @ 2026-09-04T16:28:45
+[COLETOR] Ticks:     834 | 1.38317 @ 2026-09-04T16:28:46
+[COLETOR] Ticks:     835 | 1.38317 @ 2026-09-04T16:28:47
+[COLETOR] Ticks:     836 | 1.38317 @ 2026-09-04T16:28:48
+[COLETOR] Ticks:     837 | 1.38317 @ 2026-09-04T16:28:49
+[COLETOR] Ticks:     838 | 1.38317 @ 2026-09-04T16:28:50
+[COLETOR] Ticks:     839 | 1.38317 @ 2026-09-04T16:28:51
+[COLETOR] Ticks:     840 | 1.38317 @ 2026-09-04T16:28:52
+[COLETOR] Ticks:     841 | 1.38317 @ 2026-09-04T16:28:53
+[COLETOR] Ticks:     842 | 1.38317 @ 2026-09-04T16:28:54
+[COLETOR] Ticks:     843 | 1.38317 @ 2026-09-04T16:28:55
+[COLETOR] Ticks:     844 | 1.38316 @ 2026-09-04T16:28:56
+[COLETOR] Ticks:     845 | 1.38317 @ 2026-09-04T16:28:57
+[COLETOR] Ticks:     846 | 1.38317 @ 2026-09-04T16:28:58
+[COLETOR] Ticks:     847 | 1.38317 @ 2026-09-04T16:28:59
+[COLETOR] Ticks:     848 | 1.38318 @ 2026-09-04T16:29:00
+[COLETOR] Ticks:     849 | 1.38318 @ 2026-09-04T16:29:01
+[COLETOR] Ticks:     850 | 1.38318 @ 2026-09-04T16:29:02
+[COLETOR] Ticks:     851 | 1.38318 @ 2026-09-04T16:29:03
+[COLETOR] Ticks:     852 | 1.38318 @ 2026-09-04T16:29:04
+[COLETOR] Ticks:     853 | 1.38318 @ 2026-09-04T16:29:05
+[COLETOR] Ticks:     854 | 1.38318 @ 2026-09-04T16:29:06
+[COLETOR] Ticks:     855 | 1.38318 @ 2026-09-04T16:29:07
+[COLETOR] Ticks:     856 | 1.38318 @ 2026-09-04T16:29:08
+[COLETOR] Ticks:     857 | 1.38318 @ 2026-09-04T16:29:09
+[COLETOR] Ticks:     858 | 1.38318 @ 2026-09-04T16:29:10
+[COLETOR] Ticks:     859 | 1.38319 @ 2026-09-04T16:29:11
+[COLETOR] Ticks:     860 | 1.38319 @ 2026-09-04T16:29:12
+[COLETOR] Ticks:     861 | 1.38318 @ 2026-09-04T16:29:13
+[COLETOR] Ticks:     862 | 1.38318 @ 2026-09-04T16:29:14
+[COLETOR] Ticks:     863 | 1.38318 @ 2026-09-04T16:29:15    [TFT] época   1/20 | val_loss=0.7452 | lr=8.40e-05 | patience=0/10
+[COLETOR] Ticks:     864 | 1.38319 @ 2026-09-04T16:29:16
+[COLETOR] Ticks:     865 | 1.38318 @ 2026-09-04T16:29:17
+[COLETOR] Ticks:     866 | 1.38318 @ 2026-09-04T16:29:18
+[COLETOR] Ticks:     867 | 1.38318 @ 2026-09-04T16:29:19
+[COLETOR] Ticks:     868 | 1.38318 @ 2026-09-04T16:29:20
+[COLETOR] Ticks:     869 | 1.38318 @ 2026-09-04T16:29:21
+[COLETOR] Ticks:     870 | 1.38318 @ 2026-09-04T16:29:22
+[COLETOR] Ticks:     871 | 1.38318 @ 2026-09-04T16:29:23
+[COLETOR] Ticks:     872 | 1.38318 @ 2026-09-04T16:29:24
+[COLETOR] Ticks:     873 | 1.38318 @ 2026-09-04T16:29:25
+[COLETOR] Ticks:     874 | 1.38318 @ 2026-09-04T16:29:26
+[COLETOR] Ticks:     875 | 1.38318 @ 2026-09-04T16:29:27
+[COLETOR] Ticks:     876 | 1.38318 @ 2026-09-04T16:29:28
+[COLETOR] Ticks:     877 | 1.38318 @ 2026-09-04T16:29:29
+[COLETOR] Ticks:     878 | 1.38318 @ 2026-09-04T16:29:30
+[COLETOR] Ticks:     879 | 1.38318 @ 2026-09-04T16:29:31
+[COLETOR] Ticks:     880 | 1.38318 @ 2026-09-04T16:29:32
+[COLETOR] Ticks:     881 | 1.38318 @ 2026-09-04T16:29:33
+[COLETOR] Ticks:     882 | 1.38318 @ 2026-09-04T16:29:34
+[COLETOR] Ticks:     883 | 1.38319 @ 2026-09-04T16:29:35
+[COLETOR] Ticks:     884 | 1.38318 @ 2026-09-04T16:29:36
+[COLETOR] Ticks:     885 | 1.38318 @ 2026-09-04T16:29:37
+[COLETOR] Ticks:     886 | 1.38318 @ 2026-09-04T16:29:38
+[COLETOR] Ticks:     887 | 1.38318 @ 2026-09-04T16:29:39
+[COLETOR] Ticks:     888 | 1.38318 @ 2026-09-04T16:29:40
+[COLETOR] Ticks:     889 | 1.38318 @ 2026-09-04T16:29:41
+[COLETOR] Ticks:     890 | 1.38318 @ 2026-09-04T16:29:42
+[COLETOR] Ticks:     891 | 1.38317 @ 2026-09-04T16:29:43
+[COLETOR] Ticks:     892 | 1.38317 @ 2026-09-04T16:29:44
+[COLETOR] Ticks:     893 | 1.38317 @ 2026-09-04T16:29:45
+[COLETOR] Ticks:     894 | 1.38317 @ 2026-09-04T16:29:46
+[COLETOR] Ticks:     895 | 1.38317 @ 2026-09-04T16:29:47
+[COLETOR] Ticks:     896 | 1.38318 @ 2026-09-04T16:29:48
+[COLETOR] Ticks:     897 | 1.38318 @ 2026-09-04T16:29:49
+[COLETOR] Ticks:     898 | 1.38318 @ 2026-09-04T16:29:50
+[COLETOR] Ticks:     899 | 1.38319 @ 2026-09-04T16:29:51
+[COLETOR] Ticks:     900 | 1.38318 @ 2026-09-04T16:29:52
+[COLETOR] Ticks:     901 | 1.38317 @ 2026-09-04T16:29:53
+[COLETOR] Ticks:     902 | 1.38316 @ 2026-09-04T16:29:54
+[COLETOR] Ticks:     903 | 1.38316 @ 2026-09-04T16:29:55
+[COLETOR] Ticks:     904 | 1.38316 @ 2026-09-04T16:29:56
+[COLETOR] Ticks:     905 | 1.38315 @ 2026-09-04T16:29:57
+[COLETOR] Ticks:     906 | 1.38316 @ 2026-09-04T16:29:58
+[COLETOR] Ticks:     907 | 1.38316 @ 2026-09-04T16:29:59
+[COLETOR] Ticks:     908 | 1.38316 @ 2026-09-04T16:30:00
+[COLETOR] Ticks:     909 | 1.38319 @ 2026-09-04T16:30:01
+[COLETOR] Ticks:     910 | 1.38318 @ 2026-09-04T16:30:02[TRADE] WIN  | Profit: +8.88 USD | Saldo: 1008.88 | PnL hoje: +8.88
+[COLETOR] Ticks:     911 | 1.38318 @ 2026-09-04T16:30:03
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     912 | 1.38324 @ 2026-09-04T16:30:04
+[BOT] 1.3833 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     913 | 1.38325 @ 2026-09-04T16:30:05
+[BOT] 1.3833 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     914 | 1.38325 @ 2026-09-04T16:30:06
+[BOT] 1.3833 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     915 | 1.38325 @ 2026-09-04T16:30:07
+[BOT] 1.3833 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     916 | 1.38325 @ 2026-09-04T16:30:08
+[BOT] 1.3833 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     917 | 1.38325 @ 2026-09-04T16:30:09
+[BOT] 1.3833 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     918 | 1.38325 @ 2026-09-04T16:30:10
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     919 | 1.38324 @ 2026-09-04T16:30:11
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     920 | 1.38324 @ 2026-09-04T16:30:12
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     921 | 1.38324 @ 2026-09-04T16:30:13
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     922 | 1.38323 @ 2026-09-04T16:30:14
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     923 | 1.38324 @ 2026-09-04T16:30:15
+[COLETOR] Ticks:     924 | 1.38324 @ 2026-09-04T16:30:16
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     925 | 1.38323 @ 2026-09-04T16:30:17
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     926 | 1.38323 @ 2026-09-04T16:30:18
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     927 | 1.38323 @ 2026-09-04T16:30:19
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     928 | 1.38323 @ 2026-09-04T16:30:20
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     929 | 1.38323 @ 2026-09-04T16:30:21
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     930 | 1.38324 @ 2026-09-04T16:30:22
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     931 | 1.38323 @ 2026-09-04T16:30:23
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     932 | 1.38322 @ 2026-09-04T16:30:24
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     933 | 1.38322 @ 2026-09-04T16:30:25
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     934 | 1.38322 @ 2026-09-04T16:30:26
+[COLETOR] Ticks:     935 | 1.38322 @ 2026-09-04T16:30:27
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     936 | 1.38322 @ 2026-09-04T16:30:28
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     937 | 1.38322 @ 2026-09-04T16:30:29
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     938 | 1.38321 @ 2026-09-04T16:30:30
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     939 | 1.38321 @ 2026-09-04T16:30:31
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     940 | 1.38321 @ 2026-09-04T16:30:32
+[COLETOR] Ticks:     941 | 1.38321 @ 2026-09-04T16:30:33
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     942 | 1.38321 @ 2026-09-04T16:30:34
+[COLETOR] Ticks:     943 | 1.38321 @ 2026-09-04T16:30:35
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     944 | 1.38321 @ 2026-09-04T16:30:36
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     945 | 1.38321 @ 2026-09-04T16:30:37
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     946 | 1.38321 @ 2026-09-04T16:30:38
+[COLETOR] Ticks:     947 | 1.38321 @ 2026-09-04T16:30:39
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     948 | 1.38321 @ 2026-09-04T16:30:40
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     949 | 1.38321 @ 2026-09-04T16:30:41
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     950 | 1.38321 @ 2026-09-04T16:30:42
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     951 | 1.38321 @ 2026-09-04T16:30:43
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     952 | 1.38321 @ 2026-09-04T16:30:44
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     953 | 1.38321 @ 2026-09-04T16:30:45
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     954 | 1.38321 @ 2026-09-04T16:30:46
+[COLETOR] Ticks:     955 | 1.38321 @ 2026-09-04T16:30:47
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     956 | 1.38321 @ 2026-09-04T16:30:48
+[COLETOR] Ticks:     957 | 1.3832 @ 2026-09-04T16:30:49
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     958 | 1.38321 @ 2026-09-04T16:30:50
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     959 | 1.3832 @ 2026-09-04T16:30:51
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     960 | 1.3832 @ 2026-09-04T16:30:52
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     961 | 1.38321 @ 2026-09-04T16:30:53
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     962 | 1.38321 @ 2026-09-04T16:30:54
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     963 | 1.38321 @ 2026-09-04T16:30:55
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     964 | 1.38321 @ 2026-09-04T16:30:56
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     965 | 1.38321 @ 2026-09-04T16:30:57
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     966 | 1.38321 @ 2026-09-04T16:30:58
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 115)
+[COLETOR] Ticks:     967 | 1.38321 @ 2026-09-04T16:30:59
+[TICK] 1.3832 | EMA9:1.3832 EMA21:1.3834 | RSI:23.7 ADX:64.8 MACD_H:-0.00000 [→ SELL]
+[BOT] → SELL | Stake: 10.09 USD | Duração: 15m | ADX:64.8 RSI:23.7
+[COLETOR] Ticks:     968 | 1.3832 @ 2026-09-04T16:31:00
+[BOT] 1.3832 | Aguardando fechamento da vela... (candles ok: 116)
+[COLETOR] Ticks:     969 | 1.3832 @ 2026-09-04T16:31:01[BOT] Contrato aberto | ID: 11721820639
+[COLETOR] Ticks:     970 | 1.38321 @ 2026-09-04T16:31:02
+[COLETOR] Ticks:     971 | 1.38322 @ 2026-09-04T16:31:03
+[COLETOR] Ticks:     972 | 1.38322 @ 2026-09-04T16:31:04
+[COLETOR] Ticks:     973 | 1.38322 @ 2026-09-04T16:31:05
+[COLETOR] Ticks:     974 | 1.38322 @ 2026-09-04T16:31:06
+[COLETOR] Ticks:     975 | 1.38322 @ 2026-09-04T16:31:07
+[COLETOR] Ticks:     976 | 1.38322 @ 2026-09-04T16:31:08
+[COLETOR] Ticks:     977 | 1.38322 @ 2026-09-04T16:31:09
+[COLETOR] Ticks:     978 | 1.38322 @ 2026-09-04T16:31:10
+[COLETOR] Ticks:     979 | 1.38322 @ 2026-09-04T16:31:11
+[COLETOR] Ticks:     980 | 1.38322 @ 2026-09-04T16:31:12
+[COLETOR] Ticks:     981 | 1.38322 @ 2026-09-04T16:31:13
+[COLETOR] Ticks:     982 | 1.38322 @ 2026-09-04T16:31:14
+[COLETOR] Ticks:     983 | 1.3832 @ 2026-09-04T16:31:15
+[COLETOR] Ticks:     984 | 1.3832 @ 2026-09-04T16:31:16
+[COLETOR] Ticks:     985 | 1.38321 @ 2026-09-04T16:31:17
+[COLETOR] Ticks:     986 | 1.3832 @ 2026-09-04T16:31:18
+[COLETOR] Ticks:     987 | 1.38324 @ 2026-09-04T16:31:19
+[COLETOR] Ticks:     988 | 1.38325 @ 2026-09-04T16:31:20
+[COLETOR] Ticks:     989 | 1.38325 @ 2026-09-04T16:31:21
+[COLETOR] Ticks:     990 | 1.38326 @ 2026-09-04T16:31:22
+[COLETOR] Ticks:     991 | 1.38326 @ 2026-09-04T16:31:23
+[COLETOR] Ticks:     992 | 1.38326 @ 2026-09-04T16:31:24
+[COLETOR] Ticks:     993 | 1.38326 @ 2026-09-04T16:31:25
+[COLETOR] Ticks:     994 | 1.38326 @ 2026-09-04T16:31:26
+[COLETOR] Ticks:     995 | 1.38325 @ 2026-09-04T16:31:27
+[COLETOR] Ticks:     996 | 1.38322 @ 2026-09-04T16:31:28
+[COLETOR] Ticks:     997 | 1.38321 @ 2026-09-04T16:31:29
+[COLETOR] Ticks:     998 | 1.38321 @ 2026-09-04T16:31:30
+[COLETOR] Ticks:     999 | 1.3832 @ 2026-09-04T16:31:31
+[COLETOR] Ticks:   1,000 | 1.38321 @ 2026-09-04T16:31:32
+[COLETOR] Ticks:   1,001 | 1.38321 @ 2026-09-04T16:31:33
+[COLETOR] Ticks:   1,002 | 1.38321 @ 2026-09-04T16:31:34
+[COLETOR] Ticks:   1,003 | 1.38321 @ 2026-09-04T16:31:35
+[COLETOR] Ticks:   1,004 | 1.38321 @ 2026-09-04T16:31:36
+[COLETOR] Ticks:   1,005 | 1.38322 @ 2026-09-04T16:31:37
+[COLETOR] Ticks:   1,006 | 1.38321 @ 2026-09-04T16:31:38
+[COLETOR] Ticks:   1,007 | 1.38321 @ 2026-09-04T16:31:39
+[COLETOR] Ticks:   1,008 | 1.38322 @ 2026-09-04T16:31:40
+[COLETOR] Ticks:   1,009 | 1.38322 @ 2026-09-04T16:31:41
+[COLETOR] Ticks:   1,010 | 1.38321 @ 2026-09-04T16:31:42
+[COLETOR] Ticks:   1,011 | 1.38322 @ 2026-09-04T16:31:43
+[COLETOR] Ticks:   1,012 | 1.38322 @ 2026-09-04T16:31:44
+[COLETOR] Ticks:   1,013 | 1.38322 @ 2026-09-04T16:31:45
+[COLETOR] Ticks:   1,014 | 1.38322 @ 2026-09-04T16:31:46
+[COLETOR] Ticks:   1,015 | 1.38322 @ 2026-09-04T16:31:47
+[COLETOR] Ticks:   1,016 | 1.38322 @ 2026-09-04T16:31:48
+[COLETOR] Ticks:   1,017 | 1.38322 @ 2026-09-04T16:31:49
+[COLETOR] Ticks:   1,018 | 1.38322 @ 2026-09-04T16:31:50
+[COLETOR] Ticks:   1,019 | 1.38322 @ 2026-09-04T16:31:51
+[COLETOR] Ticks:   1,020 | 1.38321 @ 2026-09-04T16:31:52
+[COLETOR] Ticks:   1,021 | 1.38321 @ 2026-09-04T16:31:53
+[COLETOR] Ticks:   1,022 | 1.38321 @ 2026-09-04T16:31:54
+[COLETOR] Ticks:   1,023 | 1.38321 @ 2026-09-04T16:31:55
+[COLETOR] Ticks:   1,024 | 1.38321 @ 2026-09-04T16:31:56
+[COLETOR] Ticks:   1,025 | 1.38321 @ 2026-09-04T16:31:57
+[COLETOR] Ticks:   1,026 | 1.38321 @ 2026-09-04T16:31:58
+[COLETOR] Ticks:   1,027 | 1.38322 @ 2026-09-04T16:31:59
+[COLETOR] Ticks:   1,028 | 1.38322 @ 2026-09-04T16:32:00
+[COLETOR] Ticks:   1,029 | 1.38321 @ 2026-09-04T16:32:01
+[COLETOR] Ticks:   1,030 | 1.38322 @ 2026-09-04T16:32:02
+[COLETOR] Ticks:   1,031 | 1.38321 @ 2026-09-04T16:32:03
+[COLETOR] Ticks:   1,032 | 1.38322 @ 2026-09-04T16:32:04
+[COLETOR] Ticks:   1,033 | 1.38321 @ 2026-09-04T16:32:05
+[COLETOR] Ticks:   1,034 | 1.38321 @ 2026-09-04T16:32:06
+[COLETOR] Ticks:   1,035 | 1.38321 @ 2026-09-04T16:32:07
+[COLETOR] Ticks:   1,036 | 1.38321 @ 2026-09-04T16:32:08
+[COLETOR] Ticks:   1,037 | 1.38321 @ 2026-09-04T16:32:09
+[COLETOR] Ticks:   1,038 | 1.38321 @ 2026-09-04T16:32:10
+[COLETOR] Ticks:   1,039 | 1.38321 @ 2026-09-04T16:32:11
+[COLETOR] Ticks:   1,040 | 1.38321 @ 2026-09-04T16:32:12
+[COLETOR] Ticks:   1,041 | 1.38321 @ 2026-09-04T16:32:13
+[COLETOR] Ticks:   1,042 | 1.38321 @ 2026-09-04T16:32:14
+[COLETOR] Ticks:   1,043 | 1.38321 @ 2026-09-04T16:32:15
+[COLETOR] Ticks:   1,044 | 1.38321 @ 2026-09-04T16:32:16
+[COLETOR] Ticks:   1,045 | 1.38321 @ 2026-09-04T16:32:17
+[COLETOR] Ticks:   1,046 | 1.38322 @ 2026-09-04T16:32:18
+[COLETOR] Ticks:   1,047 | 1.38321 @ 2026-09-04T16:32:19
+[COLETOR] Ticks:   1,048 | 1.38321 @ 2026-09-04T16:32:20
+[COLETOR] Ticks:   1,049 | 1.38322 @ 2026-09-04T16:32:21
+[COLETOR] Ticks:   1,050 | 1.38321 @ 2026-09-04T16:32:22
+[COLETOR] Ticks:   1,051 | 1.38321 @ 2026-09-04T16:32:23
+[COLETOR] Ticks:   1,052 | 1.38322 @ 2026-09-04T16:32:24
+[COLETOR] Ticks:   1,053 | 1.38323 @ 2026-09-04T16:32:25
+[COLETOR] Ticks:   1,054 | 1.38323 @ 2026-09-04T16:32:26
+[COLETOR] Ticks:   1,055 | 1.38323 @ 2026-09-04T16:32:27
+[COLETOR] Ticks:   1,056 | 1.38323 @ 2026-09-04T16:32:28
+[COLETOR] Ticks:   1,057 | 1.38323 @ 2026-09-04T16:32:29
+[COLETOR] Ticks:   1,058 | 1.38323 @ 2026-09-04T16:32:30
+[COLETOR] Ticks:   1,059 | 1.38323 @ 2026-09-04T16:32:31
+[COLETOR] Ticks:   1,060 | 1.38323 @ 2026-09-04T16:32:32
+[COLETOR] Ticks:   1,061 | 1.38324 @ 2026-09-04T16:32:33
+[COLETOR] Ticks:   1,062 | 1.38324 @ 2026-09-04T16:32:34
+[COLETOR] Ticks:   1,063 | 1.38324 @ 2026-09-04T16:32:35
+[COLETOR] Ticks:   1,064 | 1.38325 @ 2026-09-04T16:32:36
+[COLETOR] Ticks:   1,065 | 1.38324 @ 2026-09-04T16:32:37
+[COLETOR] Ticks:   1,066 | 1.38324 @ 2026-09-04T16:32:38
+[COLETOR] Ticks:   1,067 | 1.38325 @ 2026-09-04T16:32:39
+[COLETOR] Ticks:   1,068 | 1.38325 @ 2026-09-04T16:32:40
+[COLETOR] Ticks:   1,069 | 1.38325 @ 2026-09-04T16:32:41
+[COLETOR] Ticks:   1,070 | 1.38325 @ 2026-09-04T16:32:42
+[COLETOR] Ticks:   1,071 | 1.38325 @ 2026-09-04T16:32:43
+[COLETOR] Ticks:   1,072 | 1.38325 @ 2026-09-04T16:32:44
+[COLETOR] Ticks:   1,073 | 1.38325 @ 2026-09-04T16:32:45
+[COLETOR] Ticks:   1,074 | 1.38325 @ 2026-09-04T16:32:46
+[COLETOR] Ticks:   1,075 | 1.38325 @ 2026-09-04T16:32:47
+[COLETOR] Ticks:   1,076 | 1.38325 @ 2026-09-04T16:32:48
+[COLETOR] Ticks:   1,077 | 1.38324 @ 2026-09-04T16:32:49
+[COLETOR] Ticks:   1,078 | 1.38324 @ 2026-09-04T16:32:50
+[COLETOR] Ticks:   1,079 | 1.38324 @ 2026-09-04T16:32:51
+[COLETOR] Ticks:   1,080 | 1.38324 @ 2026-09-04T16:32:52
+[COLETOR] Ticks:   1,081 | 1.38324 @ 2026-09-04T16:32:53
+[COLETOR] Ticks:   1,082 | 1.38324 @ 2026-09-04T16:32:54
+[COLETOR] Ticks:   1,083 | 1.38324 @ 2026-09-04T16:32:55
+[COLETOR] Ticks:   1,084 | 1.38324 @ 2026-09-04T16:32:56
+[COLETOR] Ticks:   1,085 | 1.38324 @ 2026-09-04T16:32:57
+[COLETOR] Ticks:   1,086 | 1.38324 @ 2026-09-04T16:32:58
+[COLETOR] Ticks:   1,087 | 1.38324 @ 2026-09-04T16:32:59
+[COLETOR] Ticks:   1,088 | 1.38326 @ 2026-09-04T16:33:00
+[COLETOR] Ticks:   1,089 | 1.38326 @ 2026-09-04T16:33:01
+[COLETOR] Ticks:   1,090 | 1.38326 @ 2026-09-04T16:33:02
+[COLETOR] Ticks:   1,091 | 1.38326 @ 2026-09-04T16:33:03
+[COLETOR] Ticks:   1,092 | 1.38326 @ 2026-09-04T16:33:04
+[COLETOR] Ticks:   1,093 | 1.38326 @ 2026-09-04T16:33:05
+[COLETOR] Ticks:   1,094 | 1.38325 @ 2026-09-04T16:33:06
+[COLETOR] Ticks:   1,095 | 1.38325 @ 2026-09-04T16:33:07
+[COLETOR] Ticks:   1,096 | 1.38326 @ 2026-09-04T16:33:08
+[COLETOR] Ticks:   1,097 | 1.38326 @ 2026-09-04T16:33:09
+[COLETOR] Ticks:   1,098 | 1.38324 @ 2026-09-04T16:33:10
+[COLETOR] Ticks:   1,099 | 1.38324 @ 2026-09-04T16:33:11
+[COLETOR] Ticks:   1,100 | 1.38323 @ 2026-09-04T16:33:12
+[COLETOR] Ticks:   1,101 | 1.38323 @ 2026-09-04T16:33:13
+[COLETOR] Ticks:   1,102 | 1.3832 @ 2026-09-04T16:33:14
+[COLETOR] Ticks:   1,103 | 1.3832 @ 2026-09-04T16:33:15
+[COLETOR] Ticks:   1,104 | 1.38322 @ 2026-09-04T16:33:16
+[COLETOR] Ticks:   1,105 | 1.38322 @ 2026-09-04T16:33:17
+[COLETOR] Ticks:   1,106 | 1.38322 @ 2026-09-04T16:33:18
+[COLETOR] Ticks:   1,107 | 1.38322 @ 2026-09-04T16:33:19
+[COLETOR] Ticks:   1,108 | 1.3832 @ 2026-09-04T16:33:20
+[COLETOR] Ticks:   1,109 | 1.3832 @ 2026-09-04T16:33:21
+[COLETOR] Ticks:   1,110 | 1.38321 @ 2026-09-04T16:33:22
+[COLETOR] Ticks:   1,111 | 1.38321 @ 2026-09-04T16:33:23
+[COLETOR] Ticks:   1,112 | 1.38321 @ 2026-09-04T16:33:24
+[COLETOR] Ticks:   1,113 | 1.38322 @ 2026-09-04T16:33:25
+[COLETOR] Ticks:   1,114 | 1.38323 @ 2026-09-04T16:33:26
+[COLETOR] Ticks:   1,115 | 1.38323 @ 2026-09-04T16:33:27
+[COLETOR] Ticks:   1,116 | 1.38323 @ 2026-09-04T16:33:28
+[COLETOR] Ticks:   1,117 | 1.38323 @ 2026-09-04T16:33:29
+[COLETOR] Ticks:   1,118 | 1.38322 @ 2026-09-04T16:33:30
+[COLETOR] Ticks:   1,119 | 1.38322 @ 2026-09-04T16:33:31
+[COLETOR] Ticks:   1,120 | 1.38322 @ 2026-09-04T16:33:32
+[COLETOR] Ticks:   1,121 | 1.38321 @ 2026-09-04T16:33:33
+[COLETOR] Ticks:   1,122 | 1.38322 @ 2026-09-04T16:33:34
+[COLETOR] Ticks:   1,123 | 1.38321 @ 2026-09-04T16:33:35
+[COLETOR] Ticks:   1,124 | 1.3832 @ 2026-09-04T16:33:36
+[COLETOR] Ticks:   1,125 | 1.38321 @ 2026-09-04T16:33:37
+[COLETOR] Ticks:   1,126 | 1.38321 @ 2026-09-04T16:33:38
+[COLETOR] Ticks:   1,127 | 1.3832 @ 2026-09-04T16:33:39
+[COLETOR] Ticks:   1,128 | 1.3832 @ 2026-09-04T16:33:40
+[COLETOR] Ticks:   1,129 | 1.38318 @ 2026-09-04T16:33:41
+[COLETOR] Ticks:   1,130 | 1.38318 @ 2026-09-04T16:33:42
+[COLETOR] Ticks:   1,131 | 1.3832 @ 2026-09-04T16:33:43
+[COLETOR] Ticks:   1,132 | 1.3832 @ 2026-09-04T16:33:44
+[COLETOR] Ticks:   1,133 | 1.3832 @ 2026-09-04T16:33:45
+[COLETOR] Ticks:   1,134 | 1.38316 @ 2026-09-04T16:33:46
+[COLETOR] Ticks:   1,135 | 1.38315 @ 2026-09-04T16:33:47
+[COLETOR] Ticks:   1,136 | 1.38314 @ 2026-09-04T16:33:48
+[COLETOR] Ticks:   1,137 | 1.38313 @ 2026-09-04T16:33:49
+[COLETOR] Ticks:   1,138 | 1.38314 @ 2026-09-04T16:33:50
+[COLETOR] Ticks:   1,139 | 1.38313 @ 2026-09-04T16:33:51
+[COLETOR] Ticks:   1,140 | 1.38313 @ 2026-09-04T16:33:52
+[COLETOR] Ticks:   1,141 | 1.38313 @ 2026-09-04T16:33:53
+[COLETOR] Ticks:   1,142 | 1.38313 @ 2026-09-04T16:33:54
+[COLETOR] Ticks:   1,143 | 1.38314 @ 2026-09-04T16:33:55
+[COLETOR] Ticks:   1,144 | 1.38314 @ 2026-09-04T16:33:56
+[COLETOR] Ticks:   1,145 | 1.38314 @ 2026-09-04T16:33:57
+[COLETOR] Ticks:   1,146 | 1.38314 @ 2026-09-04T16:33:58
+[COLETOR] Ticks:   1,147 | 1.38314 @ 2026-09-04T16:33:59
+[COLETOR] Ticks:   1,148 | 1.38314 @ 2026-09-04T16:34:00
+[COLETOR] Ticks:   1,149 | 1.38309 @ 2026-09-04T16:34:01
+[COLETOR] Ticks:   1,150 | 1.38309 @ 2026-09-04T16:34:02
+[COLETOR] Ticks:   1,151 | 1.38311 @ 2026-09-04T16:34:03
+[COLETOR] Ticks:   1,152 | 1.38311 @ 2026-09-04T16:34:04
+[COLETOR] Ticks:   1,153 | 1.38312 @ 2026-09-04T16:34:05
+[COLETOR] Ticks:   1,154 | 1.38313 @ 2026-09-04T16:34:06
+[COLETOR] Ticks:   1,155 | 1.38314 @ 2026-09-04T16:34:07
+[COLETOR] Ticks:   1,156 | 1.38314 @ 2026-09-04T16:34:08
+[COLETOR] Ticks:   1,157 | 1.38313 @ 2026-09-04T16:34:09
+[COLETOR] Ticks:   1,158 | 1.38313 @ 2026-09-04T16:34:10
+[COLETOR] Ticks:   1,159 | 1.38314 @ 2026-09-04T16:34:11
+[COLETOR] Ticks:   1,160 | 1.38315 @ 2026-09-04T16:34:12
+[COLETOR] Ticks:   1,161 | 1.38316 @ 2026-09-04T16:34:13
+[COLETOR] Ticks:   1,162 | 1.38314 @ 2026-09-04T16:34:14
+[COLETOR] Ticks:   1,163 | 1.38309 @ 2026-09-04T16:34:15
+[COLETOR] Ticks:   1,164 | 1.38307 @ 2026-09-04T16:34:16
+[COLETOR] Ticks:   1,165 | 1.38306 @ 2026-09-04T16:34:17
+[COLETOR] Ticks:   1,166 | 1.38306 @ 2026-09-04T16:34:18
+[COLETOR] Ticks:   1,167 | 1.38306 @ 2026-09-04T16:34:19
+[COLETOR] Ticks:   1,168 | 1.38306 @ 2026-09-04T16:34:20
+[COLETOR] Ticks:   1,169 | 1.38306 @ 2026-09-04T16:34:21
+[COLETOR] Ticks:   1,170 | 1.38305 @ 2026-09-04T16:34:22
+[COLETOR] Ticks:   1,171 | 1.38305 @ 2026-09-04T16:34:23
+[COLETOR] Ticks:   1,172 | 1.38304 @ 2026-09-04T16:34:24
+[COLETOR] Ticks:   1,173 | 1.38306 @ 2026-09-04T16:34:25
+[COLETOR] Ticks:   1,174 | 1.38306 @ 2026-09-04T16:34:26
+[COLETOR] Ticks:   1,175 | 1.38306 @ 2026-09-04T16:34:27
+[COLETOR] Ticks:   1,176 | 1.38307 @ 2026-09-04T16:34:28
+[COLETOR] Ticks:   1,177 | 1.38307 @ 2026-09-04T16:34:29
+[COLETOR] Ticks:   1,178 | 1.38307 @ 2026-09-04T16:34:30
+[COLETOR] Ticks:   1,179 | 1.38307 @ 2026-09-04T16:34:31
+[COLETOR] Ticks:   1,180 | 1.38307 @ 2026-09-04T16:34:32
+[COLETOR] Ticks:   1,181 | 1.38307 @ 2026-09-04T16:34:33
+[COLETOR] Ticks:   1,182 | 1.38307 @ 2026-09-04T16:34:34
+[COLETOR] Ticks:   1,183 | 1.38306 @ 2026-09-04T16:34:35
+[COLETOR] Ticks:   1,184 | 1.38307 @ 2026-09-04T16:34:36
+[COLETOR] Ticks:   1,185 | 1.38307 @ 2026-09-04T16:34:37
+[COLETOR] Ticks:   1,186 | 1.38306 @ 2026-09-04T16:34:38
+[COLETOR] Ticks:   1,187 | 1.38307 @ 2026-09-04T16:34:39
+[COLETOR] Ticks:   1,188 | 1.38307 @ 2026-09-04T16:34:40
+[COLETOR] Ticks:   1,189 | 1.38307 @ 2026-09-04T16:34:41
+[COLETOR] Ticks:   1,190 | 1.38307 @ 2026-09-04T16:34:42
+[COLETOR] Ticks:   1,191 | 1.38306 @ 2026-09-04T16:34:43
+[COLETOR] Ticks:   1,192 | 1.38306 @ 2026-09-04T16:34:44
+[COLETOR] Ticks:   1,193 | 1.38306 @ 2026-09-04T16:34:45
+[COLETOR] Ticks:   1,194 | 1.38306 @ 2026-09-04T16:34:46
+[COLETOR] Ticks:   1,195 | 1.38305 @ 2026-09-04T16:34:47
+[COLETOR] Ticks:   1,196 | 1.38305 @ 2026-09-04T16:34:48
+[COLETOR] Ticks:   1,197 | 1.38305 @ 2026-09-04T16:34:49
+[COLETOR] Ticks:   1,198 | 1.38304 @ 2026-09-04T16:34:50
+[COLETOR] Ticks:   1,199 | 1.38304 @ 2026-09-04T16:34:51
+[COLETOR] Ticks:   1,200 | 1.38304 @ 2026-09-04T16:34:52
+[COLETOR] Ticks:   1,201 | 1.38304 @ 2026-09-04T16:34:53
+[COLETOR] Ticks:   1,202 | 1.38304 @ 2026-09-04T16:34:54
+[COLETOR] Ticks:   1,203 | 1.38304 @ 2026-09-04T16:34:55
+[COLETOR] Ticks:   1,204 | 1.38305 @ 2026-09-04T16:34:56
+[COLETOR] Ticks:   1,205 | 1.38305 @ 2026-09-04T16:34:57
+[COLETOR] Ticks:   1,206 | 1.38304 @ 2026-09-04T16:34:58
+[COLETOR] Ticks:   1,207 | 1.38304 @ 2026-09-04T16:34:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.74)
+  Preço: 1.3830 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,208 | 1.38304 @ 2026-09-04T16:35:00
+[COLETOR] Ticks:   1,209 | 1.38305 @ 2026-09-04T16:35:01
+[COLETOR] Ticks:   1,210 | 1.38305 @ 2026-09-04T16:35:02
+[COLETOR] Ticks:   1,211 | 1.38305 @ 2026-09-04T16:35:03
+[COLETOR] Ticks:   1,212 | 1.38305 @ 2026-09-04T16:35:04
+[COLETOR] Ticks:   1,213 | 1.38305 @ 2026-09-04T16:35:05
+[COLETOR] Ticks:   1,214 | 1.38305 @ 2026-09-04T16:35:06
+[COLETOR] Ticks:   1,215 | 1.38305 @ 2026-09-04T16:35:07
+[COLETOR] Ticks:   1,216 | 1.38305 @ 2026-09-04T16:35:08
+[COLETOR] Ticks:   1,217 | 1.38306 @ 2026-09-04T16:35:09
+[COLETOR] Ticks:   1,218 | 1.38306 @ 2026-09-04T16:35:10
+[COLETOR] Ticks:   1,219 | 1.38305 @ 2026-09-04T16:35:11
+[COLETOR] Ticks:   1,220 | 1.38305 @ 2026-09-04T16:35:12
+[COLETOR] Ticks:   1,221 | 1.38304 @ 2026-09-04T16:35:13
+[COLETOR] Ticks:   1,222 | 1.38305 @ 2026-09-04T16:35:14
+[COLETOR] Ticks:   1,223 | 1.38305 @ 2026-09-04T16:35:15
+[COLETOR] Ticks:   1,224 | 1.38305 @ 2026-09-04T16:35:16
+[COLETOR] Ticks:   1,225 | 1.38305 @ 2026-09-04T16:35:17
+[COLETOR] Ticks:   1,226 | 1.38305 @ 2026-09-04T16:35:18
+[COLETOR] Ticks:   1,227 | 1.38305 @ 2026-09-04T16:35:19
+[COLETOR] Ticks:   1,228 | 1.38305 @ 2026-09-04T16:35:20
+[COLETOR] Ticks:   1,229 | 1.38306 @ 2026-09-04T16:35:21
+[COLETOR] Ticks:   1,230 | 1.38306 @ 2026-09-04T16:35:22
+[COLETOR] Ticks:   1,231 | 1.38308 @ 2026-09-04T16:35:23
+[COLETOR] Ticks:   1,232 | 1.38309 @ 2026-09-04T16:35:24
+[COLETOR] Ticks:   1,233 | 1.38309 @ 2026-09-04T16:35:25
+[COLETOR] Ticks:   1,234 | 1.38309 @ 2026-09-04T16:35:26
+[COLETOR] Ticks:   1,235 | 1.38309 @ 2026-09-04T16:35:27
+[COLETOR] Ticks:   1,236 | 1.38309 @ 2026-09-04T16:35:28
+[COLETOR] Ticks:   1,237 | 1.38309 @ 2026-09-04T16:35:29
+[COLETOR] Ticks:   1,238 | 1.38312 @ 2026-09-04T16:35:30
+[COLETOR] Ticks:   1,239 | 1.38309 @ 2026-09-04T16:35:31
+[COLETOR] Ticks:   1,240 | 1.3831 @ 2026-09-04T16:35:32
+[COLETOR] Ticks:   1,241 | 1.3831 @ 2026-09-04T16:35:33
+[COLETOR] Ticks:   1,242 | 1.3831 @ 2026-09-04T16:35:34
+[COLETOR] Ticks:   1,243 | 1.3831 @ 2026-09-04T16:35:35
+[COLETOR] Ticks:   1,244 | 1.3831 @ 2026-09-04T16:35:36
+[COLETOR] Ticks:   1,245 | 1.3831 @ 2026-09-04T16:35:37
+[COLETOR] Ticks:   1,246 | 1.3831 @ 2026-09-04T16:35:38
+[COLETOR] Ticks:   1,247 | 1.38311 @ 2026-09-04T16:35:39
+[COLETOR] Ticks:   1,248 | 1.3831 @ 2026-09-04T16:35:40
+[COLETOR] Ticks:   1,249 | 1.38311 @ 2026-09-04T16:35:41
+[COLETOR] Ticks:   1,250 | 1.38312 @ 2026-09-04T16:35:42
+[COLETOR] Ticks:   1,251 | 1.38311 @ 2026-09-04T16:35:43
+[COLETOR] Ticks:   1,252 | 1.3831 @ 2026-09-04T16:35:44
+[COLETOR] Ticks:   1,253 | 1.3831 @ 2026-09-04T16:35:45
+[COLETOR] Ticks:   1,254 | 1.3831 @ 2026-09-04T16:35:46
+[COLETOR] Ticks:   1,255 | 1.3831 @ 2026-09-04T16:35:47
+[COLETOR] Ticks:   1,256 | 1.3831 @ 2026-09-04T16:35:48
+[COLETOR] Ticks:   1,257 | 1.3831 @ 2026-09-04T16:35:49
+[COLETOR] Ticks:   1,258 | 1.3831 @ 2026-09-04T16:35:50
+[COLETOR] Ticks:   1,259 | 1.3831 @ 2026-09-04T16:35:51
+[COLETOR] Ticks:   1,260 | 1.3831 @ 2026-09-04T16:35:52
+[COLETOR] Ticks:   1,261 | 1.3831 @ 2026-09-04T16:35:53
+[COLETOR] Ticks:   1,262 | 1.38311 @ 2026-09-04T16:35:54
+[COLETOR] Ticks:   1,263 | 1.38311 @ 2026-09-04T16:35:55
+[COLETOR] Ticks:   1,264 | 1.3831 @ 2026-09-04T16:35:56
+[COLETOR] Ticks:   1,265 | 1.3831 @ 2026-09-04T16:35:57
+[COLETOR] Ticks:   1,266 | 1.38311 @ 2026-09-04T16:35:58
+[COLETOR] Ticks:   1,267 | 1.3831 @ 2026-09-04T16:35:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.74)
+  Preço: 1.3831 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,268 | 1.38311 @ 2026-09-04T16:36:00
+[COLETOR] Ticks:   1,269 | 1.38311 @ 2026-09-04T16:36:01
+[COLETOR] Ticks:   1,270 | 1.3831 @ 2026-09-04T16:36:02
+[COLETOR] Ticks:   1,271 | 1.38311 @ 2026-09-04T16:36:03
+[COLETOR] Ticks:   1,272 | 1.38311 @ 2026-09-04T16:36:04
+[COLETOR] Ticks:   1,273 | 1.3831 @ 2026-09-04T16:36:05
+[COLETOR] Ticks:   1,274 | 1.3831 @ 2026-09-04T16:36:06
+[COLETOR] Ticks:   1,275 | 1.38311 @ 2026-09-04T16:36:07
+[COLETOR] Ticks:   1,276 | 1.38311 @ 2026-09-04T16:36:08
+[COLETOR] Ticks:   1,277 | 1.38311 @ 2026-09-04T16:36:09
+[COLETOR] Ticks:   1,278 | 1.38311 @ 2026-09-04T16:36:10
+[COLETOR] Ticks:   1,279 | 1.38311 @ 2026-09-04T16:36:11
+[COLETOR] Ticks:   1,280 | 1.38311 @ 2026-09-04T16:36:12
+[COLETOR] Ticks:   1,281 | 1.38311 @ 2026-09-04T16:36:13
+[COLETOR] Ticks:   1,282 | 1.38311 @ 2026-09-04T16:36:14
+[COLETOR] Ticks:   1,283 | 1.38311 @ 2026-09-04T16:36:15
+[COLETOR] Ticks:   1,284 | 1.38311 @ 2026-09-04T16:36:16
+[COLETOR] Ticks:   1,285 | 1.38311 @ 2026-09-04T16:36:17
+[COLETOR] Ticks:   1,286 | 1.38311 @ 2026-09-04T16:36:18
+[COLETOR] Ticks:   1,287 | 1.38311 @ 2026-09-04T16:36:19
+[COLETOR] Ticks:   1,288 | 1.38312 @ 2026-09-04T16:36:20
+[COLETOR] Ticks:   1,289 | 1.38311 @ 2026-09-04T16:36:21
+[COLETOR] Ticks:   1,290 | 1.38312 @ 2026-09-04T16:36:22
+[COLETOR] Ticks:   1,291 | 1.38312 @ 2026-09-04T16:36:23
+[COLETOR] Ticks:   1,292 | 1.38311 @ 2026-09-04T16:36:24
+[COLETOR] Ticks:   1,293 | 1.3831 @ 2026-09-04T16:36:25
+[COLETOR] Ticks:   1,294 | 1.3831 @ 2026-09-04T16:36:26
+[COLETOR] Ticks:   1,295 | 1.3831 @ 2026-09-04T16:36:27
+[COLETOR] Ticks:   1,296 | 1.38309 @ 2026-09-04T16:36:28
+[COLETOR] Ticks:   1,297 | 1.3831 @ 2026-09-04T16:36:29
+[COLETOR] Ticks:   1,298 | 1.38308 @ 2026-09-04T16:36:30
+[COLETOR] Ticks:   1,299 | 1.38309 @ 2026-09-04T16:36:31
+[COLETOR] Ticks:   1,300 | 1.38309 @ 2026-09-04T16:36:32
+[COLETOR] Ticks:   1,301 | 1.38308 @ 2026-09-04T16:36:33
+[COLETOR] Ticks:   1,302 | 1.38308 @ 2026-09-04T16:36:34
+[COLETOR] Ticks:   1,303 | 1.38308 @ 2026-09-04T16:36:35
+[COLETOR] Ticks:   1,304 | 1.38307 @ 2026-09-04T16:36:36
+[COLETOR] Ticks:   1,305 | 1.38308 @ 2026-09-04T16:36:37
+[COLETOR] Ticks:   1,306 | 1.38307 @ 2026-09-04T16:36:38
+[COLETOR] Ticks:   1,307 | 1.38307 @ 2026-09-04T16:36:39
+[COLETOR] Ticks:   1,308 | 1.38307 @ 2026-09-04T16:36:40
+[COLETOR] Ticks:   1,309 | 1.38307 @ 2026-09-04T16:36:41
+[COLETOR] Ticks:   1,310 | 1.38307 @ 2026-09-04T16:36:42
+[COLETOR] Ticks:   1,311 | 1.38307 @ 2026-09-04T16:36:43
+[COLETOR] Ticks:   1,312 | 1.38307 @ 2026-09-04T16:36:44
+[COLETOR] Ticks:   1,313 | 1.38307 @ 2026-09-04T16:36:45
+[COLETOR] Ticks:   1,314 | 1.38307 @ 2026-09-04T16:36:46
+[COLETOR] Ticks:   1,315 | 1.38307 @ 2026-09-04T16:36:47
+[COLETOR] Ticks:   1,316 | 1.38307 @ 2026-09-04T16:36:48
+[COLETOR] Ticks:   1,317 | 1.38307 @ 2026-09-04T16:36:49
+[COLETOR] Ticks:   1,318 | 1.38307 @ 2026-09-04T16:36:50
+[COLETOR] Ticks:   1,319 | 1.38307 @ 2026-09-04T16:36:51
+[COLETOR] Ticks:   1,320 | 1.38307 @ 2026-09-04T16:36:52
+[COLETOR] Ticks:   1,321 | 1.38306 @ 2026-09-04T16:36:53
+[COLETOR] Ticks:   1,322 | 1.38306 @ 2026-09-04T16:36:54
+[COLETOR] Ticks:   1,323 | 1.38307 @ 2026-09-04T16:36:55
+[COLETOR] Ticks:   1,324 | 1.38307 @ 2026-09-04T16:36:56
+[COLETOR] Ticks:   1,325 | 1.38308 @ 2026-09-04T16:36:57
+[COLETOR] Ticks:   1,326 | 1.38307 @ 2026-09-04T16:36:58
+[COLETOR] Ticks:   1,327 | 1.38308 @ 2026-09-04T16:36:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.74)
+  Preço: 1.3831 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,328 | 1.3831 @ 2026-09-04T16:37:00
+[COLETOR] Ticks:   1,329 | 1.3831 @ 2026-09-04T16:37:01
+[COLETOR] Ticks:   1,330 | 1.38309 @ 2026-09-04T16:37:02
+[COLETOR] Ticks:   1,331 | 1.38309 @ 2026-09-04T16:37:03
+[COLETOR] Ticks:   1,332 | 1.38309 @ 2026-09-04T16:37:04
+[COLETOR] Ticks:   1,333 | 1.38308 @ 2026-09-04T16:37:05
+[COLETOR] Ticks:   1,334 | 1.38308 @ 2026-09-04T16:37:06
+[COLETOR] Ticks:   1,335 | 1.38307 @ 2026-09-04T16:37:07
+[COLETOR] Ticks:   1,336 | 1.38307 @ 2026-09-04T16:37:08
+[COLETOR] Ticks:   1,337 | 1.38307 @ 2026-09-04T16:37:09
+[COLETOR] Ticks:   1,338 | 1.38307 @ 2026-09-04T16:37:10
+[COLETOR] Ticks:   1,339 | 1.38307 @ 2026-09-04T16:37:11
+[COLETOR] Ticks:   1,340 | 1.38307 @ 2026-09-04T16:37:12
+[COLETOR] Ticks:   1,341 | 1.38307 @ 2026-09-04T16:37:13
+[COLETOR] Ticks:   1,342 | 1.38307 @ 2026-09-04T16:37:14
+[COLETOR] Ticks:   1,343 | 1.38307 @ 2026-09-04T16:37:15
+[COLETOR] Ticks:   1,344 | 1.38307 @ 2026-09-04T16:37:16
+[COLETOR] Ticks:   1,345 | 1.38307 @ 2026-09-04T16:37:17
+[COLETOR] Ticks:   1,346 | 1.38307 @ 2026-09-04T16:37:18
+[COLETOR] Ticks:   1,347 | 1.38307 @ 2026-09-04T16:37:19
+[COLETOR] Ticks:   1,348 | 1.38307 @ 2026-09-04T16:37:20
+[COLETOR] Ticks:   1,349 | 1.38307 @ 2026-09-04T16:37:21
+[COLETOR] Ticks:   1,350 | 1.38307 @ 2026-09-04T16:37:22
+[COLETOR] Ticks:   1,351 | 1.38307 @ 2026-09-04T16:37:23
+[COLETOR] Ticks:   1,352 | 1.38308 @ 2026-09-04T16:37:24
+[COLETOR] Ticks:   1,353 | 1.38307 @ 2026-09-04T16:37:25
+[COLETOR] Ticks:   1,354 | 1.38307 @ 2026-09-04T16:37:26
+[COLETOR] Ticks:   1,355 | 1.38307 @ 2026-09-04T16:37:27
+[COLETOR] Ticks:   1,356 | 1.38307 @ 2026-09-04T16:37:28
+[COLETOR] Ticks:   1,357 | 1.38308 @ 2026-09-04T16:37:29
+[COLETOR] Ticks:   1,358 | 1.38308 @ 2026-09-04T16:37:30
+[COLETOR] Ticks:   1,359 | 1.38307 @ 2026-09-04T16:37:31
+[COLETOR] Ticks:   1,360 | 1.38307 @ 2026-09-04T16:37:32
+[COLETOR] Ticks:   1,361 | 1.38307 @ 2026-09-04T16:37:33
+[COLETOR] Ticks:   1,362 | 1.38307 @ 2026-09-04T16:37:34
+[COLETOR] Ticks:   1,363 | 1.38307 @ 2026-09-04T16:37:35
+[COLETOR] Ticks:   1,364 | 1.38307 @ 2026-09-04T16:37:36
+[COLETOR] Ticks:   1,365 | 1.38308 @ 2026-09-04T16:37:37
+[COLETOR] Ticks:   1,366 | 1.38307 @ 2026-09-04T16:37:38
+[COLETOR] Ticks:   1,367 | 1.38307 @ 2026-09-04T16:37:39
+[COLETOR] Ticks:   1,368 | 1.38307 @ 2026-09-04T16:37:40
+[COLETOR] Ticks:   1,369 | 1.38307 @ 2026-09-04T16:37:41
+[COLETOR] Ticks:   1,370 | 1.38307 @ 2026-09-04T16:37:42
+[COLETOR] Ticks:   1,371 | 1.38307 @ 2026-09-04T16:37:43
+[COLETOR] Ticks:   1,372 | 1.38306 @ 2026-09-04T16:37:44
+[COLETOR] Ticks:   1,373 | 1.38308 @ 2026-09-04T16:37:45
+[COLETOR] Ticks:   1,374 | 1.38307 @ 2026-09-04T16:37:46
+[COLETOR] Ticks:   1,375 | 1.38307 @ 2026-09-04T16:37:47
+[COLETOR] Ticks:   1,376 | 1.38307 @ 2026-09-04T16:37:48
+[COLETOR] Ticks:   1,377 | 1.38307 @ 2026-09-04T16:37:49
+[COLETOR] Ticks:   1,378 | 1.38307 @ 2026-09-04T16:37:50
+[COLETOR] Ticks:   1,379 | 1.38307 @ 2026-09-04T16:37:51
+[COLETOR] Ticks:   1,380 | 1.38307 @ 2026-09-04T16:37:52
+[COLETOR] Ticks:   1,381 | 1.38308 @ 2026-09-04T16:37:53
+[COLETOR] Ticks:   1,382 | 1.38309 @ 2026-09-04T16:37:54
+[COLETOR] Ticks:   1,383 | 1.38309 @ 2026-09-04T16:37:55
+[COLETOR] Ticks:   1,384 | 1.38309 @ 2026-09-04T16:37:56
+[COLETOR] Ticks:   1,385 | 1.3831 @ 2026-09-04T16:37:57
+[COLETOR] Ticks:   1,386 | 1.38309 @ 2026-09-04T16:37:58
+[COLETOR] Ticks:   1,387 | 1.38309 @ 2026-09-04T16:37:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.74)
+  Preço: 1.3831 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,388 | 1.38308 @ 2026-09-04T16:38:00
+[COLETOR] Ticks:   1,389 | 1.38308 @ 2026-09-04T16:38:01
+[COLETOR] Ticks:   1,390 | 1.38308 @ 2026-09-04T16:38:02
+[COLETOR] Ticks:   1,391 | 1.38306 @ 2026-09-04T16:38:03
+[COLETOR] Ticks:   1,392 | 1.38306 @ 2026-09-04T16:38:04
+[COLETOR] Ticks:   1,393 | 1.38307 @ 2026-09-04T16:38:05
+[COLETOR] Ticks:   1,394 | 1.38307 @ 2026-09-04T16:38:06
+[COLETOR] Ticks:   1,395 | 1.38305 @ 2026-09-04T16:38:07
+[COLETOR] Ticks:   1,396 | 1.38307 @ 2026-09-04T16:38:08
+[COLETOR] Ticks:   1,397 | 1.38308 @ 2026-09-04T16:38:09
+[COLETOR] Ticks:   1,398 | 1.38308 @ 2026-09-04T16:38:10
+[COLETOR] Ticks:   1,399 | 1.38309 @ 2026-09-04T16:38:11
+[COLETOR] Ticks:   1,400 | 1.38308 @ 2026-09-04T16:38:12
+[COLETOR] Ticks:   1,401 | 1.38308 @ 2026-09-04T16:38:13
+[COLETOR] Ticks:   1,402 | 1.38308 @ 2026-09-04T16:38:14
+[COLETOR] Ticks:   1,403 | 1.38308 @ 2026-09-04T16:38:15
+[COLETOR] Ticks:   1,404 | 1.38308 @ 2026-09-04T16:38:16
+[COLETOR] Ticks:   1,405 | 1.38308 @ 2026-09-04T16:38:17
+[COLETOR] Ticks:   1,406 | 1.38308 @ 2026-09-04T16:38:18
+[COLETOR] Ticks:   1,407 | 1.38307 @ 2026-09-04T16:38:19
+[COLETOR] Ticks:   1,408 | 1.38307 @ 2026-09-04T16:38:20
+[COLETOR] Ticks:   1,409 | 1.38308 @ 2026-09-04T16:38:21
+[COLETOR] Ticks:   1,410 | 1.38308 @ 2026-09-04T16:38:22
+[COLETOR] Ticks:   1,411 | 1.38308 @ 2026-09-04T16:38:23
+[COLETOR] Ticks:   1,412 | 1.38308 @ 2026-09-04T16:38:24
+[COLETOR] Ticks:   1,413 | 1.38308 @ 2026-09-04T16:38:25
+[COLETOR] Ticks:   1,414 | 1.38307 @ 2026-09-04T16:38:26
+[COLETOR] Ticks:   1,415 | 1.38308 @ 2026-09-04T16:38:27
+[COLETOR] Ticks:   1,416 | 1.38308 @ 2026-09-04T16:38:28
+[COLETOR] Ticks:   1,417 | 1.38308 @ 2026-09-04T16:38:29
+[COLETOR] Ticks:   1,418 | 1.38308 @ 2026-09-04T16:38:30
+[COLETOR] Ticks:   1,419 | 1.38308 @ 2026-09-04T16:38:31
+[COLETOR] Ticks:   1,420 | 1.38307 @ 2026-09-04T16:38:32
+[COLETOR] Ticks:   1,421 | 1.38308 @ 2026-09-04T16:38:33
+[COLETOR] Ticks:   1,422 | 1.38308 @ 2026-09-04T16:38:34
+[COLETOR] Ticks:   1,423 | 1.38308 @ 2026-09-04T16:38:35
+[COLETOR] Ticks:   1,424 | 1.38308 @ 2026-09-04T16:38:36
+[COLETOR] Ticks:   1,425 | 1.38308 @ 2026-09-04T16:38:37
+[COLETOR] Ticks:   1,426 | 1.38308 @ 2026-09-04T16:38:38
+[COLETOR] Ticks:   1,427 | 1.38308 @ 2026-09-04T16:38:39
+[COLETOR] Ticks:   1,428 | 1.38307 @ 2026-09-04T16:38:40
+[COLETOR] Ticks:   1,429 | 1.38307 @ 2026-09-04T16:38:41
+[COLETOR] Ticks:   1,430 | 1.38308 @ 2026-09-04T16:38:42
+[COLETOR] Ticks:   1,431 | 1.38308 @ 2026-09-04T16:38:43
+[COLETOR] Ticks:   1,432 | 1.38308 @ 2026-09-04T16:38:44
+[COLETOR] Ticks:   1,433 | 1.38308 @ 2026-09-04T16:38:45
+[COLETOR] Ticks:   1,434 | 1.38308 @ 2026-09-04T16:38:46
+[COLETOR] Ticks:   1,435 | 1.38308 @ 2026-09-04T16:38:47
+[COLETOR] Ticks:   1,436 | 1.38307 @ 2026-09-04T16:38:48
+[COLETOR] Ticks:   1,437 | 1.38307 @ 2026-09-04T16:38:49
+[COLETOR] Ticks:   1,438 | 1.38307 @ 2026-09-04T16:38:50
+[COLETOR] Ticks:   1,439 | 1.38308 @ 2026-09-04T16:38:51
+[COLETOR] Ticks:   1,440 | 1.38308 @ 2026-09-04T16:38:52
+[COLETOR] Ticks:   1,441 | 1.38308 @ 2026-09-04T16:38:53
+[COLETOR] Ticks:   1,442 | 1.38308 @ 2026-09-04T16:38:54
+[COLETOR] Ticks:   1,443 | 1.38308 @ 2026-09-04T16:38:55
+[COLETOR] Ticks:   1,444 | 1.38308 @ 2026-09-04T16:38:56
+[COLETOR] Ticks:   1,445 | 1.38308 @ 2026-09-04T16:38:57
+[COLETOR] Ticks:   1,446 | 1.38308 @ 2026-09-04T16:38:58
+[COLETOR] Ticks:   1,447 | 1.38308 @ 2026-09-04T16:38:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.74)
+  Preço: 1.3831 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,448 | 1.38308 @ 2026-09-04T16:39:00
+[COLETOR] Ticks:   1,449 | 1.38308 @ 2026-09-04T16:39:01
+[COLETOR] Ticks:   1,450 | 1.38308 @ 2026-09-04T16:39:02
+[COLETOR] Ticks:   1,451 | 1.38308 @ 2026-09-04T16:39:03
+[COLETOR] Ticks:   1,452 | 1.38308 @ 2026-09-04T16:39:04
+[COLETOR] Ticks:   1,453 | 1.38308 @ 2026-09-04T16:39:05
+[COLETOR] Ticks:   1,454 | 1.38308 @ 2026-09-04T16:39:06
+[COLETOR] Ticks:   1,455 | 1.38308 @ 2026-09-04T16:39:07
+[COLETOR] Ticks:   1,456 | 1.38308 @ 2026-09-04T16:39:08
+[COLETOR] Ticks:   1,457 | 1.38308 @ 2026-09-04T16:39:09
+[COLETOR] Ticks:   1,458 | 1.38308 @ 2026-09-04T16:39:10
+[COLETOR] Ticks:   1,459 | 1.38308 @ 2026-09-04T16:39:11
+[COLETOR] Ticks:   1,460 | 1.38307 @ 2026-09-04T16:39:12
+[COLETOR] Ticks:   1,461 | 1.38308 @ 2026-09-04T16:39:13
+[COLETOR] Ticks:   1,462 | 1.38307 @ 2026-09-04T16:39:14
+[COLETOR] Ticks:   1,463 | 1.38307 @ 2026-09-04T16:39:15
+[COLETOR] Ticks:   1,464 | 1.38307 @ 2026-09-04T16:39:16
+[COLETOR] Ticks:   1,465 | 1.38307 @ 2026-09-04T16:39:17
+[COLETOR] Ticks:   1,466 | 1.38307 @ 2026-09-04T16:39:18
+[COLETOR] Ticks:   1,467 | 1.38307 @ 2026-09-04T16:39:19
+[COLETOR] Ticks:   1,468 | 1.38307 @ 2026-09-04T16:39:20
+[COLETOR] Ticks:   1,469 | 1.38307 @ 2026-09-04T16:39:21
+[COLETOR] Ticks:   1,470 | 1.38307 @ 2026-09-04T16:39:22
+[COLETOR] Ticks:   1,471 | 1.38307 @ 2026-09-04T16:39:23
+[COLETOR] Ticks:   1,472 | 1.38307 @ 2026-09-04T16:39:24
+[COLETOR] Ticks:   1,473 | 1.38307 @ 2026-09-04T16:39:25
+[COLETOR] Ticks:   1,474 | 1.38307 @ 2026-09-04T16:39:26
+[COLETOR] Ticks:   1,475 | 1.38307 @ 2026-09-04T16:39:27
+[COLETOR] Ticks:   1,476 | 1.38307 @ 2026-09-04T16:39:28
+[COLETOR] Ticks:   1,477 | 1.38305 @ 2026-09-04T16:39:29
+[COLETOR] Ticks:   1,478 | 1.38304 @ 2026-09-04T16:39:30
+[COLETOR] Ticks:   1,479 | 1.38305 @ 2026-09-04T16:39:31
+[COLETOR] Ticks:   1,480 | 1.38304 @ 2026-09-04T16:39:32
+[COLETOR] Ticks:   1,481 | 1.38305 @ 2026-09-04T16:39:33
+[COLETOR] Ticks:   1,482 | 1.38305 @ 2026-09-04T16:39:34
+[COLETOR] Ticks:   1,483 | 1.38305 @ 2026-09-04T16:39:35
+[COLETOR] Ticks:   1,484 | 1.38305 @ 2026-09-04T16:39:36
+[COLETOR] Ticks:   1,485 | 1.38306 @ 2026-09-04T16:39:37
+[COLETOR] Ticks:   1,486 | 1.38305 @ 2026-09-04T16:39:38
+[COLETOR] Ticks:   1,487 | 1.38301 @ 2026-09-04T16:39:39
+[COLETOR] Ticks:   1,488 | 1.383 @ 2026-09-04T16:39:40
+[COLETOR] Ticks:   1,489 | 1.38298 @ 2026-09-04T16:39:41
+[COLETOR] Ticks:   1,490 | 1.38298 @ 2026-09-04T16:39:42
+[COLETOR] Ticks:   1,491 | 1.38298 @ 2026-09-04T16:39:43
+[COLETOR] Ticks:   1,492 | 1.38298 @ 2026-09-04T16:39:44
+[COLETOR] Ticks:   1,493 | 1.38298 @ 2026-09-04T16:39:45
+[COLETOR] Ticks:   1,494 | 1.38298 @ 2026-09-04T16:39:46
+[COLETOR] Ticks:   1,495 | 1.38298 @ 2026-09-04T16:39:47
+[COLETOR] Ticks:   1,496 | 1.38298 @ 2026-09-04T16:39:48
+[COLETOR] Ticks:   1,497 | 1.38298 @ 2026-09-04T16:39:49
+[COLETOR] Ticks:   1,498 | 1.38298 @ 2026-09-04T16:39:50
+[COLETOR] Ticks:   1,499 | 1.38298 @ 2026-09-04T16:39:51
+[COLETOR] Ticks:   1,500 | 1.38299 @ 2026-09-04T16:39:52
+[COLETOR] Ticks:   1,501 | 1.38298 @ 2026-09-04T16:39:53
+[COLETOR] Ticks:   1,502 | 1.38298 @ 2026-09-04T16:39:54
+[COLETOR] Ticks:   1,503 | 1.38299 @ 2026-09-04T16:39:55
+[COLETOR] Ticks:   1,504 | 1.38298 @ 2026-09-04T16:39:56
+[COLETOR] Ticks:   1,505 | 1.38298 @ 2026-09-04T16:39:57
+[COLETOR] Ticks:   1,506 | 1.38298 @ 2026-09-04T16:39:58
+[COLETOR] Ticks:   1,507 | 1.38298 @ 2026-09-04T16:39:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.74)
+  Preço: 1.3830 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,508 | 1.38298 @ 2026-09-04T16:40:00
+[COLETOR] Ticks:   1,509 | 1.38298 @ 2026-09-04T16:40:01
+[COLETOR] Ticks:   1,510 | 1.38298 @ 2026-09-04T16:40:02
+[COLETOR] Ticks:   1,511 | 1.38298 @ 2026-09-04T16:40:03
+[COLETOR] Ticks:   1,512 | 1.38298 @ 2026-09-04T16:40:04
+[COLETOR] Ticks:   1,513 | 1.38297 @ 2026-09-04T16:40:05
+[COLETOR] Ticks:   1,514 | 1.38298 @ 2026-09-04T16:40:06
+[COLETOR] Ticks:   1,515 | 1.38297 @ 2026-09-04T16:40:07
+[COLETOR] Ticks:   1,516 | 1.38298 @ 2026-09-04T16:40:08
+[COLETOR] Ticks:   1,517 | 1.38298 @ 2026-09-04T16:40:09
+[COLETOR] Ticks:   1,518 | 1.38298 @ 2026-09-04T16:40:10
+[COLETOR] Ticks:   1,519 | 1.38297 @ 2026-09-04T16:40:11
+[COLETOR] Ticks:   1,520 | 1.38297 @ 2026-09-04T16:40:12
+[COLETOR] Ticks:   1,521 | 1.38297 @ 2026-09-04T16:40:13
+[COLETOR] Ticks:   1,522 | 1.38296 @ 2026-09-04T16:40:14
+[COLETOR] Ticks:   1,523 | 1.38297 @ 2026-09-04T16:40:15
+[COLETOR] Ticks:   1,524 | 1.38297 @ 2026-09-04T16:40:16
+[COLETOR] Ticks:   1,525 | 1.38296 @ 2026-09-04T16:40:17
+[COLETOR] Ticks:   1,526 | 1.38296 @ 2026-09-04T16:40:18
+[COLETOR] Ticks:   1,527 | 1.38296 @ 2026-09-04T16:40:19
+[COLETOR] Ticks:   1,528 | 1.38296 @ 2026-09-04T16:40:20
+[COLETOR] Ticks:   1,529 | 1.38295 @ 2026-09-04T16:40:21
+[COLETOR] Ticks:   1,530 | 1.38295 @ 2026-09-04T16:40:22
+[COLETOR] Ticks:   1,531 | 1.38293 @ 2026-09-04T16:40:23
+[COLETOR] Ticks:   1,532 | 1.38294 @ 2026-09-04T16:40:24
+[COLETOR] Ticks:   1,533 | 1.38294 @ 2026-09-04T16:40:25
+[COLETOR] Ticks:   1,534 | 1.38293 @ 2026-09-04T16:40:26
+[COLETOR] Ticks:   1,535 | 1.38293 @ 2026-09-04T16:40:27
+[COLETOR] Ticks:   1,536 | 1.38293 @ 2026-09-04T16:40:28
+[COLETOR] Ticks:   1,537 | 1.38293 @ 2026-09-04T16:40:29
+[COLETOR] Ticks:   1,538 | 1.38293 @ 2026-09-04T16:40:30
+[COLETOR] Ticks:   1,539 | 1.38293 @ 2026-09-04T16:40:31
+[COLETOR] Ticks:   1,540 | 1.38294 @ 2026-09-04T16:40:32
+[COLETOR] Ticks:   1,541 | 1.38294 @ 2026-09-04T16:40:33
+[COLETOR] Ticks:   1,542 | 1.38294 @ 2026-09-04T16:40:34
+[COLETOR] Ticks:   1,543 | 1.38294 @ 2026-09-04T16:40:35
+[COLETOR] Ticks:   1,544 | 1.38294 @ 2026-09-04T16:40:36
+[COLETOR] Ticks:   1,545 | 1.38293 @ 2026-09-04T16:40:37
+[COLETOR] Ticks:   1,546 | 1.38294 @ 2026-09-04T16:40:38
+[COLETOR] Ticks:   1,547 | 1.38295 @ 2026-09-04T16:40:39
+[COLETOR] Ticks:   1,548 | 1.38294 @ 2026-09-04T16:40:40
+[COLETOR] Ticks:   1,549 | 1.38294 @ 2026-09-04T16:40:41
+[COLETOR] Ticks:   1,550 | 1.38294 @ 2026-09-04T16:40:42
+[COLETOR] Ticks:   1,551 | 1.38294 @ 2026-09-04T16:40:43
+[COLETOR] Ticks:   1,552 | 1.38294 @ 2026-09-04T16:40:44
+[COLETOR] Ticks:   1,553 | 1.38294 @ 2026-09-04T16:40:45
+[COLETOR] Ticks:   1,554 | 1.38295 @ 2026-09-04T16:40:46
+[COLETOR] Ticks:   1,555 | 1.38294 @ 2026-09-04T16:40:47
+[COLETOR] Ticks:   1,556 | 1.38294 @ 2026-09-04T16:40:48
+[COLETOR] Ticks:   1,557 | 1.38294 @ 2026-09-04T16:40:49
+[COLETOR] Ticks:   1,558 | 1.38294 @ 2026-09-04T16:40:50
+[COLETOR] Ticks:   1,559 | 1.38293 @ 2026-09-04T16:40:51
+[COLETOR] Ticks:   1,560 | 1.38294 @ 2026-09-04T16:40:52
+[COLETOR] Ticks:   1,561 | 1.38294 @ 2026-09-04T16:40:53
+[COLETOR] Ticks:   1,562 | 1.38294 @ 2026-09-04T16:40:54
+[COLETOR] Ticks:   1,563 | 1.38295 @ 2026-09-04T16:40:55
+[COLETOR] Ticks:   1,564 | 1.38294 @ 2026-09-04T16:40:56
+[COLETOR] Ticks:   1,565 | 1.38295 @ 2026-09-04T16:40:57
+[COLETOR] Ticks:   1,566 | 1.38295 @ 2026-09-04T16:40:58
+[COLETOR] Ticks:   1,567 | 1.38294 @ 2026-09-04T16:40:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.83)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,568 | 1.38295 @ 2026-09-04T16:41:00
+[COLETOR] Ticks:   1,569 | 1.38294 @ 2026-09-04T16:41:01
+[COLETOR] Ticks:   1,570 | 1.38294 @ 2026-09-04T16:41:02
+[COLETOR] Ticks:   1,571 | 1.38294 @ 2026-09-04T16:41:03
+[COLETOR] Ticks:   1,572 | 1.38294 @ 2026-09-04T16:41:04
+[COLETOR] Ticks:   1,573 | 1.38293 @ 2026-09-04T16:41:05
+[COLETOR] Ticks:   1,574 | 1.38293 @ 2026-09-04T16:41:06
+[COLETOR] Ticks:   1,575 | 1.38293 @ 2026-09-04T16:41:07
+[COLETOR] Ticks:   1,576 | 1.38293 @ 2026-09-04T16:41:08
+[COLETOR] Ticks:   1,577 | 1.38293 @ 2026-09-04T16:41:09
+[COLETOR] Ticks:   1,578 | 1.38293 @ 2026-09-04T16:41:10
+[COLETOR] Ticks:   1,579 | 1.38293 @ 2026-09-04T16:41:11
+[COLETOR] Ticks:   1,580 | 1.38293 @ 2026-09-04T16:41:12
+[COLETOR] Ticks:   1,581 | 1.38293 @ 2026-09-04T16:41:13
+[COLETOR] Ticks:   1,582 | 1.38293 @ 2026-09-04T16:41:14
+[COLETOR] Ticks:   1,583 | 1.38293 @ 2026-09-04T16:41:15
+[COLETOR] Ticks:   1,584 | 1.38293 @ 2026-09-04T16:41:16
+[COLETOR] Ticks:   1,585 | 1.38293 @ 2026-09-04T16:41:17
+[COLETOR] Ticks:   1,586 | 1.38293 @ 2026-09-04T16:41:18
+[COLETOR] Ticks:   1,587 | 1.38293 @ 2026-09-04T16:41:19
+[COLETOR] Ticks:   1,588 | 1.38294 @ 2026-09-04T16:41:20
+[COLETOR] Ticks:   1,589 | 1.38294 @ 2026-09-04T16:41:21
+[COLETOR] Ticks:   1,590 | 1.38295 @ 2026-09-04T16:41:22
+[COLETOR] Ticks:   1,591 | 1.38299 @ 2026-09-04T16:41:23
+[COLETOR] Ticks:   1,592 | 1.383 @ 2026-09-04T16:41:24
+[COLETOR] Ticks:   1,593 | 1.38299 @ 2026-09-04T16:41:25
+[COLETOR] Ticks:   1,594 | 1.38299 @ 2026-09-04T16:41:26
+[COLETOR] Ticks:   1,595 | 1.38301 @ 2026-09-04T16:41:27
+[COLETOR] Ticks:   1,596 | 1.38301 @ 2026-09-04T16:41:28
+[COLETOR] Ticks:   1,597 | 1.38301 @ 2026-09-04T16:41:29
+[COLETOR] Ticks:   1,598 | 1.38301 @ 2026-09-04T16:41:30
+[COLETOR] Ticks:   1,599 | 1.38302 @ 2026-09-04T16:41:31
+[COLETOR] Ticks:   1,600 | 1.38302 @ 2026-09-04T16:41:32
+[COLETOR] Ticks:   1,601 | 1.38301 @ 2026-09-04T16:41:33
+[COLETOR] Ticks:   1,602 | 1.38304 @ 2026-09-04T16:41:34
+[COLETOR] Ticks:   1,603 | 1.38303 @ 2026-09-04T16:41:35
+[COLETOR] Ticks:   1,604 | 1.38302 @ 2026-09-04T16:41:36
+[COLETOR] Ticks:   1,605 | 1.38301 @ 2026-09-04T16:41:37
+[COLETOR] Ticks:   1,606 | 1.38302 @ 2026-09-04T16:41:38
+[COLETOR] Ticks:   1,607 | 1.38302 @ 2026-09-04T16:41:39
+[COLETOR] Ticks:   1,608 | 1.38302 @ 2026-09-04T16:41:40
+[COLETOR] Ticks:   1,609 | 1.38302 @ 2026-09-04T16:41:41
+[COLETOR] Ticks:   1,610 | 1.38304 @ 2026-09-04T16:41:42
+[COLETOR] Ticks:   1,611 | 1.38303 @ 2026-09-04T16:41:43
+[COLETOR] Ticks:   1,612 | 1.38303 @ 2026-09-04T16:41:44
+[COLETOR] Ticks:   1,613 | 1.38304 @ 2026-09-04T16:41:45
+[COLETOR] Ticks:   1,614 | 1.38304 @ 2026-09-04T16:41:46
+[COLETOR] Ticks:   1,615 | 1.38304 @ 2026-09-04T16:41:47
+[COLETOR] Ticks:   1,616 | 1.38304 @ 2026-09-04T16:41:48
+[COLETOR] Ticks:   1,617 | 1.38304 @ 2026-09-04T16:41:49
+[COLETOR] Ticks:   1,618 | 1.38304 @ 2026-09-04T16:41:50
+[COLETOR] Ticks:   1,619 | 1.38303 @ 2026-09-04T16:41:51
+[COLETOR] Ticks:   1,620 | 1.38303 @ 2026-09-04T16:41:52
+[COLETOR] Ticks:   1,621 | 1.38303 @ 2026-09-04T16:41:53
+[COLETOR] Ticks:   1,622 | 1.38303 @ 2026-09-04T16:41:54
+[COLETOR] Ticks:   1,623 | 1.38303 @ 2026-09-04T16:41:55
+[COLETOR] Ticks:   1,624 | 1.38304 @ 2026-09-04T16:41:56
+[COLETOR] Ticks:   1,625 | 1.38304 @ 2026-09-04T16:41:57
+[COLETOR] Ticks:   1,626 | 1.38304 @ 2026-09-04T16:41:58
+[COLETOR] Ticks:   1,627 | 1.38304 @ 2026-09-04T16:41:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.83)
+  Preço: 1.3830 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,628 | 1.38304 @ 2026-09-04T16:42:00
+[COLETOR] Ticks:   1,629 | 1.38304 @ 2026-09-04T16:42:01
+[COLETOR] Ticks:   1,630 | 1.38304 @ 2026-09-04T16:42:02
+[COLETOR] Ticks:   1,631 | 1.38304 @ 2026-09-04T16:42:03
+[COLETOR] Ticks:   1,632 | 1.38304 @ 2026-09-04T16:42:04
+[COLETOR] Ticks:   1,633 | 1.38304 @ 2026-09-04T16:42:05
+[COLETOR] Ticks:   1,634 | 1.38304 @ 2026-09-04T16:42:06
+[COLETOR] Ticks:   1,635 | 1.38303 @ 2026-09-04T16:42:07
+[COLETOR] Ticks:   1,636 | 1.38303 @ 2026-09-04T16:42:08
+[COLETOR] Ticks:   1,637 | 1.38302 @ 2026-09-04T16:42:09
+[COLETOR] Ticks:   1,638 | 1.38304 @ 2026-09-04T16:42:10
+[COLETOR] Ticks:   1,639 | 1.38305 @ 2026-09-04T16:42:11
+[COLETOR] Ticks:   1,640 | 1.38305 @ 2026-09-04T16:42:12
+[COLETOR] Ticks:   1,641 | 1.38305 @ 2026-09-04T16:42:13
+[COLETOR] Ticks:   1,642 | 1.38305 @ 2026-09-04T16:42:14
+[COLETOR] Ticks:   1,643 | 1.38305 @ 2026-09-04T16:42:15
+[COLETOR] Ticks:   1,644 | 1.38305 @ 2026-09-04T16:42:16
+[COLETOR] Ticks:   1,645 | 1.38305 @ 2026-09-04T16:42:17
+[COLETOR] Ticks:   1,646 | 1.38305 @ 2026-09-04T16:42:18
+[COLETOR] Ticks:   1,647 | 1.38305 @ 2026-09-04T16:42:19
+[COLETOR] Ticks:   1,648 | 1.38304 @ 2026-09-04T16:42:20
+[COLETOR] Ticks:   1,649 | 1.38304 @ 2026-09-04T16:42:21
+[COLETOR] Ticks:   1,650 | 1.38304 @ 2026-09-04T16:42:22
+[COLETOR] Ticks:   1,651 | 1.38304 @ 2026-09-04T16:42:23
+[COLETOR] Ticks:   1,652 | 1.38305 @ 2026-09-04T16:42:24
+[COLETOR] Ticks:   1,653 | 1.38305 @ 2026-09-04T16:42:25
+[COLETOR] Ticks:   1,654 | 1.38305 @ 2026-09-04T16:42:26
+[COLETOR] Ticks:   1,655 | 1.38305 @ 2026-09-04T16:42:27
+[COLETOR] Ticks:   1,656 | 1.38305 @ 2026-09-04T16:42:28
+[COLETOR] Ticks:   1,657 | 1.38305 @ 2026-09-04T16:42:29
+[COLETOR] Ticks:   1,658 | 1.38305 @ 2026-09-04T16:42:30
+[COLETOR] Ticks:   1,659 | 1.38305 @ 2026-09-04T16:42:31
+[COLETOR] Ticks:   1,660 | 1.38305 @ 2026-09-04T16:42:32
+[COLETOR] Ticks:   1,661 | 1.38305 @ 2026-09-04T16:42:33
+[COLETOR] Ticks:   1,662 | 1.38305 @ 2026-09-04T16:42:34
+[COLETOR] Ticks:   1,663 | 1.38304 @ 2026-09-04T16:42:35
+[COLETOR] Ticks:   1,664 | 1.38304 @ 2026-09-04T16:42:36
+[COLETOR] Ticks:   1,665 | 1.38304 @ 2026-09-04T16:42:37
+[COLETOR] Ticks:   1,666 | 1.38304 @ 2026-09-04T16:42:38
+[COLETOR] Ticks:   1,667 | 1.38305 @ 2026-09-04T16:42:39
+[COLETOR] Ticks:   1,668 | 1.38304 @ 2026-09-04T16:42:40
+[COLETOR] Ticks:   1,669 | 1.38304 @ 2026-09-04T16:42:41
+[COLETOR] Ticks:   1,670 | 1.38305 @ 2026-09-04T16:42:42
+[COLETOR] Ticks:   1,671 | 1.38304 @ 2026-09-04T16:42:43
+[COLETOR] Ticks:   1,672 | 1.38304 @ 2026-09-04T16:42:44
+[COLETOR] Ticks:   1,673 | 1.38304 @ 2026-09-04T16:42:45
+[COLETOR] Ticks:   1,674 | 1.38305 @ 2026-09-04T16:42:46
+[COLETOR] Ticks:   1,675 | 1.38304 @ 2026-09-04T16:42:47
+[COLETOR] Ticks:   1,676 | 1.38304 @ 2026-09-04T16:42:48
+[COLETOR] Ticks:   1,677 | 1.38305 @ 2026-09-04T16:42:49
+[COLETOR] Ticks:   1,678 | 1.38304 @ 2026-09-04T16:42:50
+[COLETOR] Ticks:   1,679 | 1.38304 @ 2026-09-04T16:42:51
+[COLETOR] Ticks:   1,680 | 1.38304 @ 2026-09-04T16:42:52
+[COLETOR] Ticks:   1,681 | 1.38304 @ 2026-09-04T16:42:53
+[COLETOR] Ticks:   1,682 | 1.38304 @ 2026-09-04T16:42:54
+[COLETOR] Ticks:   1,683 | 1.38304 @ 2026-09-04T16:42:55
+[COLETOR] Ticks:   1,684 | 1.38304 @ 2026-09-04T16:42:56
+[COLETOR] Ticks:   1,685 | 1.38304 @ 2026-09-04T16:42:57
+[COLETOR] Ticks:   1,686 | 1.38304 @ 2026-09-04T16:42:58
+[COLETOR] Ticks:   1,687 | 1.38304 @ 2026-09-04T16:42:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.83)
+  Preço: 1.3830 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,688 | 1.38304 @ 2026-09-04T16:43:00
+[COLETOR] Ticks:   1,689 | 1.38304 @ 2026-09-04T16:43:01
+[COLETOR] Ticks:   1,690 | 1.38304 @ 2026-09-04T16:43:02
+[COLETOR] Ticks:   1,691 | 1.38304 @ 2026-09-04T16:43:03
+[COLETOR] Ticks:   1,692 | 1.38296 @ 2026-09-04T16:43:04
+[COLETOR] Ticks:   1,693 | 1.38296 @ 2026-09-04T16:43:05
+[COLETOR] Ticks:   1,694 | 1.38296 @ 2026-09-04T16:43:06
+[COLETOR] Ticks:   1,695 | 1.38296 @ 2026-09-04T16:43:07
+[COLETOR] Ticks:   1,696 | 1.38297 @ 2026-09-04T16:43:08
+[COLETOR] Ticks:   1,697 | 1.38297 @ 2026-09-04T16:43:09
+[COLETOR] Ticks:   1,698 | 1.38296 @ 2026-09-04T16:43:10
+[COLETOR] Ticks:   1,699 | 1.38297 @ 2026-09-04T16:43:11
+[COLETOR] Ticks:   1,700 | 1.38296 @ 2026-09-04T16:43:12
+[COLETOR] Ticks:   1,701 | 1.38296 @ 2026-09-04T16:43:13
+[COLETOR] Ticks:   1,702 | 1.38295 @ 2026-09-04T16:43:14
+[COLETOR] Ticks:   1,703 | 1.38295 @ 2026-09-04T16:43:15
+[COLETOR] Ticks:   1,704 | 1.38295 @ 2026-09-04T16:43:16
+[COLETOR] Ticks:   1,705 | 1.38295 @ 2026-09-04T16:43:17
+[COLETOR] Ticks:   1,706 | 1.38295 @ 2026-09-04T16:43:18
+[COLETOR] Ticks:   1,707 | 1.38295 @ 2026-09-04T16:43:19
+[COLETOR] Ticks:   1,708 | 1.38295 @ 2026-09-04T16:43:20
+[COLETOR] Ticks:   1,709 | 1.38295 @ 2026-09-04T16:43:21
+[COLETOR] Ticks:   1,710 | 1.38294 @ 2026-09-04T16:43:22
+[COLETOR] Ticks:   1,711 | 1.38294 @ 2026-09-04T16:43:23
+[COLETOR] Ticks:   1,712 | 1.38294 @ 2026-09-04T16:43:24
+[COLETOR] Ticks:   1,713 | 1.38293 @ 2026-09-04T16:43:25
+[COLETOR] Ticks:   1,714 | 1.38294 @ 2026-09-04T16:43:26
+[COLETOR] Ticks:   1,715 | 1.38294 @ 2026-09-04T16:43:27
+[COLETOR] Ticks:   1,716 | 1.38294 @ 2026-09-04T16:43:28
+[COLETOR] Ticks:   1,717 | 1.38294 @ 2026-09-04T16:43:29
+[COLETOR] Ticks:   1,718 | 1.38294 @ 2026-09-04T16:43:30
+[COLETOR] Ticks:   1,719 | 1.38294 @ 2026-09-04T16:43:31
+[COLETOR] Ticks:   1,720 | 1.38294 @ 2026-09-04T16:43:32
+[COLETOR] Ticks:   1,721 | 1.38294 @ 2026-09-04T16:43:33
+[COLETOR] Ticks:   1,722 | 1.38294 @ 2026-09-04T16:43:34
+[COLETOR] Ticks:   1,723 | 1.38294 @ 2026-09-04T16:43:35
+[COLETOR] Ticks:   1,724 | 1.38294 @ 2026-09-04T16:43:36
+[COLETOR] Ticks:   1,725 | 1.38294 @ 2026-09-04T16:43:37
+[COLETOR] Ticks:   1,726 | 1.38294 @ 2026-09-04T16:43:38
+[COLETOR] Ticks:   1,727 | 1.38295 @ 2026-09-04T16:43:39
+[COLETOR] Ticks:   1,728 | 1.38295 @ 2026-09-04T16:43:40
+[COLETOR] Ticks:   1,729 | 1.38294 @ 2026-09-04T16:43:41
+[COLETOR] Ticks:   1,730 | 1.38295 @ 2026-09-04T16:43:42
+[COLETOR] Ticks:   1,731 | 1.38296 @ 2026-09-04T16:43:43
+[COLETOR] Ticks:   1,732 | 1.38296 @ 2026-09-04T16:43:44
+[COLETOR] Ticks:   1,733 | 1.38296 @ 2026-09-04T16:43:45
+[COLETOR] Ticks:   1,734 | 1.38296 @ 2026-09-04T16:43:46
+[COLETOR] Ticks:   1,735 | 1.38296 @ 2026-09-04T16:43:47
+[COLETOR] Ticks:   1,736 | 1.38296 @ 2026-09-04T16:43:48
+[COLETOR] Ticks:   1,737 | 1.38295 @ 2026-09-04T16:43:49
+[COLETOR] Ticks:   1,738 | 1.38295 @ 2026-09-04T16:43:50
+[COLETOR] Ticks:   1,739 | 1.38295 @ 2026-09-04T16:43:51
+[COLETOR] Ticks:   1,740 | 1.38295 @ 2026-09-04T16:43:52
+[COLETOR] Ticks:   1,741 | 1.38294 @ 2026-09-04T16:43:53
+[COLETOR] Ticks:   1,742 | 1.38295 @ 2026-09-04T16:43:54
+[COLETOR] Ticks:   1,743 | 1.38294 @ 2026-09-04T16:43:55
+[COLETOR] Ticks:   1,744 | 1.38294 @ 2026-09-04T16:43:56
+[COLETOR] Ticks:   1,745 | 1.38294 @ 2026-09-04T16:43:57
+[COLETOR] Ticks:   1,746 | 1.38294 @ 2026-09-04T16:43:58
+[COLETOR] Ticks:   1,747 | 1.38294 @ 2026-09-04T16:43:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.83)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,748 | 1.38294 @ 2026-09-04T16:44:00
+[COLETOR] Ticks:   1,749 | 1.38294 @ 2026-09-04T16:44:01
+[COLETOR] Ticks:   1,750 | 1.38294 @ 2026-09-04T16:44:02
+[COLETOR] Ticks:   1,751 | 1.38294 @ 2026-09-04T16:44:03
+[COLETOR] Ticks:   1,752 | 1.38294 @ 2026-09-04T16:44:04
+[COLETOR] Ticks:   1,753 | 1.38294 @ 2026-09-04T16:44:05
+[COLETOR] Ticks:   1,754 | 1.38294 @ 2026-09-04T16:44:06
+[COLETOR] Ticks:   1,755 | 1.38294 @ 2026-09-04T16:44:07
+[COLETOR] Ticks:   1,756 | 1.38292 @ 2026-09-04T16:44:08
+[COLETOR] Ticks:   1,757 | 1.38294 @ 2026-09-04T16:44:09
+[COLETOR] Ticks:   1,758 | 1.38294 @ 2026-09-04T16:44:10
+[COLETOR] Ticks:   1,759 | 1.38294 @ 2026-09-04T16:44:11
+[COLETOR] Ticks:   1,760 | 1.38294 @ 2026-09-04T16:44:12
+[COLETOR] Ticks:   1,761 | 1.38294 @ 2026-09-04T16:44:13
+[COLETOR] Ticks:   1,762 | 1.38295 @ 2026-09-04T16:44:14
+[COLETOR] Ticks:   1,763 | 1.38294 @ 2026-09-04T16:44:15
+[COLETOR] Ticks:   1,764 | 1.38295 @ 2026-09-04T16:44:16
+[COLETOR] Ticks:   1,765 | 1.38295 @ 2026-09-04T16:44:17
+[COLETOR] Ticks:   1,766 | 1.38295 @ 2026-09-04T16:44:18
+[COLETOR] Ticks:   1,767 | 1.38295 @ 2026-09-04T16:44:19
+[COLETOR] Ticks:   1,768 | 1.38295 @ 2026-09-04T16:44:20
+[COLETOR] Ticks:   1,769 | 1.38295 @ 2026-09-04T16:44:21
+[COLETOR] Ticks:   1,770 | 1.38294 @ 2026-09-04T16:44:22
+[COLETOR] Ticks:   1,771 | 1.38294 @ 2026-09-04T16:44:23
+[COLETOR] Ticks:   1,772 | 1.38294 @ 2026-09-04T16:44:24
+[COLETOR] Ticks:   1,773 | 1.38294 @ 2026-09-04T16:44:25
+[COLETOR] Ticks:   1,774 | 1.38294 @ 2026-09-04T16:44:26
+[COLETOR] Ticks:   1,775 | 1.38292 @ 2026-09-04T16:44:27
+[COLETOR] Ticks:   1,776 | 1.38292 @ 2026-09-04T16:44:28
+[COLETOR] Ticks:   1,777 | 1.38292 @ 2026-09-04T16:44:29
+[COLETOR] Ticks:   1,778 | 1.38291 @ 2026-09-04T16:44:30
+[COLETOR] Ticks:   1,779 | 1.38292 @ 2026-09-04T16:44:31
+[COLETOR] Ticks:   1,780 | 1.38292 @ 2026-09-04T16:44:32
+[COLETOR] Ticks:   1,781 | 1.3829 @ 2026-09-04T16:44:33
+[COLETOR] Ticks:   1,782 | 1.38291 @ 2026-09-04T16:44:34
+[COLETOR] Ticks:   1,783 | 1.38289 @ 2026-09-04T16:44:35
+[COLETOR] Ticks:   1,784 | 1.38289 @ 2026-09-04T16:44:36
+[COLETOR] Ticks:   1,785 | 1.38288 @ 2026-09-04T16:44:37
+[COLETOR] Ticks:   1,786 | 1.38289 @ 2026-09-04T16:44:38
+[COLETOR] Ticks:   1,787 | 1.38289 @ 2026-09-04T16:44:39
+[COLETOR] Ticks:   1,788 | 1.38289 @ 2026-09-04T16:44:40
+[COLETOR] Ticks:   1,789 | 1.38289 @ 2026-09-04T16:44:41
+[COLETOR] Ticks:   1,790 | 1.38289 @ 2026-09-04T16:44:42
+[COLETOR] Ticks:   1,791 | 1.38288 @ 2026-09-04T16:44:43
+[COLETOR] Ticks:   1,792 | 1.38288 @ 2026-09-04T16:44:44
+[COLETOR] Ticks:   1,793 | 1.38288 @ 2026-09-04T16:44:45
+[COLETOR] Ticks:   1,794 | 1.38288 @ 2026-09-04T16:44:46
+[COLETOR] Ticks:   1,795 | 1.38288 @ 2026-09-04T16:44:47
+[COLETOR] Ticks:   1,796 | 1.38288 @ 2026-09-04T16:44:48
+[COLETOR] Ticks:   1,797 | 1.38292 @ 2026-09-04T16:44:49
+[COLETOR] Ticks:   1,798 | 1.38292 @ 2026-09-04T16:44:50
+[COLETOR] Ticks:   1,799 | 1.38288 @ 2026-09-04T16:44:51
+[COLETOR] Ticks:   1,800 | 1.38288 @ 2026-09-04T16:44:52
+[COLETOR] Ticks:   1,801 | 1.38288 @ 2026-09-04T16:44:53
+[COLETOR] Ticks:   1,802 | 1.38288 @ 2026-09-04T16:44:54
+[COLETOR] Ticks:   1,803 | 1.38288 @ 2026-09-04T16:44:55
+[COLETOR] Ticks:   1,804 | 1.38288 @ 2026-09-04T16:44:56
+[COLETOR] Ticks:   1,805 | 1.38288 @ 2026-09-04T16:44:57
+[COLETOR] Ticks:   1,806 | 1.3829 @ 2026-09-04T16:44:58
+[COLETOR] Ticks:   1,807 | 1.3829 @ 2026-09-04T16:44:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.83)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,808 | 1.3829 @ 2026-09-04T16:45:00
+[COLETOR] Ticks:   1,809 | 1.38292 @ 2026-09-04T16:45:01
+[COLETOR] Ticks:   1,810 | 1.38292 @ 2026-09-04T16:45:02
+[COLETOR] Ticks:   1,811 | 1.38292 @ 2026-09-04T16:45:03
+[COLETOR] Ticks:   1,812 | 1.38292 @ 2026-09-04T16:45:04
+[COLETOR] Ticks:   1,813 | 1.38292 @ 2026-09-04T16:45:05
+[COLETOR] Ticks:   1,814 | 1.38292 @ 2026-09-04T16:45:06
+[COLETOR] Ticks:   1,815 | 1.38292 @ 2026-09-04T16:45:07
+[COLETOR] Ticks:   1,816 | 1.38292 @ 2026-09-04T16:45:08
+[COLETOR] Ticks:   1,817 | 1.38295 @ 2026-09-04T16:45:09
+[COLETOR] Ticks:   1,818 | 1.38294 @ 2026-09-04T16:45:10
+[COLETOR] Ticks:   1,819 | 1.38294 @ 2026-09-04T16:45:11
+[COLETOR] Ticks:   1,820 | 1.38294 @ 2026-09-04T16:45:12
+[COLETOR] Ticks:   1,821 | 1.38294 @ 2026-09-04T16:45:13
+[COLETOR] Ticks:   1,822 | 1.38294 @ 2026-09-04T16:45:14
+[COLETOR] Ticks:   1,823 | 1.38295 @ 2026-09-04T16:45:15
+[COLETOR] Ticks:   1,824 | 1.38296 @ 2026-09-04T16:45:16
+[COLETOR] Ticks:   1,825 | 1.38297 @ 2026-09-04T16:45:17
+[COLETOR] Ticks:   1,826 | 1.38297 @ 2026-09-04T16:45:18
+[COLETOR] Ticks:   1,827 | 1.38298 @ 2026-09-04T16:45:19
+[COLETOR] Ticks:   1,828 | 1.38298 @ 2026-09-04T16:45:20
+[COLETOR] Ticks:   1,829 | 1.38299 @ 2026-09-04T16:45:21
+[COLETOR] Ticks:   1,830 | 1.38298 @ 2026-09-04T16:45:22
+[COLETOR] Ticks:   1,831 | 1.38298 @ 2026-09-04T16:45:23
+[COLETOR] Ticks:   1,832 | 1.38299 @ 2026-09-04T16:45:24
+[COLETOR] Ticks:   1,833 | 1.38298 @ 2026-09-04T16:45:25
+[COLETOR] Ticks:   1,834 | 1.38298 @ 2026-09-04T16:45:26
+[COLETOR] Ticks:   1,835 | 1.38298 @ 2026-09-04T16:45:27
+[COLETOR] Ticks:   1,836 | 1.38298 @ 2026-09-04T16:45:28
+[COLETOR] Ticks:   1,837 | 1.38298 @ 2026-09-04T16:45:29
+[COLETOR] Ticks:   1,838 | 1.38298 @ 2026-09-04T16:45:30
+[COLETOR] Ticks:   1,839 | 1.38297 @ 2026-09-04T16:45:31
+[COLETOR] Ticks:   1,840 | 1.38298 @ 2026-09-04T16:45:32
+[COLETOR] Ticks:   1,841 | 1.38298 @ 2026-09-04T16:45:33
+[COLETOR] Ticks:   1,842 | 1.38289 @ 2026-09-04T16:45:34
+[COLETOR] Ticks:   1,843 | 1.38288 @ 2026-09-04T16:45:35
+[COLETOR] Ticks:   1,844 | 1.38288 @ 2026-09-04T16:45:36
+[COLETOR] Ticks:   1,845 | 1.38288 @ 2026-09-04T16:45:37
+[COLETOR] Ticks:   1,846 | 1.38289 @ 2026-09-04T16:45:38
+[COLETOR] Ticks:   1,847 | 1.38289 @ 2026-09-04T16:45:39
+[COLETOR] Ticks:   1,848 | 1.38289 @ 2026-09-04T16:45:40
+[COLETOR] Ticks:   1,849 | 1.38289 @ 2026-09-04T16:45:41
+[COLETOR] Ticks:   1,850 | 1.38289 @ 2026-09-04T16:45:42
+[COLETOR] Ticks:   1,851 | 1.3829 @ 2026-09-04T16:45:43
+[COLETOR] Ticks:   1,852 | 1.3829 @ 2026-09-04T16:45:44
+[COLETOR] Ticks:   1,853 | 1.3829 @ 2026-09-04T16:45:45
+[COLETOR] Ticks:   1,854 | 1.38289 @ 2026-09-04T16:45:46
+[COLETOR] Ticks:   1,855 | 1.38288 @ 2026-09-04T16:45:47
+[COLETOR] Ticks:   1,856 | 1.38288 @ 2026-09-04T16:45:48
+[COLETOR] Ticks:   1,857 | 1.3829 @ 2026-09-04T16:45:49
+[COLETOR] Ticks:   1,858 | 1.3829 @ 2026-09-04T16:45:50
+[COLETOR] Ticks:   1,859 | 1.38291 @ 2026-09-04T16:45:51
+[COLETOR] Ticks:   1,860 | 1.38291 @ 2026-09-04T16:45:52
+[COLETOR] Ticks:   1,861 | 1.38291 @ 2026-09-04T16:45:53
+[COLETOR] Ticks:   1,862 | 1.38291 @ 2026-09-04T16:45:54
+[COLETOR] Ticks:   1,863 | 1.38288 @ 2026-09-04T16:45:55
+[COLETOR] Ticks:   1,864 | 1.38287 @ 2026-09-04T16:45:56
+[COLETOR] Ticks:   1,865 | 1.38288 @ 2026-09-04T16:45:57
+[COLETOR] Ticks:   1,866 | 1.38288 @ 2026-09-04T16:45:58
+[COLETOR] Ticks:   1,867 | 1.38288 @ 2026-09-04T16:45:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.83)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,868 | 1.38288 @ 2026-09-04T16:46:00
+[COLETOR] Ticks:   1,869 | 1.38288 @ 2026-09-04T16:46:01
+[COLETOR] Ticks:   1,870 | 1.38288 @ 2026-09-04T16:46:02
+[COLETOR] Ticks:   1,871 | 1.38287 @ 2026-09-04T16:46:03[TRADE] WIN  | Profit: +8.97 USD | Saldo: 1017.85 | PnL hoje: +17.85
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,872 | 1.38287 @ 2026-09-04T16:46:04
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,873 | 1.38287 @ 2026-09-04T16:46:05
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,874 | 1.38287 @ 2026-09-04T16:46:06
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,875 | 1.38287 @ 2026-09-04T16:46:07
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,876 | 1.38288 @ 2026-09-04T16:46:08
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,877 | 1.38288 @ 2026-09-04T16:46:09
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,878 | 1.38287 @ 2026-09-04T16:46:10
+[BOT] 1.3828 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,879 | 1.38284 @ 2026-09-04T16:46:11
+[BOT] 1.3828 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,880 | 1.38284 @ 2026-09-04T16:46:12
+[BOT] 1.3828 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,881 | 1.38284 @ 2026-09-04T16:46:13
+[BOT] 1.3828 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,882 | 1.38284 @ 2026-09-04T16:46:14
+[BOT] 1.3828 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,883 | 1.38283 @ 2026-09-04T16:46:15
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,884 | 1.38288 @ 2026-09-04T16:46:16
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,885 | 1.38289 @ 2026-09-04T16:46:17
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,886 | 1.38289 @ 2026-09-04T16:46:18
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,887 | 1.38289 @ 2026-09-04T16:46:19
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,888 | 1.38289 @ 2026-09-04T16:46:20
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,889 | 1.3829 @ 2026-09-04T16:46:21
+[COLETOR] Ticks:   1,890 | 1.3829 @ 2026-09-04T16:46:22
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,891 | 1.38289 @ 2026-09-04T16:46:23
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,892 | 1.38289 @ 2026-09-04T16:46:24
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,893 | 1.3829 @ 2026-09-04T16:46:25
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,894 | 1.3829 @ 2026-09-04T16:46:26
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,895 | 1.3829 @ 2026-09-04T16:46:27
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,896 | 1.3829 @ 2026-09-04T16:46:28
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,897 | 1.3829 @ 2026-09-04T16:46:29
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,898 | 1.38289 @ 2026-09-04T16:46:30
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,899 | 1.38289 @ 2026-09-04T16:46:31
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,900 | 1.3829 @ 2026-09-04T16:46:32
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,901 | 1.3829 @ 2026-09-04T16:46:33
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,902 | 1.3829 @ 2026-09-04T16:46:34
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,903 | 1.3829 @ 2026-09-04T16:46:35
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,904 | 1.38289 @ 2026-09-04T16:46:36
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,905 | 1.3829 @ 2026-09-04T16:46:37
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,906 | 1.3829 @ 2026-09-04T16:46:38
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,907 | 1.3829 @ 2026-09-04T16:46:39
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,908 | 1.3829 @ 2026-09-04T16:46:40
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,909 | 1.3829 @ 2026-09-04T16:46:41
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,910 | 1.3829 @ 2026-09-04T16:46:42
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,911 | 1.3829 @ 2026-09-04T16:46:43
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,912 | 1.3829 @ 2026-09-04T16:46:44
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,913 | 1.3829 @ 2026-09-04T16:46:45
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,914 | 1.3829 @ 2026-09-04T16:46:46
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,915 | 1.3829 @ 2026-09-04T16:46:47
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,916 | 1.3829 @ 2026-09-04T16:46:48
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,917 | 1.3829 @ 2026-09-04T16:46:49
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,918 | 1.38289 @ 2026-09-04T16:46:50
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,919 | 1.38289 @ 2026-09-04T16:46:51
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,920 | 1.38288 @ 2026-09-04T16:46:52
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,921 | 1.38289 @ 2026-09-04T16:46:53
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,922 | 1.38289 @ 2026-09-04T16:46:54
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,923 | 1.38289 @ 2026-09-04T16:46:55
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,924 | 1.38286 @ 2026-09-04T16:46:56
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,925 | 1.38286 @ 2026-09-04T16:46:57
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,926 | 1.38286 @ 2026-09-04T16:46:58
+[BOT] 1.3829 | Aguardando fechamento da vela... (candles ok: 131)
+[COLETOR] Ticks:   1,927 | 1.38286 @ 2026-09-04T16:46:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.85)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[TICK] 1.3829 | EMA9:1.3830 EMA21:1.3831 | RSI:24.7 ADX:65.3 MACD_H:-0.00000 [→ SELL]
+[BOT] → SELL | Stake: 10.18 USD | Duração: 15m | ADX:65.3 RSI:24.7
+[COLETOR] Ticks:   1,928 | 1.38286 @ 2026-09-04T16:47:00
+[COLETOR] Ticks:   1,929 | 1.38286 @ 2026-09-04T16:47:01[BOT] Contrato aberto | ID: 11723290199
+[COLETOR] Ticks:   1,930 | 1.38286 @ 2026-09-04T16:47:02
+[COLETOR] Ticks:   1,931 | 1.38286 @ 2026-09-04T16:47:03
+[COLETOR] Ticks:   1,932 | 1.38286 @ 2026-09-04T16:47:04
+[COLETOR] Ticks:   1,933 | 1.38286 @ 2026-09-04T16:47:05
+[COLETOR] Ticks:   1,934 | 1.38285 @ 2026-09-04T16:47:06
+[COLETOR] Ticks:   1,935 | 1.38287 @ 2026-09-04T16:47:07
+[COLETOR] Ticks:   1,936 | 1.38286 @ 2026-09-04T16:47:08
+[COLETOR] Ticks:   1,937 | 1.38287 @ 2026-09-04T16:47:09
+[COLETOR] Ticks:   1,938 | 1.38288 @ 2026-09-04T16:47:10
+[COLETOR] Ticks:   1,939 | 1.38288 @ 2026-09-04T16:47:11
+[COLETOR] Ticks:   1,940 | 1.38288 @ 2026-09-04T16:47:12
+[COLETOR] Ticks:   1,941 | 1.38288 @ 2026-09-04T16:47:13
+[COLETOR] Ticks:   1,942 | 1.38288 @ 2026-09-04T16:47:14
+[COLETOR] Ticks:   1,943 | 1.38288 @ 2026-09-04T16:47:15
+[COLETOR] Ticks:   1,944 | 1.38288 @ 2026-09-04T16:47:16
+[COLETOR] Ticks:   1,945 | 1.38289 @ 2026-09-04T16:47:17
+[COLETOR] Ticks:   1,946 | 1.38289 @ 2026-09-04T16:47:18
+[COLETOR] Ticks:   1,947 | 1.38289 @ 2026-09-04T16:47:19
+[COLETOR] Ticks:   1,948 | 1.38288 @ 2026-09-04T16:47:20
+[COLETOR] Ticks:   1,949 | 1.38287 @ 2026-09-04T16:47:21
+[COLETOR] Ticks:   1,950 | 1.38287 @ 2026-09-04T16:47:22
+[COLETOR] Ticks:   1,951 | 1.38287 @ 2026-09-04T16:47:23
+[COLETOR] Ticks:   1,952 | 1.38287 @ 2026-09-04T16:47:24
+[COLETOR] Ticks:   1,953 | 1.38287 @ 2026-09-04T16:47:25
+[COLETOR] Ticks:   1,954 | 1.38287 @ 2026-09-04T16:47:26
+[COLETOR] Ticks:   1,955 | 1.38287 @ 2026-09-04T16:47:27
+[COLETOR] Ticks:   1,956 | 1.38288 @ 2026-09-04T16:47:28
+[COLETOR] Ticks:   1,957 | 1.38288 @ 2026-09-04T16:47:29
+[COLETOR] Ticks:   1,958 | 1.38288 @ 2026-09-04T16:47:30
+[COLETOR] Ticks:   1,959 | 1.38287 @ 2026-09-04T16:47:31
+[COLETOR] Ticks:   1,960 | 1.38287 @ 2026-09-04T16:47:32
+[COLETOR] Ticks:   1,961 | 1.38286 @ 2026-09-04T16:47:33
+[COLETOR] Ticks:   1,962 | 1.38287 @ 2026-09-04T16:47:34
+[COLETOR] Ticks:   1,963 | 1.38287 @ 2026-09-04T16:47:35
+[COLETOR] Ticks:   1,964 | 1.38287 @ 2026-09-04T16:47:36
+[COLETOR] Ticks:   1,965 | 1.38287 @ 2026-09-04T16:47:37
+[COLETOR] Ticks:   1,966 | 1.38287 @ 2026-09-04T16:47:38
+[COLETOR] Ticks:   1,967 | 1.38287 @ 2026-09-04T16:47:39
+[COLETOR] Ticks:   1,968 | 1.38287 @ 2026-09-04T16:47:40
+[COLETOR] Ticks:   1,969 | 1.38287 @ 2026-09-04T16:47:41
+[COLETOR] Ticks:   1,970 | 1.38287 @ 2026-09-04T16:47:42
+[COLETOR] Ticks:   1,971 | 1.38287 @ 2026-09-04T16:47:43
+[COLETOR] Ticks:   1,972 | 1.38289 @ 2026-09-04T16:47:44
+[COLETOR] Ticks:   1,973 | 1.38289 @ 2026-09-04T16:47:45
+[COLETOR] Ticks:   1,974 | 1.38289 @ 2026-09-04T16:47:46
+[COLETOR] Ticks:   1,975 | 1.38289 @ 2026-09-04T16:47:47
+[COLETOR] Ticks:   1,976 | 1.38289 @ 2026-09-04T16:47:48
+[COLETOR] Ticks:   1,977 | 1.3829 @ 2026-09-04T16:47:49
+[COLETOR] Ticks:   1,978 | 1.38289 @ 2026-09-04T16:47:50
+[COLETOR] Ticks:   1,979 | 1.38289 @ 2026-09-04T16:47:51
+[COLETOR] Ticks:   1,980 | 1.3829 @ 2026-09-04T16:47:52
+[COLETOR] Ticks:   1,981 | 1.3829 @ 2026-09-04T16:47:53
+[COLETOR] Ticks:   1,982 | 1.3829 @ 2026-09-04T16:47:54
+[COLETOR] Ticks:   1,983 | 1.38291 @ 2026-09-04T16:47:55
+[COLETOR] Ticks:   1,984 | 1.38291 @ 2026-09-04T16:47:56
+[COLETOR] Ticks:   1,985 | 1.38292 @ 2026-09-04T16:47:57
+[COLETOR] Ticks:   1,986 | 1.38292 @ 2026-09-04T16:47:58
+[COLETOR] Ticks:   1,987 | 1.38292 @ 2026-09-04T16:47:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.85)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   1,988 | 1.38292 @ 2026-09-04T16:48:00
+[COLETOR] Ticks:   1,989 | 1.38292 @ 2026-09-04T16:48:01
+[COLETOR] Ticks:   1,990 | 1.3829 @ 2026-09-04T16:48:02
+[COLETOR] Ticks:   1,991 | 1.38292 @ 2026-09-04T16:48:03
+[COLETOR] Ticks:   1,992 | 1.38289 @ 2026-09-04T16:48:04
+[COLETOR] Ticks:   1,993 | 1.38289 @ 2026-09-04T16:48:05
+[COLETOR] Ticks:   1,994 | 1.38289 @ 2026-09-04T16:48:06
+[COLETOR] Ticks:   1,995 | 1.3829 @ 2026-09-04T16:48:07
+[COLETOR] Ticks:   1,996 | 1.3829 @ 2026-09-04T16:48:08
+[COLETOR] Ticks:   1,997 | 1.3829 @ 2026-09-04T16:48:09
+[COLETOR] Ticks:   1,998 | 1.38289 @ 2026-09-04T16:48:10
+[COLETOR] Ticks:   1,999 | 1.3829 @ 2026-09-04T16:48:11
+[COLETOR] Ticks:   2,000 | 1.3829 @ 2026-09-04T16:48:12
+[COLETOR] Ticks:   2,001 | 1.3829 @ 2026-09-04T16:48:13
+[COLETOR] Ticks:   2,002 | 1.38289 @ 2026-09-04T16:48:14
+[COLETOR] Ticks:   2,003 | 1.38289 @ 2026-09-04T16:48:15
+[COLETOR] Ticks:   2,004 | 1.38289 @ 2026-09-04T16:48:16
+[COLETOR] Ticks:   2,005 | 1.3829 @ 2026-09-04T16:48:17
+[COLETOR] Ticks:   2,006 | 1.38289 @ 2026-09-04T16:48:18
+[COLETOR] Ticks:   2,007 | 1.38289 @ 2026-09-04T16:48:19
+[COLETOR] Ticks:   2,008 | 1.3829 @ 2026-09-04T16:48:20
+[COLETOR] Ticks:   2,009 | 1.38289 @ 2026-09-04T16:48:21
+[COLETOR] Ticks:   2,010 | 1.38291 @ 2026-09-04T16:48:22
+[COLETOR] Ticks:   2,011 | 1.38291 @ 2026-09-04T16:48:23
+[COLETOR] Ticks:   2,012 | 1.38291 @ 2026-09-04T16:48:24
+[COLETOR] Ticks:   2,013 | 1.38292 @ 2026-09-04T16:48:25
+[COLETOR] Ticks:   2,014 | 1.38292 @ 2026-09-04T16:48:26
+[COLETOR] Ticks:   2,015 | 1.38292 @ 2026-09-04T16:48:27
+[COLETOR] Ticks:   2,016 | 1.38292 @ 2026-09-04T16:48:28
+[COLETOR] Ticks:   2,017 | 1.38294 @ 2026-09-04T16:48:29
+[COLETOR] Ticks:   2,018 | 1.38294 @ 2026-09-04T16:48:30
+[COLETOR] Ticks:   2,019 | 1.38293 @ 2026-09-04T16:48:31
+[COLETOR] Ticks:   2,020 | 1.38293 @ 2026-09-04T16:48:32
+[COLETOR] Ticks:   2,021 | 1.38293 @ 2026-09-04T16:48:33
+[COLETOR] Ticks:   2,022 | 1.38293 @ 2026-09-04T16:48:34
+[COLETOR] Ticks:   2,023 | 1.38293 @ 2026-09-04T16:48:35
+[COLETOR] Ticks:   2,024 | 1.38293 @ 2026-09-04T16:48:36
+[COLETOR] Ticks:   2,025 | 1.38293 @ 2026-09-04T16:48:37
+[COLETOR] Ticks:   2,026 | 1.38293 @ 2026-09-04T16:48:38
+[COLETOR] Ticks:   2,027 | 1.38293 @ 2026-09-04T16:48:39
+[COLETOR] Ticks:   2,028 | 1.38293 @ 2026-09-04T16:48:40
+[COLETOR] Ticks:   2,029 | 1.38293 @ 2026-09-04T16:48:41
+[COLETOR] Ticks:   2,030 | 1.38292 @ 2026-09-04T16:48:42
+[COLETOR] Ticks:   2,031 | 1.38293 @ 2026-09-04T16:48:43
+[COLETOR] Ticks:   2,032 | 1.3829 @ 2026-09-04T16:48:44
+[COLETOR] Ticks:   2,033 | 1.3829 @ 2026-09-04T16:48:45
+[COLETOR] Ticks:   2,034 | 1.3829 @ 2026-09-04T16:48:46
+[COLETOR] Ticks:   2,035 | 1.3829 @ 2026-09-04T16:48:47
+[COLETOR] Ticks:   2,036 | 1.3829 @ 2026-09-04T16:48:48
+[COLETOR] Ticks:   2,037 | 1.38289 @ 2026-09-04T16:48:49
+[COLETOR] Ticks:   2,038 | 1.38289 @ 2026-09-04T16:48:50
+[COLETOR] Ticks:   2,039 | 1.38288 @ 2026-09-04T16:48:51
+[COLETOR] Ticks:   2,040 | 1.38289 @ 2026-09-04T16:48:52
+[COLETOR] Ticks:   2,041 | 1.38289 @ 2026-09-04T16:48:53
+[COLETOR] Ticks:   2,042 | 1.38288 @ 2026-09-04T16:48:54
+[COLETOR] Ticks:   2,043 | 1.38288 @ 2026-09-04T16:48:55
+[COLETOR] Ticks:   2,044 | 1.38288 @ 2026-09-04T16:48:56
+[COLETOR] Ticks:   2,045 | 1.38288 @ 2026-09-04T16:48:57
+[COLETOR] Ticks:   2,046 | 1.38288 @ 2026-09-04T16:48:58
+[COLETOR] Ticks:   2,047 | 1.38288 @ 2026-09-04T16:48:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.85)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   2,048 | 1.38288 @ 2026-09-04T16:49:00
+[COLETOR] Ticks:   2,049 | 1.38288 @ 2026-09-04T16:49:01
+[COLETOR] Ticks:   2,050 | 1.38288 @ 2026-09-04T16:49:02
+[COLETOR] Ticks:   2,051 | 1.38288 @ 2026-09-04T16:49:03
+[COLETOR] Ticks:   2,052 | 1.38288 @ 2026-09-04T16:49:04
+[COLETOR] Ticks:   2,053 | 1.38288 @ 2026-09-04T16:49:05
+[COLETOR] Ticks:   2,054 | 1.38288 @ 2026-09-04T16:49:06
+[COLETOR] Ticks:   2,055 | 1.38288 @ 2026-09-04T16:49:07
+[COLETOR] Ticks:   2,056 | 1.38289 @ 2026-09-04T16:49:08
+[COLETOR] Ticks:   2,057 | 1.38289 @ 2026-09-04T16:49:09
+[COLETOR] Ticks:   2,058 | 1.38289 @ 2026-09-04T16:49:10
+[COLETOR] Ticks:   2,059 | 1.38294 @ 2026-09-04T16:49:11
+[COLETOR] Ticks:   2,060 | 1.38294 @ 2026-09-04T16:49:12
+[COLETOR] Ticks:   2,061 | 1.38294 @ 2026-09-04T16:49:13
+[COLETOR] Ticks:   2,062 | 1.38294 @ 2026-09-04T16:49:14
+[COLETOR] Ticks:   2,063 | 1.38294 @ 2026-09-04T16:49:15
+[COLETOR] Ticks:   2,064 | 1.38294 @ 2026-09-04T16:49:16
+[COLETOR] Ticks:   2,065 | 1.38294 @ 2026-09-04T16:49:17
+[COLETOR] Ticks:   2,066 | 1.38294 @ 2026-09-04T16:49:18
+[COLETOR] Ticks:   2,067 | 1.38288 @ 2026-09-04T16:49:19
+[COLETOR] Ticks:   2,068 | 1.38289 @ 2026-09-04T16:49:20
+[COLETOR] Ticks:   2,069 | 1.38289 @ 2026-09-04T16:49:21
+[COLETOR] Ticks:   2,070 | 1.38289 @ 2026-09-04T16:49:22
+[COLETOR] Ticks:   2,071 | 1.38289 @ 2026-09-04T16:49:23
+[COLETOR] Ticks:   2,072 | 1.38289 @ 2026-09-04T16:49:24
+[COLETOR] Ticks:   2,073 | 1.38289 @ 2026-09-04T16:49:25
+[COLETOR] Ticks:   2,074 | 1.38294 @ 2026-09-04T16:49:26
+[COLETOR] Ticks:   2,075 | 1.38295 @ 2026-09-04T16:49:27
+[COLETOR] Ticks:   2,076 | 1.38295 @ 2026-09-04T16:49:28
+[COLETOR] Ticks:   2,077 | 1.38295 @ 2026-09-04T16:49:29
+[COLETOR] Ticks:   2,078 | 1.38295 @ 2026-09-04T16:49:30
+[COLETOR] Ticks:   2,079 | 1.38295 @ 2026-09-04T16:49:31
+[COLETOR] Ticks:   2,080 | 1.38294 @ 2026-09-04T16:49:32
+[COLETOR] Ticks:   2,081 | 1.38294 @ 2026-09-04T16:49:33
+[COLETOR] Ticks:   2,082 | 1.38297 @ 2026-09-04T16:49:34
+[COLETOR] Ticks:   2,083 | 1.38297 @ 2026-09-04T16:49:35
+[COLETOR] Ticks:   2,084 | 1.38297 @ 2026-09-04T16:49:36
+[COLETOR] Ticks:   2,085 | 1.38297 @ 2026-09-04T16:49:37
+[COLETOR] Ticks:   2,086 | 1.38297 @ 2026-09-04T16:49:38
+[COLETOR] Ticks:   2,087 | 1.38297 @ 2026-09-04T16:49:39
+[COLETOR] Ticks:   2,088 | 1.38297 @ 2026-09-04T16:49:40
+[COLETOR] Ticks:   2,089 | 1.38298 @ 2026-09-04T16:49:41
+[COLETOR] Ticks:   2,090 | 1.38298 @ 2026-09-04T16:49:42
+[COLETOR] Ticks:   2,091 | 1.38298 @ 2026-09-04T16:49:43
+[COLETOR] Ticks:   2,092 | 1.38298 @ 2026-09-04T16:49:44
+[COLETOR] Ticks:   2,093 | 1.38299 @ 2026-09-04T16:49:45
+[COLETOR] Ticks:   2,094 | 1.38298 @ 2026-09-04T16:49:46
+[COLETOR] Ticks:   2,095 | 1.38298 @ 2026-09-04T16:49:47
+[COLETOR] Ticks:   2,096 | 1.38298 @ 2026-09-04T16:49:48
+[COLETOR] Ticks:   2,097 | 1.38298 @ 2026-09-04T16:49:49
+[COLETOR] Ticks:   2,098 | 1.38298 @ 2026-09-04T16:49:50
+[COLETOR] Ticks:   2,099 | 1.38297 @ 2026-09-04T16:49:51
+[COLETOR] Ticks:   2,100 | 1.38298 @ 2026-09-04T16:49:52
+[COLETOR] Ticks:   2,101 | 1.38298 @ 2026-09-04T16:49:53
+[COLETOR] Ticks:   2,102 | 1.38298 @ 2026-09-04T16:49:54
+[COLETOR] Ticks:   2,103 | 1.38297 @ 2026-09-04T16:49:55
+[COLETOR] Ticks:   2,104 | 1.38298 @ 2026-09-04T16:49:56
+[COLETOR] Ticks:   2,105 | 1.38297 @ 2026-09-04T16:49:57
+[COLETOR] Ticks:   2,106 | 1.38298 @ 2026-09-04T16:49:58
+[COLETOR] Ticks:   2,107 | 1.38298 @ 2026-09-04T16:49:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.85)
+  Preço: 1.3830 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   2,108 | 1.38298 @ 2026-09-04T16:50:00
+[COLETOR] Ticks:   2,109 | 1.38298 @ 2026-09-04T16:50:01
+[COLETOR] Ticks:   2,110 | 1.38297 @ 2026-09-04T16:50:02
+[COLETOR] Ticks:   2,111 | 1.38296 @ 2026-09-04T16:50:03
+[COLETOR] Ticks:   2,112 | 1.38296 @ 2026-09-04T16:50:04
+[COLETOR] Ticks:   2,113 | 1.38295 @ 2026-09-04T16:50:05
+[COLETOR] Ticks:   2,114 | 1.38295 @ 2026-09-04T16:50:06
+[COLETOR] Ticks:   2,115 | 1.38296 @ 2026-09-04T16:50:07
+[COLETOR] Ticks:   2,116 | 1.38296 @ 2026-09-04T16:50:08
+[COLETOR] Ticks:   2,117 | 1.38296 @ 2026-09-04T16:50:09
+[COLETOR] Ticks:   2,118 | 1.38296 @ 2026-09-04T16:50:10
+[COLETOR] Ticks:   2,119 | 1.38296 @ 2026-09-04T16:50:11
+[COLETOR] Ticks:   2,120 | 1.38294 @ 2026-09-04T16:50:12
+[COLETOR] Ticks:   2,121 | 1.38295 @ 2026-09-04T16:50:13
+[COLETOR] Ticks:   2,122 | 1.38297 @ 2026-09-04T16:50:14
+[COLETOR] Ticks:   2,123 | 1.38298 @ 2026-09-04T16:50:15
+[COLETOR] Ticks:   2,124 | 1.38297 @ 2026-09-04T16:50:16
+[COLETOR] Ticks:   2,125 | 1.38298 @ 2026-09-04T16:50:17
+[COLETOR] Ticks:   2,126 | 1.38298 @ 2026-09-04T16:50:18
+[COLETOR] Ticks:   2,127 | 1.38298 @ 2026-09-04T16:50:19
+[COLETOR] Ticks:   2,128 | 1.38298 @ 2026-09-04T16:50:20
+[COLETOR] Ticks:   2,129 | 1.38298 @ 2026-09-04T16:50:21
+[COLETOR] Ticks:   2,130 | 1.38298 @ 2026-09-04T16:50:22
+[COLETOR] Ticks:   2,131 | 1.38298 @ 2026-09-04T16:50:23
+[COLETOR] Ticks:   2,132 | 1.38298 @ 2026-09-04T16:50:24
+[COLETOR] Ticks:   2,133 | 1.38298 @ 2026-09-04T16:50:25
+[COLETOR] Ticks:   2,134 | 1.38299 @ 2026-09-04T16:50:26
+[COLETOR] Ticks:   2,135 | 1.38299 @ 2026-09-04T16:50:27
+[COLETOR] Ticks:   2,136 | 1.38299 @ 2026-09-04T16:50:28
+[COLETOR] Ticks:   2,137 | 1.38299 @ 2026-09-04T16:50:29
+[COLETOR] Ticks:   2,138 | 1.38299 @ 2026-09-04T16:50:30
+[COLETOR] Ticks:   2,139 | 1.38299 @ 2026-09-04T16:50:31
+[COLETOR] Ticks:   2,140 | 1.38299 @ 2026-09-04T16:50:32
+[COLETOR] Ticks:   2,141 | 1.38299 @ 2026-09-04T16:50:33
+[COLETOR] Ticks:   2,142 | 1.38299 @ 2026-09-04T16:50:34
+[COLETOR] Ticks:   2,143 | 1.38299 @ 2026-09-04T16:50:35
+[COLETOR] Ticks:   2,144 | 1.38299 @ 2026-09-04T16:50:36
+[COLETOR] Ticks:   2,145 | 1.38299 @ 2026-09-04T16:50:37
+[COLETOR] Ticks:   2,146 | 1.38299 @ 2026-09-04T16:50:38
+[COLETOR] Ticks:   2,147 | 1.38299 @ 2026-09-04T16:50:39
+[COLETOR] Ticks:   2,148 | 1.38308 @ 2026-09-04T16:50:40
+[COLETOR] Ticks:   2,149 | 1.38307 @ 2026-09-04T16:50:41
+[COLETOR] Ticks:   2,150 | 1.38307 @ 2026-09-04T16:50:42
+[COLETOR] Ticks:   2,151 | 1.38308 @ 2026-09-04T16:50:43
+[COLETOR] Ticks:   2,152 | 1.38308 @ 2026-09-04T16:50:44
+[COLETOR] Ticks:   2,153 | 1.38308 @ 2026-09-04T16:50:45
+[COLETOR] Ticks:   2,154 | 1.38308 @ 2026-09-04T16:50:46
+[COLETOR] Ticks:   2,155 | 1.38308 @ 2026-09-04T16:50:47
+[COLETOR] Ticks:   2,156 | 1.38308 @ 2026-09-04T16:50:48
+[COLETOR] Ticks:   2,157 | 1.38308 @ 2026-09-04T16:50:49
+[COLETOR] Ticks:   2,158 | 1.38306 @ 2026-09-04T16:50:50
+[COLETOR] Ticks:   2,159 | 1.38306 @ 2026-09-04T16:50:51
+[COLETOR] Ticks:   2,160 | 1.38306 @ 2026-09-04T16:50:52
+[COLETOR] Ticks:   2,161 | 1.38306 @ 2026-09-04T16:50:53
+[COLETOR] Ticks:   2,162 | 1.38306 @ 2026-09-04T16:50:54
+[COLETOR] Ticks:   2,163 | 1.38306 @ 2026-09-04T16:50:55
+[COLETOR] Ticks:   2,164 | 1.38307 @ 2026-09-04T16:50:56
+[COLETOR] Ticks:   2,165 | 1.38307 @ 2026-09-04T16:50:57
+[COLETOR] Ticks:   2,166 | 1.38307 @ 2026-09-04T16:50:58
+[COLETOR] Ticks:   2,167 | 1.38306 @ 2026-09-04T16:50:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.85)
+  Preço: 1.3831 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   2,168 | 1.38307 @ 2026-09-04T16:51:00
+[COLETOR] Ticks:   2,169 | 1.38307 @ 2026-09-04T16:51:01
+[COLETOR] Ticks:   2,170 | 1.38307 @ 2026-09-04T16:51:02
+[COLETOR] Ticks:   2,171 | 1.38307 @ 2026-09-04T16:51:03
+[COLETOR] Ticks:   2,172 | 1.38307 @ 2026-09-04T16:51:04
+[COLETOR] Ticks:   2,173 | 1.38306 @ 2026-09-04T16:51:05
+[COLETOR] Ticks:   2,174 | 1.38307 @ 2026-09-04T16:51:06
+[COLETOR] Ticks:   2,175 | 1.38306 @ 2026-09-04T16:51:07
+[COLETOR] Ticks:   2,176 | 1.38307 @ 2026-09-04T16:51:08
+[COLETOR] Ticks:   2,177 | 1.38306 @ 2026-09-04T16:51:09
+[COLETOR] Ticks:   2,178 | 1.38306 @ 2026-09-04T16:51:10
+[COLETOR] Ticks:   2,179 | 1.38306 @ 2026-09-04T16:51:11
+[COLETOR] Ticks:   2,180 | 1.38297 @ 2026-09-04T16:51:12
+[COLETOR] Ticks:   2,181 | 1.38297 @ 2026-09-04T16:51:13
+[COLETOR] Ticks:   2,182 | 1.38297 @ 2026-09-04T16:51:14
+[COLETOR] Ticks:   2,183 | 1.38297 @ 2026-09-04T16:51:15
+[COLETOR] Ticks:   2,184 | 1.38297 @ 2026-09-04T16:51:16
+[COLETOR] Ticks:   2,185 | 1.38297 @ 2026-09-04T16:51:17
+[COLETOR] Ticks:   2,186 | 1.38296 @ 2026-09-04T16:51:18
+[COLETOR] Ticks:   2,187 | 1.38296 @ 2026-09-04T16:51:19
+[COLETOR] Ticks:   2,188 | 1.38296 @ 2026-09-04T16:51:20
+[COLETOR] Ticks:   2,189 | 1.38297 @ 2026-09-04T16:51:21
+[COLETOR] Ticks:   2,190 | 1.38296 @ 2026-09-04T16:51:22
+[COLETOR] Ticks:   2,191 | 1.38296 @ 2026-09-04T16:51:23
+[COLETOR] Ticks:   2,192 | 1.38296 @ 2026-09-04T16:51:24
+[COLETOR] Ticks:   2,193 | 1.38296 @ 2026-09-04T16:51:25
+[COLETOR] Ticks:   2,194 | 1.38297 @ 2026-09-04T16:51:26
+[COLETOR] Ticks:   2,195 | 1.38296 @ 2026-09-04T16:51:27
+[COLETOR] Ticks:   2,196 | 1.38295 @ 2026-09-04T16:51:28
+[COLETOR] Ticks:   2,197 | 1.38295 @ 2026-09-04T16:51:29
+[COLETOR] Ticks:   2,198 | 1.38295 @ 2026-09-04T16:51:30
+[COLETOR] Ticks:   2,199 | 1.38295 @ 2026-09-04T16:51:31
+[COLETOR] Ticks:   2,200 | 1.38294 @ 2026-09-04T16:51:32
+[COLETOR] Ticks:   2,201 | 1.38294 @ 2026-09-04T16:51:33
+[COLETOR] Ticks:   2,202 | 1.38294 @ 2026-09-04T16:51:34
+[COLETOR] Ticks:   2,203 | 1.38294 @ 2026-09-04T16:51:35
+[COLETOR] Ticks:   2,204 | 1.38294 @ 2026-09-04T16:51:36
+[COLETOR] Ticks:   2,205 | 1.38294 @ 2026-09-04T16:51:37
+[COLETOR] Ticks:   2,206 | 1.38294 @ 2026-09-04T16:51:38
+[COLETOR] Ticks:   2,207 | 1.38297 @ 2026-09-04T16:51:39
+[COLETOR] Ticks:   2,208 | 1.38297 @ 2026-09-04T16:51:40
+[COLETOR] Ticks:   2,209 | 1.38297 @ 2026-09-04T16:51:41
+[COLETOR] Ticks:   2,210 | 1.38297 @ 2026-09-04T16:51:42
+[COLETOR] Ticks:   2,211 | 1.38297 @ 2026-09-04T16:51:43
+[COLETOR] Ticks:   2,212 | 1.38297 @ 2026-09-04T16:51:44
+[COLETOR] Ticks:   2,213 | 1.38297 @ 2026-09-04T16:51:45
+[COLETOR] Ticks:   2,214 | 1.38297 @ 2026-09-04T16:51:46
+[COLETOR] Ticks:   2,215 | 1.38294 @ 2026-09-04T16:51:47
+[COLETOR] Ticks:   2,216 | 1.38295 @ 2026-09-04T16:51:48
+[COLETOR] Ticks:   2,217 | 1.38295 @ 2026-09-04T16:51:49
+[COLETOR] Ticks:   2,218 | 1.38295 @ 2026-09-04T16:51:50
+[COLETOR] Ticks:   2,219 | 1.38295 @ 2026-09-04T16:51:51
+[COLETOR] Ticks:   2,220 | 1.38295 @ 2026-09-04T16:51:52
+[COLETOR] Ticks:   2,221 | 1.38295 @ 2026-09-04T16:51:53
+[COLETOR] Ticks:   2,222 | 1.38295 @ 2026-09-04T16:51:54
+[COLETOR] Ticks:   2,223 | 1.38295 @ 2026-09-04T16:51:55
+[COLETOR] Ticks:   2,224 | 1.38295 @ 2026-09-04T16:51:56
+[COLETOR] Ticks:   2,225 | 1.38295 @ 2026-09-04T16:51:57
+[COLETOR] Ticks:   2,226 | 1.38295 @ 2026-09-04T16:51:58
+[COLETOR] Ticks:   2,227 | 1.38295 @ 2026-09-04T16:51:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Three Black Crows (força: 0.85)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   2,228 | 1.38295 @ 2026-09-04T16:52:00
+[COLETOR] Ticks:   2,229 | 1.38295 @ 2026-09-04T16:52:01
+[COLETOR] Ticks:   2,230 | 1.38296 @ 2026-09-04T16:52:02
+[COLETOR] Ticks:   2,231 | 1.38296 @ 2026-09-04T16:52:03
+[COLETOR] Ticks:   2,232 | 1.38296 @ 2026-09-04T16:52:04
+[COLETOR] Ticks:   2,233 | 1.38296 @ 2026-09-04T16:52:05
+[COLETOR] Ticks:   2,234 | 1.38296 @ 2026-09-04T16:52:06
+[COLETOR] Ticks:   2,235 | 1.38296 @ 2026-09-04T16:52:07
+[COLETOR] Ticks:   2,236 | 1.38296 @ 2026-09-04T16:52:08
+[COLETOR] Ticks:   2,237 | 1.38296 @ 2026-09-04T16:52:09
+[COLETOR] Ticks:   2,238 | 1.38297 @ 2026-09-04T16:52:10
+[COLETOR] Ticks:   2,239 | 1.38297 @ 2026-09-04T16:52:11
+[COLETOR] Ticks:   2,240 | 1.38296 @ 2026-09-04T16:52:12
+[COLETOR] Ticks:   2,241 | 1.38297 @ 2026-09-04T16:52:13
+[COLETOR] Ticks:   2,242 | 1.38297 @ 2026-09-04T16:52:14
+[COLETOR] Ticks:   2,243 | 1.38296 @ 2026-09-04T16:52:15
+[COLETOR] Ticks:   2,244 | 1.38296 @ 2026-09-04T16:52:16
+[COLETOR] Ticks:   2,245 | 1.38296 @ 2026-09-04T16:52:17
+[COLETOR] Ticks:   2,246 | 1.38297 @ 2026-09-04T16:52:18
+[COLETOR] Ticks:   2,247 | 1.38296 @ 2026-09-04T16:52:19
+[COLETOR] Ticks:   2,248 | 1.38296 @ 2026-09-04T16:52:20
+[COLETOR] Ticks:   2,249 | 1.38296 @ 2026-09-04T16:52:21
+[COLETOR] Ticks:   2,250 | 1.38295 @ 2026-09-04T16:52:22
+[COLETOR] Ticks:   2,251 | 1.38295 @ 2026-09-04T16:52:23
+[COLETOR] Ticks:   2,252 | 1.38295 @ 2026-09-04T16:52:24
+[COLETOR] Ticks:   2,253 | 1.38295 @ 2026-09-04T16:52:25
+[COLETOR] Ticks:   2,254 | 1.38295 @ 2026-09-04T16:52:26
+[COLETOR] Ticks:   2,255 | 1.38295 @ 2026-09-04T16:52:27
+[COLETOR] Ticks:   2,256 | 1.38295 @ 2026-09-04T16:52:28
+[COLETOR] Ticks:   2,257 | 1.38295 @ 2026-09-04T16:52:29
+[COLETOR] Ticks:   2,258 | 1.38294 @ 2026-09-04T16:52:30
+[COLETOR] Ticks:   2,259 | 1.38295 @ 2026-09-04T16:52:31
+[COLETOR] Ticks:   2,260 | 1.38295 @ 2026-09-04T16:52:32
+[COLETOR] Ticks:   2,261 | 1.38295 @ 2026-09-04T16:52:33
+[COLETOR] Ticks:   2,262 | 1.38288 @ 2026-09-04T16:52:34
+[COLETOR] Ticks:   2,263 | 1.38288 @ 2026-09-04T16:52:35
+[COLETOR] Ticks:   2,264 | 1.38287 @ 2026-09-04T16:52:36
+[COLETOR] Ticks:   2,265 | 1.38287 @ 2026-09-04T16:52:37
+[COLETOR] Ticks:   2,266 | 1.38287 @ 2026-09-04T16:52:38
+[COLETOR] Ticks:   2,267 | 1.38288 @ 2026-09-04T16:52:39
+[COLETOR] Ticks:   2,268 | 1.38287 @ 2026-09-04T16:52:40
+[COLETOR] Ticks:   2,269 | 1.38288 @ 2026-09-04T16:52:41
+[COLETOR] Ticks:   2,270 | 1.38287 @ 2026-09-04T16:52:42
+[COLETOR] Ticks:   2,271 | 1.38288 @ 2026-09-04T16:52:43
+[COLETOR] Ticks:   2,272 | 1.38287 @ 2026-09-04T16:52:44
+[COLETOR] Ticks:   2,273 | 1.38287 @ 2026-09-04T16:52:45
+[COLETOR] Ticks:   2,274 | 1.38287 @ 2026-09-04T16:52:46
+[COLETOR] Ticks:   2,275 | 1.38288 @ 2026-09-04T16:52:47
+[COLETOR] Ticks:   2,276 | 1.38288 @ 2026-09-04T16:52:48
+[COLETOR] Ticks:   2,277 | 1.38288 @ 2026-09-04T16:52:49
+[COLETOR] Ticks:   2,278 | 1.38288 @ 2026-09-04T16:52:50
+[COLETOR] Ticks:   2,279 | 1.38288 @ 2026-09-04T16:52:51
+[COLETOR] Ticks:   2,280 | 1.38288 @ 2026-09-04T16:52:52
+[COLETOR] Ticks:   2,281 | 1.38289 @ 2026-09-04T16:52:53
+[COLETOR] Ticks:   2,282 | 1.38288 @ 2026-09-04T16:52:54
+[COLETOR] Ticks:   2,283 | 1.38288 @ 2026-09-04T16:52:55
+[COLETOR] Ticks:   2,284 | 1.38289 @ 2026-09-04T16:52:56
+[COLETOR] Ticks:   2,285 | 1.38288 @ 2026-09-04T16:52:57
+[COLETOR] Ticks:   2,286 | 1.38288 @ 2026-09-04T16:52:58
+[COLETOR] Ticks:   2,287 | 1.38288 @ 2026-09-04T16:52:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Shooting Star (força: 1.00)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   2,288 | 1.38288 @ 2026-09-04T16:53:00
+[COLETOR] Ticks:   2,289 | 1.38287 @ 2026-09-04T16:53:01
+[COLETOR] Ticks:   2,290 | 1.38287 @ 2026-09-04T16:53:02
+[COLETOR] Ticks:   2,291 | 1.38287 @ 2026-09-04T16:53:03
+[COLETOR] Ticks:   2,292 | 1.38288 @ 2026-09-04T16:53:04
+[COLETOR] Ticks:   2,293 | 1.38287 @ 2026-09-04T16:53:05
+[COLETOR] Ticks:   2,294 | 1.38287 @ 2026-09-04T16:53:06
+[COLETOR] Ticks:   2,295 | 1.38287 @ 2026-09-04T16:53:07
+[COLETOR] Ticks:   2,296 | 1.38286 @ 2026-09-04T16:53:08
+[COLETOR] Ticks:   2,297 | 1.38286 @ 2026-09-04T16:53:09
+[COLETOR] Ticks:   2,298 | 1.38286 @ 2026-09-04T16:53:10
+[COLETOR] Ticks:   2,299 | 1.38286 @ 2026-09-04T16:53:11
+[COLETOR] Ticks:   2,300 | 1.38286 @ 2026-09-04T16:53:12
+[COLETOR] Ticks:   2,301 | 1.38287 @ 2026-09-04T16:53:13
+[COLETOR] Ticks:   2,302 | 1.38287 @ 2026-09-04T16:53:14
+[COLETOR] Ticks:   2,303 | 1.38287 @ 2026-09-04T16:53:15
+[COLETOR] Ticks:   2,304 | 1.38287 @ 2026-09-04T16:53:16
+[COLETOR] Ticks:   2,305 | 1.38287 @ 2026-09-04T16:53:17
+[COLETOR] Ticks:   2,306 | 1.38287 @ 2026-09-04T16:53:18
+[COLETOR] Ticks:   2,307 | 1.38286 @ 2026-09-04T16:53:19
+[COLETOR] Ticks:   2,308 | 1.38287 @ 2026-09-04T16:53:20
+[COLETOR] Ticks:   2,309 | 1.38287 @ 2026-09-04T16:53:21
+[COLETOR] Ticks:   2,310 | 1.38288 @ 2026-09-04T16:53:22
+[COLETOR] Ticks:   2,311 | 1.38288 @ 2026-09-04T16:53:23
+[COLETOR] Ticks:   2,312 | 1.38288 @ 2026-09-04T16:53:24
+[COLETOR] Ticks:   2,313 | 1.38288 @ 2026-09-04T16:53:25
+[COLETOR] Ticks:   2,314 | 1.38286 @ 2026-09-04T16:53:26
+[COLETOR] Ticks:   2,315 | 1.38285 @ 2026-09-04T16:53:27
+[COLETOR] Ticks:   2,316 | 1.38285 @ 2026-09-04T16:53:28
+[COLETOR] Ticks:   2,317 | 1.38285 @ 2026-09-04T16:53:29
+[COLETOR] Ticks:   2,318 | 1.38285 @ 2026-09-04T16:53:30
+[COLETOR] Ticks:   2,319 | 1.38285 @ 2026-09-04T16:53:31
+[COLETOR] Ticks:   2,320 | 1.38286 @ 2026-09-04T16:53:32
+[COLETOR] Ticks:   2,321 | 1.38288 @ 2026-09-04T16:53:33
+[COLETOR] Ticks:   2,322 | 1.38288 @ 2026-09-04T16:53:34
+[COLETOR] Ticks:   2,323 | 1.38287 @ 2026-09-04T16:53:35
+[COLETOR] Ticks:   2,324 | 1.38287 @ 2026-09-04T16:53:36
+[COLETOR] Ticks:   2,325 | 1.38287 @ 2026-09-04T16:53:37
+[COLETOR] Ticks:   2,326 | 1.38287 @ 2026-09-04T16:53:38
+[COLETOR] Ticks:   2,327 | 1.38287 @ 2026-09-04T16:53:39
+[COLETOR] Ticks:   2,328 | 1.38287 @ 2026-09-04T16:53:40
+[COLETOR] Ticks:   2,329 | 1.38287 @ 2026-09-04T16:53:41
+[COLETOR] Ticks:   2,330 | 1.38287 @ 2026-09-04T16:53:42
+[COLETOR] Ticks:   2,331 | 1.38287 @ 2026-09-04T16:53:43
+[COLETOR] Ticks:   2,332 | 1.38287 @ 2026-09-04T16:53:44
+[COLETOR] Ticks:   2,333 | 1.38287 @ 2026-09-04T16:53:45
+[COLETOR] Ticks:   2,334 | 1.38287 @ 2026-09-04T16:53:46
+[COLETOR] Ticks:   2,335 | 1.38288 @ 2026-09-04T16:53:47
+[COLETOR] Ticks:   2,336 | 1.38287 @ 2026-09-04T16:53:48
+[COLETOR] Ticks:   2,337 | 1.38287 @ 2026-09-04T16:53:49
+[COLETOR] Ticks:   2,338 | 1.38287 @ 2026-09-04T16:53:50
+[COLETOR] Ticks:   2,339 | 1.38288 @ 2026-09-04T16:53:51
+[COLETOR] Ticks:   2,340 | 1.38288 @ 2026-09-04T16:53:52
+[COLETOR] Ticks:   2,341 | 1.38287 @ 2026-09-04T16:53:53
+[COLETOR] Ticks:   2,342 | 1.38288 @ 2026-09-04T16:53:54
+[COLETOR] Ticks:   2,343 | 1.38288 @ 2026-09-04T16:53:55
+[COLETOR] Ticks:   2,344 | 1.38288 @ 2026-09-04T16:53:56
+[COLETOR] Ticks:   2,345 | 1.38288 @ 2026-09-04T16:53:57
+[COLETOR] Ticks:   2,346 | 1.38287 @ 2026-09-04T16:53:58
+[COLETOR] Ticks:   2,347 | 1.38287 @ 2026-09-04T16:53:59
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Shooting Star (força: 1.00)
+  Preço: 1.3829 | Contexto: Demand Zone + Supply Zone + Suporte próximo + FVG Bullish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[COLETOR] Ticks:   2,348 | 1.38287 @ 2026-09-04T16:54:00
+[COLETOR] Ticks:   2,349 | 1.38287 @ 2026-09-04T16:54:01
+[COLETOR] Ticks:   2,350 | 1.38287 @ 2026-09-04T16:54:02
+[COLETOR] Ticks:   2,351 | 1.38288 @ 2026-09-04T16:54:03
+[COLETOR] Ticks:   2,352 | 1.38287 @ 2026-09-04T16:54:04
+[COLETOR] Ticks:   2,353 | 1.38287 @ 2026-09-04T16:54:05
+[COLETOR] Ticks:   2,354 | 1.38288 @ 2026-09-04T16:54:06
+[COLETOR] Ticks:   2,355 | 1.38289 @ 2026-09-04T16:54:07
+[COLETOR] Ticks:   2,356 | 1.38288 @ 2026-09-04T16:54:08
+[COLETOR] Ticks:   2,357 | 1.38289 @ 2026-09-04T16:54:09
+[COLETOR] Ticks:   2,358 | 1.38289 @ 2026-09-04T16:54:10
+[COLETOR] Ticks:   2,359 | 1.38288 @ 2026-09-04T16:54:11
+[COLETOR] Ticks:   2,360 | 1.38288 @ 2026-09-04T16:54:12
+[COLETOR] Ticks:   2,361 | 1.38288 @ 2026-09-04T16:54:13
+[COLETOR] Ticks:   2,362 | 1.38288 @ 2026-09-04T16:54:14
+[COLETOR] Ticks:   2,363 | 1.38287 @ 2026-09-04T16:54:15
+[COLETOR] Ticks:   2,364 | 1.38288 @ 2026-09-04T16:54:16
+[COLETOR] Ticks:   2,365 | 1.38289 @ 2026-09-04T16:54:17
+[COLETOR] Ticks:   2,366 | 1.38289 @ 2026-09-04T16:54:18
+[COLETOR] Ticks:   2,367 | 1.38288 @ 2026-09-04T16:54:19
+[COLETOR] Ticks:   2,368 | 1.38288 @ 2026-09-04T16:54:20
+[COLETOR] Ticks:   2,369 | 1.38288 @ 2026-09-04T16:54:21
+[COLETOR] Ticks:   2,370 | 1.38289 @ 2026-09-04T16:54:22
+[COLETOR] Ticks:   2,371 | 1.38289 @ 2026-09-04T16:54:23
+[COLETOR] Ticks:   2,372 | 1.38288 @ 2026-09-04T16:54:24
+[COLETOR] Ticks:   2,373 | 1.38289 @ 2026-09-04T16:54:25
+[COLETOR] Ticks:   2,374 | 1.38288 @ 2026-09-04T16:54:26
+[COLETOR] Ticks:   2,375 | 1.38288 @ 2026-09-04T16:54:27
+[COLETOR] Ticks:   2,376 | 1.38288 @ 2026-09-04T16:54:28
+[COLETOR] Ticks:   2,377 | 1.38288 @ 2026-09-04T16:54:29
+[COLETOR] Ticks:   2,378 | 1.38288 @ 2026-09-04T16:54:30
+[COLETOR] Ticks:   2,379 | 1.38288 @ 2026-09-04T16:54:31
+[COLETOR] Ticks:   2,380 | 1.38288 @ 2026-09-04T16:54:32
+[COLETOR] Ticks:   2,381 | 1.38288 @ 2026-09-04T16:54:33
+[COLETOR] Ticks:   2,382 | 1.38288 @ 2026-09-04T16:54:34
+[COLETOR] Ticks:   2,383 | 1.38288 @ 2026-09-04T16:54:35
+[COLETOR] Ticks:   2,384 | 1.38288 @ 2026-09-04T16:54:36/home/suporte-01/Repositorios/StanDeriv/.venv/lib/python3.14/site-packages/joblib/externals/loky/backend/resource_tracker.py:444: UserWarning: resource_tracker: There appear to be 6 leaked semlock objects to clean up at shutdown: {'/loky-55858-fr5hl4bc': 1, '/loky-55858-oxpv2bs8': 1, '/loky-55858-x2opl6q3': 1, '/loky-55858-8f2dq6wl': 1, '/loky-55858-_u2bnqla': 1, '/loky-55858-l286ohty': 1}
+  warnings.warn(
+/home/suporte-01/Repositorios/StanDeriv/.venv/lib/python3.14/site-packages/joblib/externals/loky/backend/resource_tracker.py:444: UserWarning: resource_tracker: There appear to be 2 leaked folder objects to clean up at shutdown: {'/dev/shm/joblib_memmapping_folder_55858_4e27d7b3ef3549769bdf79cdb2e09d99_99a018ccfa4e4cf1b0e23249237d3482': 1, '/dev/shm/joblib_memmapping_folder_55858_5c9e7157a36b43168bbeb30524e18b28_dfdea5398418452f9148144c7e1ec684': 1}
+  warnings.warn(
