@@ -10,6 +10,8 @@ serviceAccountKey.json
 ticks.csv
 dataset.csv
 operacoes_log.csv
+backtest_reports/
+backtest_results.csv
 
 # ── Python ──────────────────────────────────────────────────────
 __pycache__/

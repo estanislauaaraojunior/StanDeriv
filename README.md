@@ -29,11 +29,13 @@ Bot de opções binárias para índices sintéticos da plataforma Deriv, com an�
 │ dashboard/       │
 │ (Flask + HTML/JS)│
 └──────────────────┘
+
+ticks.csv ──▶ backtest.py ──▶ backtest_reports/ (JSON + CSV)
 ```
 
 ## Requisitos
 
-- Python 3.10+
+- Python 3.11+
 - Conta na Deriv (demo ou real) com token de API
 
 ### Instalação
@@ -89,6 +91,39 @@ python bot.py
 python collector.py
 ```
 
+### Backtesting offline
+
+O backtester não se conecta à Deriv nem envia ordens. Por padrão, ele avalia
+somente a estratégia técnica e usa duração fixa, evitando usar inadvertidamente
+um modelo treinado no mesmo período analisado:
+
+```bash
+python backtest.py \
+  --input ticks.csv \
+  --symbol R_100 \
+  --balance 1000 \
+  --payout 0.85 \
+  --duration 15 \
+  --output-dir backtest_reports
+```
+
+`--payout 0.85` significa lucro líquido de 85% do stake quando o contrato vence.
+Custos opcionais podem ser simulados com `--cost-rate` e `--fixed-cost`. A saída
+contém `backtest_report.json`, com configuração, fingerprints e métricas
+comparáveis, e `backtest_trades.csv`, com cada contrato simulado.
+
+Para avaliar o ensemble ou o modelo de duração:
+
+```bash
+python backtest.py --with-ai --dynamic-duration --input ticks_ood.csv
+```
+
+Use essas opções apenas quando o arquivo representar um período realmente fora
+da amostra, não utilizado no treinamento dos modelos. O motor usa somente dados
+disponíveis até o fechamento da vela, entra no primeiro tick seguinte, impede
+contratos simultâneos e aplica stake percentual, stops diários e pausas por
+perdas sobre o relógio histórico.
+
 ### Dashboard
 
 ```bash
@@ -113,6 +148,7 @@ cd dashboard && bash start.sh
 | `pipeline.py` | Orquestrador: coleta, trend scanning, treino automático, execução e re-treino periódico |
 | `transformer_model.py` | Implementação do Temporal Fusion Transformer com Variable Selection Network (PyTorch) |
 | `collector.py` | Coleta contínua de ticks via WebSocket com filtro anti-spike |
+| `backtest.py` | Simulação offline de sinais, duração, payout, custos, risco e drawdown, com relatórios JSON/CSV |
 | `dashboard/` | Interface web com Flask (server.py), autenticação por token e frontend (HTML/JS/CSS) |
 
 ## Price Action (11 Features)

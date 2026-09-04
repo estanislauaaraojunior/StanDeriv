@@ -64,7 +64,14 @@ def get_adaptive_adx_min(adx_history: list) -> float:
 #  Interface pública
 # ─────────────────────────────────────────────────────────────────
 
-def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None, candle_alerts: list = None) -> SignalResult:
+def get_signal(
+    prices: list,
+    adx_min: float = ADX_MIN,
+    adx_history: list = None,
+    candle_alerts: list = None,
+    use_ai_model: Optional[bool] = None,
+    evaluation_time: Optional[float] = None,
+) -> SignalResult:
     """
     Avalia o estado do mercado e retorna ("BUY" | "SELL" | None, indicadores).
 
@@ -72,6 +79,11 @@ def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None,
         prices:      lista de floats com histórico de preços
         adx_min:     limiar mínimo de ADX (P10: pode ser adaptativo)
         adx_history: histórico recente de ADX para filtro de tendência crescente
+        use_ai_model: sobrescreve USE_AI_MODEL quando informado. O backtester usa
+                      False por padrão para evitar avaliar um modelo nos mesmos
+                      dados usados em seu treinamento.
+        evaluation_time: timestamp de referência para filtros temporais. Quando
+                         omitido, usa o relógio atual (comportamento ao vivo).
 
     O dict `indicadores` está sempre populado quando há dados suficientes,
     mesmo quando o sinal é None — útil para exibição e logging.
@@ -128,7 +140,20 @@ def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None,
 
     # ── P14: Score ponderado (opcional) ────────────────────
     if USE_WEIGHTED_SIGNAL:
-        return _weighted_signal(ema9, ema21, macd_hist, mom, adx_val, rsi_val, last_price, indicators, prices, candle_alerts)
+        return _weighted_signal(
+            ema9,
+            ema21,
+            macd_hist,
+            mom,
+            adx_val,
+            rsi_val,
+            last_price,
+            indicators,
+            prices,
+            candle_alerts,
+            use_ai_model,
+            evaluation_time,
+        )
 
     # ── Sinal de COMPRA (AND rígido) ─────────────────────────────────────────
     if (
@@ -138,7 +163,14 @@ def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None,
         and mom > 0            # últimos ticks subindo
         and rsi_val > RSI_OVERSOLD   # não sobrevendido contra
     ):
-        return _apply_ai_filter("BUY", prices, indicators, candle_alerts)
+        return _apply_ai_filter(
+            "BUY",
+            prices,
+            indicators,
+            candle_alerts,
+            use_ai_model,
+            evaluation_time,
+        )
 
     # ── Sinal de VENDA (AND rígido) ──────────────────────────────────────────
     if (
@@ -148,7 +180,14 @@ def get_signal(prices: list, adx_min: float = ADX_MIN, adx_history: list = None,
         and mom < 0            # últimos ticks caindo
         and rsi_val < RSI_OVERBOUGHT  # não sobrecomprado contra
     ):
-        return _apply_ai_filter("SELL", prices, indicators, candle_alerts)
+        return _apply_ai_filter(
+            "SELL",
+            prices,
+            indicators,
+            candle_alerts,
+            use_ai_model,
+            evaluation_time,
+        )
 
     # Sem sinal válido (ex: cruzamento recente, aguardar confirmação)
     return None, indicators
@@ -162,6 +201,8 @@ def _weighted_signal(
     ema9: float, ema21: float, macd_hist: float, mom: float,
     adx_val: float, rsi_val: float, price: float, indicators: dict, prices: list,
     candle_alerts: list = None,
+    use_ai_model: Optional[bool] = None,
+    evaluation_time: Optional[float] = None,
 ) -> SignalResult:
     """
     Gera sinal via score contínuo ponderado (USE_WEIGHTED_SIGNAL=True).
@@ -196,9 +237,23 @@ def _weighted_signal(
     indicators["tech_score"] = round(composite, 4)
 
     if composite >= SIGNAL_SCORE_MIN:
-        return _apply_ai_filter("BUY", prices, indicators, candle_alerts)
+        return _apply_ai_filter(
+            "BUY",
+            prices,
+            indicators,
+            candle_alerts,
+            use_ai_model,
+            evaluation_time,
+        )
     if composite <= -SIGNAL_SCORE_MIN:
-        return _apply_ai_filter("SELL", prices, indicators, candle_alerts)
+        return _apply_ai_filter(
+            "SELL",
+            prices,
+            indicators,
+            candle_alerts,
+            use_ai_model,
+            evaluation_time,
+        )
     return None, indicators
 
 
@@ -206,7 +261,11 @@ def _weighted_signal(
 #  Filtro de padrões de vela (soft conflict filter)
 # ─────────────────────────────────────────────────────────────────
 
-def _candle_pattern_filter(signal: str, candle_alerts: list) -> str | None:
+def _candle_pattern_filter(
+    signal: str,
+    candle_alerts: list,
+    evaluation_time: Optional[float] = None,
+) -> str | None:
     """
     Verifica se o padrão de vela mais recente contradiz o sinal técnico.
 
@@ -214,7 +273,7 @@ def _candle_pattern_filter(signal: str, candle_alerts: list) -> str | None:
     Lógica suave: só bloqueia conflito direto — BUY+bearish ou SELL+bullish.
     Padrões neutros e padrões alinhados com o sinal não bloqueiam.
     """
-    now = time.time()
+    now = time.time() if evaluation_time is None else evaluation_time
     for alert in reversed(list(candle_alerts)):
         if now - alert.get("timestamp", 0) > CANDLE_PATTERN_MAX_AGE_SEC:
             continue  # padrão expirado
@@ -240,13 +299,19 @@ def _apply_ai_filter(
     prices: list,
     indicators: dict,
     candle_alerts: list = None,
+    use_ai_model: Optional[bool] = None,
+    evaluation_time: Optional[float] = None,
 ) -> SignalResult:
     """
     Pondera o sinal dos indicadores técnicos com o modelo de IA e filtro PA.
     """
     # -- Filtro de padrões de vela: bloqueia conflito direto padrão vs. sinal --
     if CANDLE_PATTERN_FILTER and candle_alerts:
-        block_reason = _candle_pattern_filter(signal, candle_alerts)
+        block_reason = _candle_pattern_filter(
+            signal,
+            candle_alerts,
+            evaluation_time,
+        )
         if block_reason:
             indicators["candle_pattern_block"] = block_reason
             print(f"[VELA] ⛔ Sinal {signal} bloqueado: {block_reason}")
@@ -266,7 +331,8 @@ def _apply_ai_filter(
         if signal == "SELL" and pa["pa_sr_position"] < -0.8 and pa["pa_bos_strength"] >= 0:
             return None, indicators
 
-    if not USE_AI_MODEL:
+    ai_enabled = USE_AI_MODEL if use_ai_model is None else use_ai_model
+    if not ai_enabled:
         indicators["ai_confidence"] = None
         indicators["ai_score"]      = None
         return signal, indicators
