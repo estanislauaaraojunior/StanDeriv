@@ -1,265 +1,215 @@
-"""
-tests/test_executor_trade_flow.py — Testes do fluxo de entrada e fechamento
-de operações do DerivBot (sem conexão WebSocket real).
-"""
-import os
-import sys
+"""Ordens com requisições correlacionadas e liquidação idempotente, offline."""
+import csv
 import json
 import time
-import unittest
-from unittest.mock import MagicMock, patch, call
-from collections import deque
+from unittest.mock import MagicMock
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-os.environ.setdefault("DERIV_TOKEN", "test_token")
-
+import pytest
+import config
+import executor
 from executor import DerivBot
 from risk_manager import RiskManager
 
 
-# ─────────────────────────────────────────────────────────────────
-#  Helpers
-# ─────────────────────────────────────────────────────────────────
-
-def _make_bot() -> DerivBot:
-    rm = RiskManager(initial_balance=1000.0)
-    bot = DerivBot(risk_manager=rm, demo=True)
-    return bot
-
-
-def _proposal_msg(proposal_id: str = "prop_001") -> dict:
-    return {
-        "msg_type": "proposal",
-        "proposal": {"id": proposal_id},
-    }
+@pytest.fixture
+def bot():
+    risk = RiskManager(1000.)
+    risk.bind_account('test-account', 1000.)
+    b = DerivBot(risk)
+    b._auth_verified = True
+    b._last_tick_epoch = int(time.time())
+    b._last_tick_price = 100.
+    return b
 
 
-def _buy_msg(contract_id: int = 12345) -> dict:
-    return {
-        "msg_type": "buy",
-        "buy": {"contract_id": contract_id},
-    }
+def proposal(bot, ws, direction = 'BUY'):
+    bot._send_proposal(ws, direction, {'win_probability': .8, 'ai_confidence': .8, 'model_id': 'offline'})
+    return bot._proposal_req_id
 
 
-def _contract_update_msg(contract_id: int = 12345, profit: float = 1.50, is_sold: bool = True) -> dict:
-    return {
-        "msg_type": "proposal_open_contract",
-        "proposal_open_contract": {
-            "contract_id": contract_id,
-            "is_sold": 1 if is_sold else 0,
-            "profit": profit,
-        },
-    }
+def buy(bot, ws, direction = 'BUY'):
+    rid = proposal(bot, ws, direction)
+    bot._handle_proposal(ws, {'id': 'proposal-test', 'ask_price': '10', 'payout': '18.5'}, req_id = rid)
+    bot._handle_buy(ws, {'contract_id': 12345}, req_id = bot._buy_req_id)
 
 
-# ─────────────────────────────────────────────────────────────────
-#  Testes — Envio de proposal (entrada)
-# ─────────────────────────────────────────────────────────────────
-
-class TestSendProposal(unittest.TestCase):
-    """Verifica que _send_proposal monta e envia a proposal corretamente."""
-
-    def setUp(self):
-        self.bot = _make_bot()
-        self.ws = MagicMock()
-        # Preenche candles mínimos
-        self.bot._candle_closes = deque([100.0 + i * 0.01 for i in range(100)], maxlen=500)
-
-    @patch("ai_predictor.predict_duration", return_value=5)
-    def test_proposal_enviada_para_buy(self, _mock_dur):
-        self.bot._send_proposal(self.ws, "BUY", {"adx": 30.0, "rsi": 60.0})
-
-        self.assertTrue(self.ws.send.called, "ws.send não foi chamado após BUY")
-        payload = json.loads(self.ws.send.call_args[0][0])
-        self.assertEqual(payload["contract_type"], "CALL")
-        self.assertEqual(payload["proposal"], 1)
-        self.assertEqual(self.bot._pending_direction, "BUY")
-
-    @patch("ai_predictor.predict_duration", return_value=5)
-    def test_proposal_enviada_para_sell(self, _mock_dur):
-        self.bot._send_proposal(self.ws, "SELL", {"adx": 30.0, "rsi": 40.0})
-
-        payload = json.loads(self.ws.send.call_args[0][0])
-        self.assertEqual(payload["contract_type"], "PUT")
-        self.assertEqual(self.bot._pending_direction, "SELL")
-
-    @patch("ai_predictor.predict_duration", return_value=5)
-    def test_pending_timestamp_marcado(self, _mock_dur):
-        before = time.time()
-        self.bot._send_proposal(self.ws, "BUY", {})
-        self.assertGreaterEqual(self.bot._pending_timestamp, before)
-
-# ─────────────────────────────────────────────────────────────────
-#  Testes — Confirmação de compra (_handle_buy)
-# ─────────────────────────────────────────────────────────────────
-
-class TestHandleBuy(unittest.TestCase):
-    """Verifica que _handle_buy registra o contrato aberto."""
-
-    def setUp(self):
-        self.bot = _make_bot()
-        self.ws = MagicMock()
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    def test_contrato_registrado(self, _mock_state):
-        # _in_trade é marcado em _handle_proposal; aqui verificamos apenas o contract_id e timestamps
-        self.bot._handle_buy(self.ws, {"contract_id": 99999})
-
-        self.assertEqual(self.bot._open_contract_id, "99999")
-        self.assertGreater(self.bot._buy_timestamp, 0)
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    def test_subscribe_enviado_apos_buy(self, _mock_state):
-        self.bot._handle_buy(self.ws, {"contract_id": 11111})
-
-        calls_json = [json.loads(c[0][0]) for c in self.ws.send.call_args_list]
-        subscribe_calls = [p for p in calls_json if "proposal_open_contract" in p]
-        self.assertTrue(subscribe_calls, "Subscrição do contrato não foi enviada")
-        self.assertEqual(subscribe_calls[0]["contract_id"], 11111)
-        self.assertEqual(subscribe_calls[0]["subscribe"], 1)
+@pytest.mark.parametrize('direction,contract_type', [('BUY', 'CALL'), ('SELL', 'PUT')])
+def test_request_uses_same_symbol_duration_and_direction(bot, direction, contract_type):
+    ws = MagicMock()
+    proposal(bot, ws, direction)
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent['contract_type'] == contract_type
+    assert sent['symbol'] == bot.symbol
+    assert sent['duration'] == config.DURATION == 15
+    assert sent['duration_unit'] == config.DURATION_UNIT
+    assert bot._in_trade and bot._phase == 'proposal'
+    assert sent['req_id'] == bot._proposal_req_id
 
 
-# ─────────────────────────────────────────────────────────────────
-#  Testes — Fechamento de contrato (_handle_contract_update)
-# ─────────────────────────────────────────────────────────────────
-
-class TestHandleContractUpdate(unittest.TestCase):
-    """Verifica que _handle_contract_update liquida o contrato corretamente."""
-
-    def _open_trade(self, bot: DerivBot, contract_id: str = "12345") -> None:
-        """Simula estado de trade aberto sem passar pelo WebSocket."""
-        bot._in_trade = True
-        bot._open_contract_id = contract_id
-        bot._pending_direction = "BUY"
-        bot._pending_stake = 10.0
-        bot._pending_duration = 5
-        bot._pending_indicators = {}
-        bot._buy_timestamp = time.time()
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    def test_trade_fechado_com_lucro(self, _mock_state):
-        bot = _make_bot()
-        self._open_trade(bot)
-
-        msg = _contract_update_msg(contract_id=12345, profit=2.5)
-        bot._handle_contract_update(msg["proposal_open_contract"])
-
-        self.assertFalse(bot._in_trade)
-        self.assertIsNone(bot._open_contract_id)
-        self.assertEqual(bot._buy_timestamp, 0.0)
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    def test_trade_fechado_com_prejuizo(self, _mock_state):
-        bot = _make_bot()
-        self._open_trade(bot)
-
-        msg = _contract_update_msg(contract_id=12345, profit=-10.0)
-        bot._handle_contract_update(msg["proposal_open_contract"])
-
-        self.assertFalse(bot._in_trade)
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    def test_atualiza_risk_manager(self, _mock_state):
-        bot = _make_bot()
-        self._open_trade(bot)
-        bot.risk_manager.record_result = MagicMock()
-
-        msg = _contract_update_msg(contract_id=12345, profit=3.0)
-        bot._handle_contract_update(msg["proposal_open_contract"])
-
-        bot.risk_manager.record_result.assert_called_once()
-        kwargs = bot.risk_manager.record_result.call_args[1]
-        self.assertEqual(kwargs["profit"], 3.0)
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    def test_ignora_update_de_outro_contrato(self, _mock_state):
-        """Atualizações de contratos diferentes do aberto devem ser ignoradas."""
-        bot = _make_bot()
-        self._open_trade(bot, contract_id="12345")
-        bot.risk_manager.record_result = MagicMock()
-
-        outro_msg = _contract_update_msg(contract_id=99999, profit=5.0)
-        bot._handle_contract_update(outro_msg["proposal_open_contract"])
-
-        bot.risk_manager.record_result.assert_not_called()
-        self.assertTrue(bot._in_trade, "Trade foi fechado por contrato errado")
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    def test_contrato_aberto_nao_vendido_ignorado(self, _mock_state):
-        """Se is_sold=0, contrato ainda está aberto — não deve liquidar."""
-        bot = _make_bot()
-        self._open_trade(bot)
-        bot.risk_manager.record_result = MagicMock()
-
-        msg = _contract_update_msg(contract_id=12345, profit=0.0, is_sold=False)
-        bot._handle_contract_update(msg["proposal_open_contract"])
-
-        self.assertTrue(bot._in_trade)
-        bot.risk_manager.record_result.assert_not_called()
+def test_no_second_proposal_while_first_pending(bot):
+    ws = MagicMock()
+    proposal(bot, ws)
+    proposal(bot, ws)
+    assert ws.send.call_count == 1
 
 
-# ─────────────────────────────────────────────────────────────────
-#  Testes — Fluxo completo (proposta → buy → fechamento)
-# ─────────────────────────────────────────────────────────────────
-
-class TestFullTradeFlow(unittest.TestCase):
-    """Simula o fluxo completo de uma operação sem WebSocket real."""
-
-    def setUp(self):
-        self.bot = _make_bot()
-        self.ws = MagicMock()
-        self.bot._candle_closes = deque([100.0 + i * 0.01 for i in range(100)], maxlen=500)
-        self.bot._last_tick_price = 100.5
-        self.bot._last_tick_epoch = int(time.time())
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    @patch("ai_predictor.predict_duration", return_value=5)
-    def test_fluxo_buy_completo(self, _mock_dur, _mock_state):
-        # 1) Sinal → proposal
-        self.bot._send_proposal(self.ws, "BUY", {"adx": 28.0, "rsi": 62.0})
-        self.assertEqual(self.bot._pending_direction, "BUY")
-
-        # 2) proposal confirmada → _handle_proposal → ws.send(buy)
-        self.bot._handle_proposal(self.ws, {"id": "prop_x"})
-        buy_calls = [json.loads(c[0][0]) for c in self.ws.send.call_args_list]
-        buy_req = next((p for p in buy_calls if "buy" in p), None)
-        self.assertIsNotNone(buy_req, "Mensagem de buy não enviada")
-
-        # 3) API confirma compra
-        self.bot._handle_buy(self.ws, {"contract_id": 555})
-        self.assertTrue(self.bot._in_trade)
-        self.assertEqual(self.bot._open_contract_id, "555")
-
-        # 4) Contrato fecha com lucro
-        self.bot.risk_manager.record_result = MagicMock()
-        self.bot._handle_contract_update({
-            "contract_id": 555,
-            "is_sold": 1,
-            "profit": 4.50,
-        })
-        self.assertFalse(self.bot._in_trade)
-        self.bot.risk_manager.record_result.assert_called_once()
-
-    @patch("executor.DerivBot._set_active_contract_state")
-    @patch("ai_predictor.predict_duration", return_value=5)
-    def test_fluxo_sell_completo(self, _mock_dur, _mock_state):
-        self.bot._send_proposal(self.ws, "SELL", {"adx": 35.0, "rsi": 38.0})
-        self.assertEqual(self.bot._pending_direction, "SELL")
-
-        self.bot._handle_proposal(self.ws, {"id": "prop_y"})
-        self.bot._handle_buy(self.ws, {"contract_id": 777})
-        self.assertTrue(self.bot._in_trade)
-
-        self.bot.risk_manager.record_result = MagicMock()
-        self.bot._handle_contract_update({
-            "contract_id": 777,
-            "is_sold": 1,
-            "profit": -9.0,
-        })
-        self.assertFalse(self.bot._in_trade)
-        call_kwargs = self.bot.risk_manager.record_result.call_args[1]
-        self.assertEqual(call_kwargs["profit"], -9.0)
+@pytest.mark.parametrize('rid', [None, - 1])
+def test_unsolicited_proposal_is_ignored(bot, rid):
+    ws = MagicMock()
+    proposal(bot, ws)
+    ws.reset_mock()
+    bot._handle_proposal(ws, {'id': 'other', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
+    ws.send.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_duplicate_proposal_cannot_buy_twice(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+    ws.reset_mock()
+    p = {'id': 'p', 'ask_price': 10, 'payout': 18.5}
+    bot._handle_proposal(ws, p, req_id = rid)
+    bot._handle_proposal(ws, p, req_id = rid)
+    assert ws.send.call_count == 1
+    assert bot._phase == 'buy'
+
+
+@pytest.mark.parametrize('price,payout', [(10, 10.01), (10, None), (10, float('nan')), (11, 25), (0, 20)])
+def test_invalid_or_unprofitable_proposal_not_bought(bot, price, payout):
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+    ws.reset_mock()
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': price, 'payout': payout}, req_id = rid)
+    ws.send.assert_not_called()
+    assert not bot._in_trade
+
+
+def test_expired_proposal_is_rejected(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+    ws.reset_mock()
+    bot._pending_timestamp = time.time() - 30
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
+    ws.send.assert_not_called()
+    assert bot._phase == 'idle'
+
+
+def test_delayed_buy_response_reconciles_only_matching_request(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
+    bot._phase = 'reconciling'
+    bot._handle_buy(ws, {'contract_id': 555}, req_id = - 1)
+    assert bot._open_contract_id is None
+    bot._handle_buy(ws, {'contract_id': 12345}, req_id = bot._buy_req_id)
+    assert bot._open_contract_id == '12345'
+    assert bot._entry_price == 0  # não inventa preço de entrada a partir do tick local
+
+
+@pytest.mark.parametrize('profit,result', [(2.5, 'WIN'), (-10, 'LOSS'), (0, 'VOID')])
+def test_settlement_updates_balance_once(bot, profit, result):
+    ws = MagicMock()
+    buy(bot, ws)
+    event = {'contract_id': 12345, 'is_sold': 1, 'profit': str(profit), 'entry_spot': '100',
+           'exit_spot': '101', 'date_start': 1000, 'date_expiry': 1900}
+    bot._handle_contract_update(event)
+    bot._handle_contract_update(event)
+    assert bot.risk_manager.balance == 1000 + profit
+    assert not bot._in_trade
+    with (bot.risk_manager._path.parent / 'operations.csv').open() as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1 and rows[0]['result'] == result
+    assert rows[0]['entry_price'] == '100' and rows[0]['contract_id'] == '12345'
+
+
+@pytest.mark.parametrize('event', [
+    {'contract_id': 99999, 'is_sold': 1, 'profit': 10},
+    {'contract_id': 12345, 'is_sold': 0, 'profit': 10},
+    {'contract_id': 12345, 'is_sold': 1},
+    {'contract_id': 12345, 'is_sold': 1, 'profit': 'nan'},
+])
+def test_invalid_or_unrelated_settlement_not_counted(bot, event):
+    ws = MagicMock()
+    buy(bot, ws)
+    bot._handle_contract_update(event)
+    assert bot._in_trade and bot.risk_manager.balance == 1000
+
+
+def test_restart_restores_open_contract_and_prevents_new_order(bot):
+    ws = MagicMock()
+    buy(bot, ws)
+    restored = DerivBot(RiskManager(9000.))
+    assert restored._open_contract_id == '12345'
+    assert restored._pending_stake == 10 and restored._in_trade
+    restored._send_proposal(ws, 'BUY', {'win_probability': .9})
+    assert restored._phase == 'open'
+
+
+def test_restart_preserves_uncertain_buy(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
+    restored = DerivBot(RiskManager(1000.))
+    assert restored._in_trade and restored._phase == 'buy' and restored._open_contract_id is None
+
+
+def test_wrong_account_mode_refused(bot):
+    ws = MagicMock()
+    with pytest.raises(ValueError):
+        bot._handle_authorize(ws, {'is_virtual': 0, 'loginid': 'test', 'balance': 1000})
+    ws.close.assert_called_once()
+    assert not bot._auth_verified
+
+
+def test_history_is_merged_without_duplicates(bot):
+    candles = [dict(epoch = i * 60, open = 100 + i, high = 101 + i, low = 99 + i, close = 100 + i) for i in range(200)]
+    bot._merge_candles(candles)
+    bot._merge_candles(candles[-99:])
+    assert len(bot._candles) == 200 and len(set(bot._candle_epochs)) == 200
+    assert list(bot._candle_epochs) == sorted(bot._candle_epochs)
+
+
+def test_wrong_symbol_tick_does_not_contaminate_buffer(bot):
+    before = list(bot._candle_closes)
+    bot._handle_tick(MagicMock(), {'symbol': 'wrong', 'epoch': int(time.time()) + 1, 'quote': 50})
+    assert list(bot._candle_closes) == before and bot._last_tick_price == 100
+
+
+def test_reconnect_balance_does_not_double_count_settlement(bot):
+    ws = MagicMock()
+    buy(bot, ws)
+    # A API já inclui +8; estado local ainda aguarda a liquidação.
+    bot._verify_account('test-account', 1008.)
+    bot._handle_contract_update({'contract_id': 12345, 'is_sold': 1, 'profit': 8})
+    assert bot.risk_manager.balance == 1008
+
+
+def test_buy_error_does_not_authorize_retry(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
+    bot._on_message(ws, json.dumps({'error': {'code': 'InternalError'}, 'req_id': bot._buy_req_id}))
+    assert bot._in_trade and bot._phase == 'reconciling'
+
+
+def test_reconnection_refetches_bearer_account_balance(bot, monkeypatch):
+    import hashlib
+    bot.auth_mode = 'bearer'
+    bot.account_id = 'virtual-test'
+    bot.risk_manager.bind_account(hashlib.sha256(b'virtual-test').hexdigest(), 1000)
+    bot.risk_manager.record_result('R_100', 'BUY', 10, 15, - 10, {})
+    monkeypatch.setattr(executor.deriv_session, 'get_options_accounts', lambda ** k: [{'account_id': 'virtual-test', 'account_type': 'demo', 'balance': 990}])
+    ws = MagicMock()
+    bot._on_close(ws, 1000, '')
+    bot._on_open(ws)
+    assert bot.risk_manager.balance == 990 and bot.risk_manager._daily_profit == - 10
+
+
+def test_expired_open_contract_remains_tracked_on_tick(bot, monkeypatch):
+    ws = MagicMock()
+    buy(bot, ws)
+    bot._buy_timestamp = time.time() - 10000
+    bot._contract_poll_timer = None
+    monkeypatch.setattr(bot, '_poll_contract_result', MagicMock())
+    bot._handle_tick(ws, {'symbol': bot.symbol, 'epoch': bot._last_tick_epoch + 1, 'quote': 100})
+    assert bot._in_trade and bot._open_contract_id == '12345'
+    bot._poll_contract_result.assert_called_once_with('12345')

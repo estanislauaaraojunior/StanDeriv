@@ -178,7 +178,7 @@ def is_market_open(what: str, utc_now=None) -> bool:
 # ----- Duração -----
 # Duração de fallback utilizada quando ainda não existe
 # previsão do modelo de duração.
-DURATION = 5
+DURATION = 15
 PRIORITIZE_DURATION = 15
 
 DURATION_UNIT = "m"
@@ -188,7 +188,7 @@ CURRENCY = "USD"
 
 # ----- Duração dinâmica (escolhida pela IA) -----
 # Durações candidatas (em minutos) que o modelo de duração pode prever.
-# A IA aprende qual duração é mais adequada para cada condição de mercado.
+# Lista legada para leitura de artefatos; o contrato v2 usa DURATION fixo.
 CANDIDATE_DURATIONS = [5, 15, 30]
 
 DURATION_MODEL_PATH = "duration_model.pkl"
@@ -231,7 +231,7 @@ TARGET_NOISE_THRESHOLD = 0.0001
 
 # Horizonte do target no dataset em candles.
 # 1 = candle seguinte.
-TARGET_LOOKFORWARD = 2
+TARGET_LOOKFORWARD = DURATION * 60 // CANDLE_TIMEFRAME_SEC  # compatibilidade; target usa timestamps
 
 CANDLE_NOTIFY = True
 
@@ -312,8 +312,8 @@ TICK_SPIKE_THRESHOLD = 0.05
 
 
 # ----- Inteligência Artificial -----
-# USE_AI_MODEL = False → funcionamento apenas com indicadores
-# USE_AI_MODEL = True  → IA pondera o sinal técnico
+# USE_AI_MODEL = False → análise técnica offline; execução exige probabilidade calibrada
+# USE_AI_MODEL = True  → IA deve concordar com o sinal e estar validada
 USE_AI_MODEL = True
 
 AI_MODEL_PATH = "model.pkl"
@@ -371,20 +371,21 @@ RETRAIN_MAX_INTERVAL_SEC = 3600
 
 
 # ----- Arquivos de log -----
-TICKS_CSV = "ticks.csv"
+LEGACY_TICKS_CSV = "ticks.csv"
+TICKS_CSV = "ticks_v2.csv"
 
-OPERATIONS_LOG = "operacoes_log.csv"
+OPERATIONS_LOG = "operacoes_v2.csv"  # IDs e preços oficiais; histórico legado preservado
 
-DATASET_CSV = "dataset.csv"
+DATASET_CSV = "dataset_v2.csv"
 
 
 # ============================================================
 # Temporal Fusion Transformer (TFT)
 # ============================================================
 
-# True  → treina e usa TFT em ensemble com RF/XGB
-# False → funcionamento sem Transformer
-USE_TRANSFORMER = True
+# Configuração legada: TFT não integra o bundle v2 de contratos.
+# Reativação exige calibração e avaliação conjunta; não basta alterar esta flag.
+USE_TRANSFORMER = False  # bundles antigos não possuem contrato temporal validado
 
 TRANSFORMER_MODEL_PATH = "transformer_model.pkl"
 

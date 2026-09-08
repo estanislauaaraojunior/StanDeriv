@@ -505,3 +505,36 @@ def test_backtest_result_returns_metrics_curve_and_limited_trades(client):
     assert len(data["report"]["trades"]) == 1
     assert len(data["report"]["equity_curve"]) == 3
     assert data["report"]["equity_curve"][-1]["balance"] == 998.5
+
+
+def test_start_does_not_reset_risk_or_pending_contract(client):
+    import dashboard.server as srv
+    risk={'date':'2026-09-08','daily_pnl':-30,'consec_losses':3,'balance':970,'pause_until_epoch':9999999999}
+    active={'has_active':True,'contract_id':'12345','phase':'open'}
+    srv.RISK_STATE_JSON.write_text(json.dumps(risk))
+    srv.STATE_JSON.write_text(json.dumps({'active_contract':active}))
+    proc=MagicMock()
+    proc.pid=99999999
+    with patch.object(srv,'_bot_running',return_value=(False,None)),patch.object(srv,'_backtest_running',return_value=(False,None)),patch.object(srv.subprocess,'Popen',return_value=proc),patch.object(srv,'PID_FILE',srv.STATE_JSON.parent/'bot.pid'),patch.object(srv,'PIPELINE_LOG_TXT',srv.STATE_JSON.parent/'pipeline.log'):
+        response=client.post('/api/bot/start',json={'mode':'demo','balance':1000})
+    assert response.status_code==200
+    assert json.loads(srv.RISK_STATE_JSON.read_text())==risk
+    assert json.loads(srv.STATE_JSON.read_text())['active_contract']==active
+
+
+def test_clear_cannot_remove_active_contract(client):
+    import dashboard.server as srv
+    srv.STATE_JSON.write_text(json.dumps({'active_contract':{'has_active':True,'contract_id':'1'}}))
+    with patch.object(srv,'_bot_running',return_value=(False,None)):
+        ok,_=srv._reset_operations_and_state()
+    assert not ok and json.loads(srv.STATE_JSON.read_text())['active_contract']['contract_id']=='1'
+
+
+def test_model_metrics_does_not_present_candidate_as_active(client, monkeypatch, tmp_path):
+    import dashboard.server as srv
+    candidate = tmp_path / 'candidate_metrics.json'
+    candidate.write_text(json.dumps([{'stage': 'final', 'auc': .99}]))
+    monkeypatch.setattr(srv, 'MODEL_METRICS_JSON', candidate)
+    monkeypatch.setattr(srv, 'MODEL_PKL', tmp_path / 'missing.pkl')
+    assert client.get('/api/model-metrics').get_json() == {}
+    assert client.get('/api/model-history').get_json()[0]['auc'] == .99

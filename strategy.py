@@ -28,13 +28,15 @@ from config import (
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
     ADX_PERIOD, ADX_MIN,
     BB_PERIOD, BB_STD,
-    USE_AI_MODEL,
+    USE_AI_MODEL, AI_CONFIDENCE_MIN,
     USE_WEIGHTED_SIGNAL, SIGNAL_SCORE_MIN,
     AI_TECH_WEIGHT, AI_MODEL_WEIGHT, AI_SCORE_MIN,
     CANDLE_SIZE, PA_SR_TOLERANCE,
     CANDLE_PATTERN_FILTER, CANDLE_PATTERN_MIN_STRENGTH, CANDLE_PATTERN_MAX_AGE_SEC,
 )
 import time
+import math
+from model_contract import FEATURE_WINDOW
 import ai_predictor
 
 # Tipo de retorno: (sinal, dict com valores dos indicadores)
@@ -71,6 +73,7 @@ def get_signal(
     candle_alerts: list = None,
     use_ai_model: Optional[bool] = None,
     evaluation_time: Optional[float] = None,
+    candles: list = None,
 ) -> SignalResult:
     """
     Avalia o estado do mercado e retorna ("BUY" | "SELL" | None, indicadores).
@@ -88,6 +91,9 @@ def get_signal(
     O dict `indicadores` está sempre populado quando há dados suficientes,
     mesmo quando o sinal é None — útil para exibição e logging.
     """
+    prices = list(prices[-FEATURE_WINDOW:])
+    if not prices or any(not math.isfinite(float(p)) or p <= 0 for p in prices):
+        return None, {}
     # ── Calcular todos os indicadores ──────────────────────
     ema9      = ind.ema(prices, EMA_FAST)
     ema21     = ind.ema(prices, EMA_SLOW)
@@ -153,6 +159,7 @@ def get_signal(
             candle_alerts,
             use_ai_model,
             evaluation_time,
+            candles,
         )
 
     # ── Sinal de COMPRA (AND rígido) ─────────────────────────────────────────
@@ -170,6 +177,7 @@ def get_signal(
             candle_alerts,
             use_ai_model,
             evaluation_time,
+            candles,
         )
 
     # ── Sinal de VENDA (AND rígido) ──────────────────────────────────────────
@@ -187,6 +195,7 @@ def get_signal(
             candle_alerts,
             use_ai_model,
             evaluation_time,
+            candles,
         )
 
     # Sem sinal válido (ex: cruzamento recente, aguardar confirmação)
@@ -203,6 +212,7 @@ def _weighted_signal(
     candle_alerts: list = None,
     use_ai_model: Optional[bool] = None,
     evaluation_time: Optional[float] = None,
+    candles: list = None,
 ) -> SignalResult:
     """
     Gera sinal via score contínuo ponderado (USE_WEIGHTED_SIGNAL=True).
@@ -244,6 +254,7 @@ def _weighted_signal(
             candle_alerts,
             use_ai_model,
             evaluation_time,
+            candles,
         )
     if composite <= -SIGNAL_SCORE_MIN:
         return _apply_ai_filter(
@@ -253,6 +264,7 @@ def _weighted_signal(
             candle_alerts,
             use_ai_model,
             evaluation_time,
+            candles,
         )
     return None, indicators
 
@@ -275,7 +287,7 @@ def _candle_pattern_filter(
     """
     now = time.time() if evaluation_time is None else evaluation_time
     for alert in reversed(list(candle_alerts)):
-        if now - alert.get("timestamp", 0) > CANDLE_PATTERN_MAX_AGE_SEC:
+        if not 0 <= now - alert.get("timestamp", 0) <= CANDLE_PATTERN_MAX_AGE_SEC:
             continue  # padrão expirado
         if alert.get("strength", 0.0) < CANDLE_PATTERN_MIN_STRENGTH:
             continue  # padrão fraco demais
@@ -301,6 +313,7 @@ def _apply_ai_filter(
     candle_alerts: list = None,
     use_ai_model: Optional[bool] = None,
     evaluation_time: Optional[float] = None,
+    candles: list = None,
 ) -> SignalResult:
     """
     Pondera o sinal dos indicadores técnicos com o modelo de IA e filtro PA.
@@ -318,7 +331,10 @@ def _apply_ai_filter(
             return None, indicators
 
     # -- Filtro Price Action: bloquear sinais contra estrutura de mercado --
-    candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+    if candles is None:
+        candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+    else:
+        candles = candles[-FEATURE_WINDOW:]
     pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
     if pa is not None:
         indicators["pa_sr_position"] = round(pa["pa_sr_position"], 4)
@@ -337,19 +353,19 @@ def _apply_ai_filter(
         indicators["ai_score"]      = None
         return signal, indicators
 
-    ai_direction, ai_conf = ai_predictor.predict(prices)
-    indicators["ai_confidence"] = round(ai_conf, 4)
+    ai_direction, ai_conf = ai_predictor.predict(prices, candles=candles)
+    indicators["ai_direction"] = ai_direction
+    indicators["ai_confidence"] = ai_conf if math.isfinite(ai_conf) else None
+    indicators["model_id"] = ai_predictor.prediction_model_id()
+    if ai_direction != signal or not math.isfinite(ai_conf) or not AI_CONFIDENCE_MIN <= ai_conf <= 1:
+        indicators["ai_score"] = None
+        indicators["ai_block"] = "abstention_or_disagreement"
+        return None, indicators
 
-    if ai_direction == signal:
-        # IA concorda: score pleno
-        score = AI_TECH_WEIGHT * 1.0 + AI_MODEL_WEIGHT * ai_conf
-    else:
-        # IA diverge: penalidade proporcional à confiança da divergência
-        score = AI_TECH_WEIGHT * 1.0 - AI_MODEL_WEIGHT * (1.0 - ai_conf)
-
+    technical = min(1.0, abs(indicators.get("tech_score", 1.0)))
+    score = AI_TECH_WEIGHT * technical + AI_MODEL_WEIGHT * ai_conf
     indicators["ai_score"] = round(score, 4)
-
+    indicators["win_probability"] = ai_conf
     if score >= AI_SCORE_MIN:
         return signal, indicators
-
     return None, indicators

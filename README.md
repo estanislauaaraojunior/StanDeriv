@@ -1,6 +1,8 @@
 # StanDeriv — Bot de Trading Automatizado para Deriv
 
-Bot de opções binárias para índices sintéticos da plataforma Deriv, com análise técnica, Price Action e inteligência artificial (ensemble ML + Transformer).
+Bot de contratos CALL/PUT para a Deriv, com análise técnica, Price Action, modelos calibrados e execução com controle persistente de risco.
+
+A manutenção de contratos v2 alterou o esquema dos dados e a validação dos modelos. Leia [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md) antes de iniciar. Modelos legados não autorizam novas entradas; sem modelo compatível, o pipeline mantém somente a coleta. [Auditoria das perdas](docs/ANALISE_LOSSES_2026-09-08.md).
 
 ## Instruções para assistentes de IA
 
@@ -24,7 +26,7 @@ se a ferramenta não oferecer suporte a essa convenção.
 ```
 ┌────────────┐     ┌──────────────┐     ┌────────────────┐
 │ collector   │────▶│ dataset_     │────▶│ train_model    │
-│ (ticks.csv) │     │ builder      │     │ (model.pkl)    │
+│ (ticks_v2.csv) │     │ builder      │     │ (model.pkl)    │
 └────────────┘     └──────────────┘     └────────────────┘
                                                 │
 ┌────────────┐     ┌──────────────┐     ┌───────▼────────┐
@@ -45,7 +47,7 @@ se a ferramenta não oferecer suporte a essa convenção.
 │ (Flask + HTML/JS)│
 └──────────────────┘
 
-ticks.csv ──▶ backtest.py ──▶ backtest_reports/ (JSON + CSV)
+ticks_v2.csv ──▶ backtest.py ──▶ backtest_reports/ (JSON + CSV)
 ```
 
 ## Requisitos
@@ -88,11 +90,13 @@ Para PAT/OAuth, o token precisa do escopo `trade`. Se a conta Options ainda não
 
 ## Uso Rápido
 
-### Pipeline completo (coleta + treino + bot)
+### Pipeline (coleta e execução condicionada à validação)
 
 ```bash
 python pipeline.py --demo --balance 1000
 ```
+
+Sem modelo v2 aprovado para o ativo, esse comando mantém apenas a coleta. Treino inicial requer `--force-retrain` e dados suficientes. Nenhum candidato substitui o modelo ativo sem passar pela avaliação temporal. A opção `--demo` é confrontada com a conta autenticada.
 
 ### Apenas o bot (modelo já treinado)
 
@@ -114,7 +118,7 @@ um modelo treinado no mesmo período analisado:
 
 ```bash
 python backtest.py \
-  --input ticks.csv \
+  --input ticks_v2.csv \
   --symbol R_100 \
   --balance 1000 \
   --payout 0.85 \
@@ -127,15 +131,15 @@ Custos opcionais podem ser simulados com `--cost-rate` e `--fixed-cost`. A saíd
 contém `backtest_report.json`, com configuração, fingerprints e métricas
 comparáveis, e `backtest_trades.csv`, com cada contrato simulado.
 
-Para avaliar o ensemble ou o modelo de duração:
+Para avaliar o modelo v2 compatível com o ativo e a duração:
 
 ```bash
-python backtest.py --with-ai --dynamic-duration --input ticks_ood.csv
+python backtest.py --with-ai --input ticks_ood.csv
 ```
 
 Use essas opções apenas quando o arquivo representar um período realmente fora
 da amostra, não utilizado no treinamento dos modelos. O motor usa somente dados
-disponíveis até o fechamento da vela, entra no primeiro tick seguinte, impede
+disponíveis até o fechamento da vela, exige um segmento contínuo de ticks identificados, entra no primeiro tick seguinte, impede
 contratos simultâneos e aplica stake percentual, stops diários e pausas por
 perdas sobre o relógio histórico.
 
@@ -159,15 +163,17 @@ bot ao vivo estiver parado. Os relatórios ficam isolados por execução em
 |---------|-----------|
 | `config.py` | Configurações centralizadas (indicadores, risco, IA, Price Action) |
 | `indicators.py` | Indicadores técnicos puros (EMA, RSI, MACD, ADX, Bollinger, Momentum) + Price Action (estrutura de mercado, S/R, supply/demand, FVG) + detecção de 6 padrões de vela |
+| `market_data.py` | Leitura explícita, recuperação não destrutiva, conflitos e proveniência |
+| `model_contract.py` | Contrato temporal, compatibilidade de modelo, payout e persistência atômica |
 | `feature_engine.py` | Fonte única de features: consolida `compute_feature_map` e `extract_feature_vector` (usados por `dataset_builder`, `executor` e `ai_predictor`) |
-| `dataset_builder.py` | Extrai features de ticks.csv e gera dataset.csv para treino |
-| `train_model.py` | Treina RandomForest, XGBoost, StackingClassifier e Temporal Fusion Transformer |
-| `ai_predictor.py` | Inferência em tempo real com ensemble blend (clássico + TFT) |
+| `dataset_builder.py` | Extrai features de ticks_v2.csv e gera dataset_v2.csv para treino |
+| `train_model.py` | Treina candidatos RF/XGB com calibração e avaliação temporal separadas |
+| `ai_predictor.py` | Inferência de bundle aprovado para ativo, OHLC e vencimento |
 | `strategy.py` | Motor de decisão: sinais BUY/SELL com filtros técnicos, PA e IA |
 | `executor.py` | Cliente WebSocket da Deriv, execução de ordens, notificações de velas |
 | `risk_manager.py` | Gestão de risco: sizing, stop loss/take profit diário, pausa escalável por losses, detecção de drift |
 | `pipeline.py` | Orquestrador: coleta, trend scanning, treino automático, execução e re-treino periódico |
-| `transformer_model.py` | Implementação do Temporal Fusion Transformer com Variable Selection Network (PyTorch) |
+| `transformer_model.py` | Implementação legada do TFT, fora do bundle v2 operacional |
 | `collector.py` | Coleta contínua de ticks via WebSocket com filtro anti-spike |
 | `backtest.py` | Simulação offline de sinais, duração, payout, custos, risco e drawdown, com relatórios JSON/CSV |
 | `dashboard/` | Interface web com Flask (server.py), autenticação por token e frontend (HTML/JS/CSS) |
@@ -201,51 +207,57 @@ Features numéricas normalizadas derivadas de velas OHLC sintéticas:
 
 Cada padrão inclui `strength` (0-1) e notificação em tempo real no terminal e dashboard.
 
-## Modelos de IA
+## Modelos e contrato temporal
 
-- **RandomForest** (300 árvores, max_depth=10)
-- **XGBoost** (300 estimators, learning_rate=0.05)
-- **StackingClassifier** (RF + XGB + LogisticRegression)
-- **Temporal Fusion Transformer** (PyTorch, 2 camadas, 4 heads, d_model=64, seq_len=50, early stopping)
-- Ensemble blend: TFT × 0.55 + Clássico × 0.45
-- Discordância TFT/Clássico → não opera
-- Score mínimo ponderado (IA + técnico) de 0.55 para abrir operação
+O treino atual compara RandomForest e XGBoost, calibra probabilidades em um período separado, seleciona o candidato na validação e avalia no teste final. As partições têm embargo temporal. O bundle registra ativo, janela de 100 candles OHLC, features, versões de dependências e vencimento.
 
-### Retreinar
+O target representa alta, queda ou empate entre o primeiro tick após o sinal e o primeiro tick no vencimento. Empate perde tanto CALL quanto PUT. A duração atual é fixa em 15 minutos (`DURATION=15`, `DURATION_UNIT="m"`). As duas próximas observações e sua média não são usadas como target.
+
+Abstenção, divergência, falta de dados e modelo incompatível bloqueiam entradas. A força técnica real participa do score; o score não representa probabilidade de vitória. Antes da compra, a probabilidade calibrada da direção é confrontada com preço e payout da proposta.
+
+Os artefatos antigos de TFT, stacking e duração foram preservados, mas não participam do novo caminho operacional. A flag legada `USE_TRANSFORMER` não promove automaticamente um ensemble não validado.
+
+### Preparação e treino offline
+
+Use um snapshot estável, distinto do arquivo em gravação:
 
 ```bash
-python dataset_builder.py         # gerar dataset.csv
-python train_model.py             # treinar modelos
+cp ticks_v2.csv /tmp/standeriv-ticks-snapshot.csv
+python dataset_builder.py --input /tmp/standeriv-ticks-snapshot.csv --output /tmp/standeriv-dataset-v2.csv --symbol R_100
+python train_model.py --input /tmp/standeriv-dataset-v2.csv --output /tmp/standeriv-model.candidate --symbol R_100
 ```
+
+Esses comandos escrevem dataset, candidato e metadados em `/tmp`; não publicam o modelo. O pipeline com `--force-retrain` treina e só promove um candidato aprovado. A avaliação do modelo aplica os filtros técnicos, a cadência, contratos não sobrepostos e a gestão de risco, com payout líquido de referência de 85%. Os payouts reais e a latência de execução ainda exigem validação operacional.
+
+### Recuperação de arquivos legados
+
+```bash
+python market_data.py --input ticks.csv --output-dir recovered_data/nova-recuperacao
+```
+
+A origem não é alterada. Registros sem identificação de tick/candle recebem `legacy_unknown` e não são aceitos para treinar contratos. Novas gravações usam `ticks_v2.csv` com campos explícitos de proveniência e OHLC. Dados antigos não permitem inventar os preços de entrada ou máximas/mínimas ausentes.
 
 ## Configurações Avançadas
 
-### ADX Adaptativo
-`ADX_ADAPTIVE = True` ajusta automaticamente `ADX_MIN` ao percentil 50 do histórico recente do símbolo ativo (piso: 15), tornando o filtro de tendência mais preciso do que um valor fixo. O percentil é configurável em `ADX_ADAPTIVE_PERCENTILE`.
+### ADX adaptativo
 
-### Duração Dinâmica
-O modelo de duração (`duration_model.pkl`) prevê o melhor prazo de expiração entre os candidatos definidos em `CANDIDATE_DURATIONS = [5, 15, 30]` (minutos). Treinado em conjunto com os demais modelos pelo `train_model.py`.
+`ADX_ADAPTIVE=True` utiliza o percentil configurado do histórico de ADX. O histórico é atualizado também durante contratos e pausas. O ADX continua sendo a aproximação por fechamentos implementada em `indicators.py`, não um ADX calculado a partir do range completo de cada vela.
 
-### Score Ponderado
-`AI_TECH_WEIGHT = 0.55` e `AI_MODEL_WEIGHT = 0.45` definem o peso do sinal técnico e da IA no score final. Apenas operações com `score ≥ AI_SCORE_MIN (0.30)` são abertas.
+### Score técnico e IA
 
-### Sinal Ponderado por Indicador
-`USE_WEIGHTED_SIGNAL = True` substitui o AND rígido dos indicadores por um score contínuo ponderado. `SIGNAL_SCORE_MIN = 0.05` define o limiar mínimo do score técnico para aceitar a operação.
-
-### Target Lookforward
-`TARGET_LOOKFORWARD = 2` define quantas velas à frente o dataset_builder usa para rotular o target de treino. Valores maiores capturam movimentos de médio prazo.
+`SIGNAL_SCORE_MIN=0.05` controla a seleção técnica. `AI_CONFIDENCE_MIN=0.55` e concordância explícita são obrigatórios quando a IA é usada. A combinação usa `AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45` e `AI_SCORE_MIN=0.30`. Desligar a IA permite análise/backtest técnico, mas não fornece a probabilidade exigida para comprar contratos ao vivo.
 
 ### Candles Baseados em Tempo
 `CANDLE_TIMEFRAME_SEC = 60` define a duração de cada vela em segundos (substituindo o modelo de ticks fixos). Recomendado: 60s (1min) para mais entradas, 300s (5min) para mais seletividade.
 
 ### Buffer de Preços
-`PRICE_BUFFER_SIZE = 500` define quantos ticks são mantidos em memória para cálculo de indicadores e inferência do TFT.
+`PRICE_BUFFER_SIZE = 500` limita o buffer bruto. Features de modelos usam a janela canônica de 100 candles definida em `model_contract.py`.
 
 ### Cadência de Entradas
 `ENTRY_CANDLE_INTERVAL = 1` controla o intervalo mínimo entre entradas em velas fechadas (1 = avalia a cada nova vela).
 
 ### Promoção de Modelo (Champion-Challenger)
-O challenger só substitui o champion quando superar os critérios mínimos:
+Além de pelo menos 30 contratos de teste não sobrepostos e evidência acima do ponto de equilíbrio, o challenger precisa ser comparado com o champion no mesmo período fora da amostra:
 - `MODEL_PROMOTION_MIN_AUC_DELTA = 0.001` — AUC do novo modelo deve ser ≥ AUC atual + delta
 - `MODEL_PROMOTION_MAX_ACC_DROP = 0.02` — queda máxima tolerada de acurácia
 - `MODEL_PROMOTION_MAX_F1_DROP = 0.05` — queda máxima tolerada de F1
@@ -279,11 +291,13 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `CANDLE_TIMEFRAME_SEC` | 60 | Duração de cada vela de tempo em segundos |
 | `PRICE_BUFFER_SIZE` | 500 | Ticks mantidos em memória para indicadores |
 | `ENTRY_CANDLE_INTERVAL` | 1 | Intervalo mínimo entre entradas (em velas) |
-| `CANDIDATE_DURATIONS` | [5,15,30] | Durações (min) candidatas para o modelo de duração |
+| `DURATION` | 15 | Vencimento fixo do contrato, em minutos |
 | `ADX_ADAPTIVE_PERCENTILE` | 50 | Percentil do histórico de ADX usado como piso adaptativo |
-| `TARGET_LOOKFORWARD` | 2 | Velas à frente usadas para rotular o target no dataset |
+| `TARGET_LOOKFORWARD` | 15 | Compatibilidade com o vencimento; o target é calculado por timestamps |
 
-## Histórico de Mudanças
+## Histórico de Mudanças anteriores ao contrato v2
+
+Os itens abaixo registram versões passadas; o comportamento atual está descrito acima e no guia de migração.
 
 - `feature_engine.py` criado como fonte única de features (evita duplicação entre `dataset_builder`, `executor` e `ai_predictor`)
 - ADX adaptativo por percentil do histórico recente (`ADX_ADAPTIVE`)

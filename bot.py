@@ -69,6 +69,9 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    from model_contract import acquire_execution_lock
+    from pathlib import Path
+    execution_lock=acquire_execution_lock(Path(__file__).resolve().parent/"executor.lock")
 
     # Determina modo: flag CLI tem prioridade sobre config.DEMO_MODE
     if args.real:
@@ -85,8 +88,17 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, _handle_interrupt)
 
-    risk_manager = RiskManager(initial_balance=args.balance)
-    bot = DerivBot(risk_manager=risk_manager, demo=is_demo)
+    import config, deriv_session
+    session=None
+    if deriv_session.is_bearer_token(config.TOKEN,config.DERIV_AUTH_MODE):
+        session=deriv_session.setup_bearer_options_session(app_id=config.APP_ID,token=config.TOKEN,demo=is_demo)
+    balance=float(session['account']['balance']) if session else args.balance
+    risk_manager = RiskManager(initial_balance=balance)
+    bot = DerivBot(risk_manager=risk_manager, demo=is_demo,
+                   auth_mode='bearer' if session else 'legacy',
+                   account_id=session['account_id'] if session else '',
+                   initial_ws_url=session['ws_url'] if session else '')
+    bot._execution_lock=execution_lock
     bot.run()
 
 

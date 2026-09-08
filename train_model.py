@@ -1,520 +1,206 @@
+"""Treino temporal com calibração separada e teste final intocado.
+
+Produz um bundle de direção/vencimento. Não promove TFT ou modelos de duração
+legados: suas probabilidades não foram calibradas para este contrato.
 """
-train_model.py — treinamento do pipeline ML completo.
-
-Modelos treinados:
-  1. RandomForestClassifier  (scikit-learn)
-  2. XGBClassifier           (xgboost)
-  3. StackingClassifier      (RF + XGB como base, LogisticRegression como meta-learner)
-
-O melhor modelo (por ROC-AUC no conjunto de teste) é salvo em model.pkl.
-A separação treino/teste é estritamente temporal (sem shuffle) para evitar
-data-leakage de séries temporais.
-
-Uso:
-    python train_model.py
-    python train_model.py --dataset dataset.csv --output model.pkl --test-ratio 0.2
-"""
-
 import argparse
+import json
+import math
 import os
-import sys
-import warnings
-
-warnings.filterwarnings("ignore")  # suprimir avisos de convergência na linha de comando
+from datetime import datetime, timezone
+from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
-from sklearn.model_selection import TimeSeriesSplit, StratifiedKFold
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.preprocessing import LabelEncoder
 
-from config import (
-    DATASET_CSV, AI_MODEL_PATH, DURATION_MODEL_PATH, CANDIDATE_DURATIONS,
-    TRANSFORMER_MODEL_PATH, USE_TRANSFORMER, TRANSFORMER_SEQ_LEN,
-    TRANSFORMER_D_MODEL, TRANSFORMER_N_HEADS, TRANSFORMER_N_LAYERS,
-    TRANSFORMER_DROPOUT, TRANSFORMER_EPOCHS, TRANSFORMER_BATCH_SIZE,
-    TRANSFORMER_LR, TRANSFORMER_PATIENCE,
-)
+import config
 from feature_engine import FEATURES
-
-# Importa TFT (opcional — requer torch; fallback gracioso se não instalado)
-try:
-    from transformer_model import TFTPredictor
-    _TORCH_AVAILABLE = True
-except ImportError:
-    _TORCH_AVAILABLE = False
-
-# Features importadas de feature_engine (fonte única — em sincronia com dataset_builder e ai_predictor)
-# FEATURES = [...] removido
+from model_contract import compatible, fingerprint, write_json_atomic, MIN_EXPECTED_RETURN, usable
 
 
-# ─────────────────────────────────────────────────────────────────
-#  Construção dos modelos
-# ─────────────────────────────────────────────────────────────────
+class CalibratedDirectionModel:
+    """Calibração multinomial em período posterior, sem refit no teste."""
+    def __init__(self, estimator):
+        self.estimator = estimator
+        self.encoder = LabelEncoder()
 
-def _build_rf() -> Pipeline:
-    return Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", RandomForestClassifier(
-            n_estimators=300,
-            max_depth=10,
-            min_samples_leaf=10,
-            class_weight="balanced",
-            random_state=42,
-            n_jobs=-1,
-        )),
-    ])
+    def fit(self, X, y):
+        self.estimator.fit(X, self.encoder.fit_transform(y))
+        return self
 
+    def calibrate(self, X, y):
+        self.calibrator = LogisticRegression(max_iter = 1000)
+        self.calibrator.fit(self.estimator.predict_proba(X), y)
+        self.classes_ = self.calibrator.classes_
+        return self
 
-def _build_xgb(scale_pos_weight: float = 1.0) -> Pipeline:
-    return Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", XGBClassifier(
-            n_estimators=300,
-            max_depth=6,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            scale_pos_weight=scale_pos_weight,
-            eval_metric="logloss",
-            random_state=42,
-            n_jobs=-1,
-            verbosity=0,
-        )),
-    ])
+    def predict_proba(self, X):
+        return self.calibrator.predict_proba(self.estimator.predict_proba(X))
+
+    def predict(self, X):
+        return self.classes_[self.predict_proba(X).argmax(axis = 1)]
 
 
-def _build_stacking(scale_pos_weight: float = 1.0) -> StackingClassifier:
+def _build_sequence_dataset(X, seq_len, epochs = None, timeframe_sec = 60):
+    """Sequência termina na linha do label, sem deslocamento de uma observação.
+
+    Para treinamento sequencial, timestamps são obrigatórios e lacunas rejeitadas.
     """
-    Stacking: RF e XGB como estimadores base, LogisticRegression como meta-learner.
-    O StandardScaler do meta-learner é encapsulado em um Pipeline auxiliar.
-    """
-    base_estimators = [
-        ("rf",  _build_rf()),
-        ("xgb", _build_xgb(scale_pos_weight)),
-    ]
-    meta = Pipeline([
-        ("scaler", StandardScaler()),
-        ("meta",   LogisticRegression(max_iter=1000, random_state=42)),
-    ])
-    return StackingClassifier(
-        estimators=base_estimators,
-        final_estimator=meta,
-        cv=StratifiedKFold(n_splits=5, shuffle=False),  # cross_val_predict requer partições completas
-        passthrough=False,
-        n_jobs=-1,
-    )
+    if epochs is None:
+        raise ValueError('timestamps obrigatórios para verificar continuidade das sequências')
+    if len(epochs) != len(X) or np.any(np.diff(epochs) != timeframe_sec):
+        raise ValueError('sequência descontínua')
+    if len(X) < seq_len:
+        return np.empty((0, seq_len, X.shape[1]), dtype = np.float32)
+    return np.asarray([X[i - seq_len + 1: i + 1] for i in range(seq_len - 1, len(X))], dtype = np.float32)
 
 
-# ─────────────────────────────────────────────────────────────────
-#  Avaliação
-# ─────────────────────────────────────────────────────────────────
-
-def _evaluate(name: str, model, X_test, y_test) -> dict:
-    preds   = model.predict(X_test)
-    proba   = model.predict_proba(X_test)[:, 1]
-    acc     = accuracy_score(y_test, preds)
-    prec    = precision_score(y_test, preds, zero_division=0)
-    rec     = recall_score(y_test, preds, zero_division=0)
-    f1      = f1_score(y_test, preds, zero_division=0)
-    auc     = roc_auc_score(y_test, proba)
-
-    print(f"\n  ─── {name} ───")
-    print(f"  Acurácia  : {acc:.4f}")
-    print(f"  Precisão  : {prec:.4f}")
-    print(f"  Recall    : {rec:.4f}")
-    print(f"  F1        : {f1:.4f}")
-    print(f"  ROC-AUC   : {auc:.4f}")
-
-    return {"name": name, "model": model, "auc": auc, "acc": acc, "f1": f1}
+def temporal_partitions(df, test_ratio = .2):
+    if not .1 <= test_ratio <= .3:
+        raise ValueError('test_ratio deve estar entre 0.1 e 0.3')
+    n = len(df)
+    boundaries = [0, int(n * (.7 - test_ratio)), int(n * (.85 - test_ratio)), int(n * (1 - test_ratio)), n]
+    parts = []
+    for start, end in zip(boundaries, boundaries[1:]):
+        part = df.iloc[start: end]
+        if end < n:
+            # Nem rótulos nem janelas de features atravessam a próxima partição.
+            part = part[part.expiry_epoch < df.iloc[end].feature_start_epoch]
+        if len(part) < 30 or part.target.nunique() < 2:
+            raise ValueError('amostra temporal insuficiente após embargo; colete mais ticks identificados')
+        parts.append(part)
+    return parts
 
 
-# ─────────────────────────────────────────────────────────────────
-#  TFT — Dataset sequencial, treinamento e avaliação
-# ─────────────────────────────────────────────────────────────────
-
-def _build_sequence_dataset(X: np.ndarray, seq_len: int) -> np.ndarray:
-    """
-    Converte array plano (N, n_features) em janelas temporais (N-seq_len, seq_len, n_features).
-
-    Janela i: X[i : i+seq_len] → label y[i+seq_len].
-    Os labels correspondentes são y[seq_len:] (alinhados ao tick seguinte da janela).
-    """
-    N = len(X)
-    if N <= seq_len:
-        return np.empty((0, seq_len, X.shape[1]), dtype=np.float32)
-    seqs = np.stack([X[i : i + seq_len] for i in range(N - seq_len)], axis=0)
-    return seqs.astype(np.float32)
-
-
-def _train_tft(
-    X_seq_train: np.ndarray,
-    y_dir_train: np.ndarray,
-    n_features:  int,
-    y_dur_train: "Optional[np.ndarray]" = None,
-) -> "TFTPredictor":
-    """
-    Instancia e treina um TFTPredictor com os hiperparâmetros de config.py.
-
-    y_dur_train deve conter índices de classe (0..n_dur-1), não valores de duração.
-    """
-    tft = TFTPredictor(
-        n_features    = n_features,
-        n_dur_classes = len(CANDIDATE_DURATIONS),
-        seq_len       = TRANSFORMER_SEQ_LEN,
-        d_model       = TRANSFORMER_D_MODEL,
-        n_heads       = TRANSFORMER_N_HEADS,
-        n_layers      = TRANSFORMER_N_LAYERS,
-        dropout       = TRANSFORMER_DROPOUT,
-        epochs        = TRANSFORMER_EPOCHS,
-        batch_size    = TRANSFORMER_BATCH_SIZE,
-        lr            = TRANSFORMER_LR,
-        patience      = TRANSFORMER_PATIENCE,
-    )
-    tft.fit(X_seq_train, y_dir_train, y_dur=y_dur_train)
-    return tft
-
-
-def _evaluate_tft(name: str, tft: "TFTPredictor", X_seq: np.ndarray, y: np.ndarray) -> dict:
-    """Avalia um TFTPredictor e imprime métricas comparáveis aos modelos clássicos."""
-    try:
-        proba  = tft.predict_proba(X_seq)          # (N, 2)
-        preds  = (proba[:, 1] >= 0.5).astype(int)
-        proba1 = proba[:, 1]
-
-        acc  = accuracy_score(y, preds)
-        prec = precision_score(y, preds, zero_division=0)
-        rec  = recall_score(y, preds, zero_division=0)
-        f1   = f1_score(y, preds, zero_division=0)
-        auc  = roc_auc_score(y, proba1) if len(np.unique(y)) > 1 else 0.5
-
-        print(f"\n  ─── {name} ───")
-        print(f"  Acurácia  : {acc:.4f}")
-        print(f"  Precisão  : {prec:.4f}")
-        print(f"  Recall    : {rec:.4f}")
-        print(f"  F1        : {f1:.4f}")
-        print(f"  ROC-AUC   : {auc:.4f}")
-
-        return {"name": name, "model": tft, "auc": auc, "acc": acc, "f1": f1}
-    except Exception as exc:
-        print(f"\n  ─── {name} ─── [ERRO na avaliação: {exc}]")
-        return {"name": name, "model": tft, "auc": 0.0, "acc": 0.0, "f1": 0.0}
+def _metrics(model, df, payout = .85):
+    if not math.isfinite(payout) or payout <= 0:
+        raise ValueError("payout de avaliação inválido")
+    prob = model.predict_proba(df[FEATURES].values)
+    by_class = {int(c): prob[: , i] for i, c in enumerate(model.classes_)}
+    up = by_class.get(1, np.zeros(len(df)))
+    down = by_class.get(0, np.zeros(len(df)))
+    direction = np.where(up > down, 1, 0)
+    confidence = np.maximum(up, down)
+    predictions = model.classes_[prob.argmax(axis = 1)]
+    binary_up = (df.target.values == 1).astype(int)
+    auc = roc_auc_score(binary_up, up) if len(np.unique(binary_up)) > 1 else .5
+    from backtest import BacktestSettings, HistoricalRiskManager
+    settings=BacktestSettings(payout_ratio=payout)
+    risk=HistoricalRiskManager(settings)
+    wins, total, pnl = 0,0,0.
+    pending=None
+    candles_since_entry=config.ENTRY_CANDLE_INTERVAL
+    for i,row in enumerate(df.itertuples(index=False)):
+        if pending is not None and row.entry_epoch>=pending[0]:
+            risk.settle(*pending)
+            pending=None
+        if pending is not None or not risk.can_trade(row.entry_epoch)[0]:
+            continue
+        candles_since_entry+=1
+        interval=config.ENTRY_CANDLE_INTERVAL+(1 if risk.consecutive_losses>=2 else 0)
+        if candles_since_entry<interval:
+            continue
+        technical=int(row.technical_signal)
+        score=config.AI_TECH_WEIGHT*min(1.,abs(row.tech_score))+config.AI_MODEL_WEIGHT*confidence[i]
+        if (technical not in (0,1) or technical!=direction[i]
+                or confidence[i]<config.AI_CONFIDENCE_MIN or score<config.AI_SCORE_MIN
+                or confidence[i]*(1+payout)-1<MIN_EXPECTED_RETURN):
+            continue
+        total+=1
+        win=int(row.target)==direction[i]
+        wins+=int(win)
+        unit_profit=payout if win else -1
+        pnl+=unit_profit
+        pending=(row.expiry_epoch,risk.get_stake()*unit_profit)
+        candles_since_entry=0
+    if pending is not None:
+        risk.settle(*pending)
+    rate = wins / total if total else 0.
+    z = 1.96
+    lower = ((rate + z * z / (2 * total) - z * math.sqrt(rate * (1 - rate) / total + z * z / (4 * total * total)))
+             / (1 + z * z / total)) if total else 0.
+    return {'auc': float(auc), 'accuracy': float(accuracy_score(df.target, predictions)),
+            'f1': float(f1_score(df.target, predictions, average = 'macro', zero_division = 0)),
+            'n_test': len(df), 'trades': total, 'wins': wins, 'win_rate': rate, 'win_rate_lower95': lower,
+            'unit_profit': pnl, 'reference_net_payout': payout,
+            'evaluation_start': int(df.entry_epoch.iloc[0]), 'evaluation_end': int(df.expiry_epoch.iloc[-1]),
+            'evaluation_kind': 'deployed_strategy_reference_payout', 'final_balance':risk.balance,
+            'eligible': bool(total >= 30 and lower > 1 / (1 + payout) and auc > .5)}
 
 
-# ─────────────────────────────────────────────────────────────────
-#  Importância de features (apenas para RandomForest)
-# ─────────────────────────────────────────────────────────────────
-
-def _print_feature_importance(rf_pipeline: Pipeline) -> None:
-    rf_clf = rf_pipeline.named_steps["clf"]
-    importances = rf_clf.feature_importances_
-    pairs = sorted(zip(FEATURES, importances), key=lambda x: x[1], reverse=True)
-    print("\n  Top features (RandomForest):")
-    for feat, imp in pairs[:8]:
-        bar = "█" * int(imp * 40)
-        print(f"    {feat:<20} {imp:.4f}  {bar}")
-
-
-# ─────────────────────────────────────────────────────────────────
-#  Treinamento principal
-# ─────────────────────────────────────────────────────────────────
-
-def train(
-    dataset_path: str,
-    output_path: str,
-    test_ratio: float,
-    gap_ratio: float = 0.02,
-    tft_output_path: str | None = None,
-    duration_output_path: str | None = None,
-) -> dict:
-    if not os.path.exists(dataset_path):
-        print(f"[ERRO] Dataset não encontrado: '{dataset_path}'")
-        print("       Execute dataset_builder.py primeiro.")
-        sys.exit(1)
-
-    print(f"[TREINO] Lendo dataset de '{dataset_path}'...")
+def train(dataset_path, output_path, test_ratio = .2, gap_ratio = .02,
+          tft_output_path = None, duration_output_path = None):
+    metadata = json.loads(Path(str(dataset_path) + '.metadata.json').read_text())
+    if not compatible(metadata, config.get_active_symbol()) or metadata.get('dataset_sha256') != fingerprint(dataset_path):
+        raise ValueError('dataset incompatível, alterado ou sem proveniência')
     df = pd.read_csv(dataset_path)
-
-    missing = [f for f in FEATURES if f not in df.columns]
-    if missing:
-        print(f"[ERRO] Colunas ausentes no dataset: {missing}")
-        print("       Regenere o dataset com dataset_builder.py.")
-        sys.exit(1)
-
-    X = df[FEATURES].values
-    y = df["target"].values
-
-    n = len(X)
-    split = int(n * (1 - test_ratio))
-
-    # P11: Gap temporal entre treino e teste para evitar vazamento de dados
-    # Limita o gap a no máximo 5% do dataset para não eliminar todas as amostras de teste
-    gap = min(max(5, int(n * gap_ratio)), int(n * 0.05))
-    X_train, X_test = X[:split], X[split + gap:]
-    y_train, y_test = y[:split], y[split + gap:]
-
-    # Extrair rótulos de duração antecipadamente (usado pelo TFT e modelo de duração clássico)
-    has_dur     = "optimal_duration" in df.columns
-    y_dur_arr   = df["optimal_duration"].values if has_dur else None
-    y_dur_train = y_dur_arr[:split] if has_dur else None
-    y_dur_test  = y_dur_arr[split + gap:] if has_dur else None
-
-    print(f"[TREINO] Total de amostras : {n:,}")
-    print(f"[TREINO] Treino            : {split:,} ({(1-test_ratio)*100:.0f}%)")
-    print(f"[TREINO] Gap temporal      : {gap:,} amostras")
-    print(f"[TREINO] Teste             : {len(X_test):,} ({len(X_test)/n*100:.1f}%)")
-
-    # Peso para compensar desequilíbrio de classes
-    n_pos = np.sum(y_train == 1)
-    n_neg = np.sum(y_train == 0)
-    spw   = n_neg / n_pos if n_pos > 0 else 1.0
-    print(f"[TREINO] Classe 1 (sobe): {n_pos:,} | Classe 0 (cai): {n_neg:,} | SPW={spw:.2f}")
-
-    print("\n[TREINO] Treinando modelos...")
-
-    # 1. RandomForest
-    print("  → RandomForest...", end=" ", flush=True)
-    rf = _build_rf()
-    rf.fit(X_train, y_train)
-    print("OK")
-
-    # 2. XGBoost
-    print("  → XGBoost...", end=" ", flush=True)
-    xgb = _build_xgb(scale_pos_weight=spw)
-    xgb.fit(X_train, y_train)
-    print("OK")
-
-    # 3. Stacking (treina base+meta internamente com CV)
-    print("  → Stacking (RF+XGB+LR meta) — pode demorar...", end=" ", flush=True)
-    stk = _build_stacking(scale_pos_weight=spw)
-    stk.fit(X_train, y_train)
-    print("OK")
-
-    # Avaliação
-    print("\n[TREINO] Resultados no conjunto de teste:")
-    results = [
-        _evaluate("RandomForest", rf,  X_test, y_test),
-        _evaluate("XGBoost",      xgb, X_test, y_test),
-        _evaluate("Stacking",     stk, X_test, y_test),
-    ]
-
-    # Importância de features (RF)
-    _print_feature_importance(rf)
-
-    # Salva métricas preliminares (modelos clássicos) antes do TFT — atualiza dashboard imediatamente
-    _best_classical = max(results, key=lambda r: r["auc"])
+    required = FEATURES + ['symbol', 'signal_epoch', 'entry_epoch', 'expiry_epoch', 'feature_start_epoch', 'target', 'technical_signal', 'tech_score']
+    if any(c not in df for c in required) or not np.isfinite(df[FEATURES].values).all():
+        raise ValueError('dataset inválido')
+    if (set(df.symbol) != {metadata['symbol']} or df.signal_epoch.duplicated().any()
+            or not df.signal_epoch.is_monotonic_increasing
+            or not set(df.target).issubset({0, 1, 2})):
+        raise ValueError('símbolo, target ou cronologia inválidos')
+    fit, calibration, validation, test = temporal_partitions(df, test_ratio)
+    estimators = [('RandomForest', RandomForestClassifier(n_estimators = 300, max_depth = 10, min_samples_leaf = 10, random_state = 42, n_jobs = 1))]
+    from xgboost import XGBClassifier
+    estimators.append(('XGBoost', XGBClassifier(n_estimators = 300, max_depth = 5, learning_rate = .05, random_state = 42, n_jobs = 1)))
+    candidates = []
+    for name, estimator in estimators:
+        model = CalibratedDirectionModel(estimator).fit(fit[FEATURES].values, fit.target.values)
+        model.calibrate(calibration[FEATURES].values, calibration.target.values)
+        metrics = _metrics(model, validation)
+        candidates.append((metrics['auc'], name, model))
+    _, name, model = max(candidates, key = lambda x: x[0])
+    final = _metrics(model, test)
+    final.update(best_model = name, n_train = len(fit), stage = 'final', timestamp = datetime.now(timezone.utc).isoformat(),
+                 symbol = metadata['symbol'], dataset_sha256 = metadata['dataset_sha256'])
+    # O baseline é o artefato ativo avaliado nas MESMAS linhas, nunca a última métrica global.
+    final['champion_metrics'] = None
+    if Path(config.AI_MODEL_PATH).exists() and Path(config.AI_MODEL_PATH).resolve() != Path(output_path).resolve():
+        try:
+            champion = joblib.load(config.AI_MODEL_PATH)
+            cm = champion.get('metadata', {})
+            if usable(cm, metadata['symbol']) and cm.get('last_seen_epoch', float('inf')) < int(test.feature_start_epoch.iloc[0]):
+                final['champion_metrics'] = _metrics(champion['model'], test)
+        except Exception:
+            pass
+    metadata.update(approved = final['eligible'], calibration = 'multinomial_disjoint_temporal',
+                    trained_at = final['timestamp'], last_seen_epoch = int(df.expiry_epoch.iloc[-1]), metrics = final,
+                    model_name = name, dependencies = {})
+    import sklearn, xgboost
+    metadata['dependencies'] = {'sklearn': sklearn.__version__, 'xgboost': xgboost.__version__}
+    # Persistência de um único bundle evita combinações parciais de três versões.
+    joblib.dump({'model': model, 'features': FEATURES, 'name': name, 'metadata': metadata}, output_path)
+    write_json_atomic(str(output_path) + '.metadata.json', dict(metadata, artifact_sha256 = fingerprint(output_path)))
+    metrics_path = os.path.join(os.path.dirname(os.path.abspath(output_path)), 'model_metrics.json')
     try:
-        import json as _json_pre
-        from datetime import datetime as _dt_pre
-        _mpath_pre = os.path.join(os.path.dirname(os.path.abspath(output_path)), "model_metrics.json")
-        _hist_pre: list = []
-        if os.path.exists(_mpath_pre):
-            try:
-                with open(_mpath_pre) as _mf:
-                    _hist_pre = _json_pre.load(_mf)
-                if not isinstance(_hist_pre, list):
-                    _hist_pre = []
-            except Exception:
-                _hist_pre = []
-        _hist_pre.append({
-            "timestamp":  _dt_pre.now().isoformat(),
-            "stage":      "classical",
-            "best_model": _best_classical["name"],
-            "auc":        round(_best_classical["auc"], 4),
-            "accuracy":   round(_best_classical["acc"], 4),
-            "f1":         round(_best_classical.get("f1", 0.0), 4),
-            "n_train":    int(split),
-            "n_test":     int(len(X_test)),
-            "model_path": str(output_path),
-        })
-        with open(_mpath_pre, "w") as _mf:
-            _json_pre.dump(_hist_pre, _mf)
-        print(f"\n[TREINO] Métricas salvas em model_metrics.json (melhor clássico: {_best_classical['name']})")
-    except Exception:
-        pass
-
-    # Inicializa lista de AUCs antes do bloco TFT (evita NameError se TFT anexar antes da lista ser criada)
-    all_aucs: list = [(r["name"], r["auc"]) for r in results]
-
-    # ── Temporal Fusion Transformer (TFT) ────────────────────────────────
-    if USE_TRANSFORMER and _TORCH_AVAILABLE:
-        seq_len = TRANSFORMER_SEQ_LEN
-        print(f"\n[TREINO] Treinando Temporal Fusion Transformer (seq_len={seq_len}, d_model={TRANSFORMER_D_MODEL})...")
-
-        X_seq_train = _build_sequence_dataset(X_train, seq_len)
-        X_seq_test  = _build_sequence_dataset(X_test,  seq_len)
-        y_seq_train = y_train[seq_len:]   # label alinhado ao fim de cada janela
-        y_seq_test  = y_test[seq_len:]
-
-        if len(X_seq_train) < 10:
-            print(f"[TREINO] Dataset insuficiente para TFT ({len(X_seq_train)} amostras de treino) — pulando.")
-            print("         Colete mais ticks com collector.py e re-execute.")
-        else:
-            # Converte valores de duração para índices de classe (0..n_dur-1)
-            y_dur_seq = None
-            if has_dur and y_dur_train is not None:
-                dur_to_idx = {d: i for i, d in enumerate(CANDIDATE_DURATIONS)}
-                y_dur_seq  = np.array(
-                    [dur_to_idx.get(int(d), 0) for d in y_dur_train[seq_len:]],
-                    dtype=np.int64,
-                )
-
-            tft        = _train_tft(X_seq_train, y_seq_train, len(FEATURES), y_dur_seq)
-            tft_result = _evaluate_tft("TFT (Transformer)", tft, X_seq_test, y_seq_test)
-
-            tft_payload = {
-                "model":       tft,
-                "features":    FEATURES,
-                "name":        "TFT",
-                "seq_len":     seq_len,
-                "dur_classes": CANDIDATE_DURATIONS,
-            }
-            _tft_dest = tft_output_path if tft_output_path else TRANSFORMER_MODEL_PATH
-            joblib.dump(tft_payload, _tft_dest)
-            print(f"[TREINO] TFT salvo em '{_tft_dest}'")
-
-            # Comparação final de todas as arquiteturas
-            all_aucs.append((tft_result["name"], tft_result["auc"]))
-            print("\n[TREINO] Comparativo ROC-AUC:")
-            for mname, mauc in sorted(all_aucs, key=lambda t: t[1], reverse=True):
-                bar = "█" * int(mauc * 40)
-                print(f"  {mname:<22} {mauc:.4f}  {bar}")
-
-    elif USE_TRANSFORMER and not _TORCH_AVAILABLE:
-        print("\n[TREINO] USE_TRANSFORMER=True mas PyTorch não está instalado.")
-        print("         Execute: pip install torch --index-url https://download.pytorch.org/whl/cpu")
-
-    # Comparativo ROC-AUC final (all_aucs já foi inicializado antes do bloco TFT)
-    # Garante que todos os modelos clássicos estejam na lista, caso TFT tenha appendado primeiro
-    {n for n, _ in all_aucs}  # noqa — referência local mantida por legibilidade
-
-    # Melhor modelo por ROC-AUC (apenas entre os modelos clássicos salvo em model.pkl)
-    best = max(results, key=lambda r: r["auc"])
-    print(f"\n[TREINO] ✔  Melhor modelo: {best['name']} (AUC={best['auc']:.4f})")
-
-    # Salvar
-    payload = {
-        "model":    best["model"],
-        "features": FEATURES,
-        "name":     best["name"],
-    }
-    joblib.dump(payload, output_path)
-    print(f"[TREINO] Modelo salvo em '{output_path}'")
-
-    # ── Modelo de duração dinâmica (RF clássico — complementa o TFT) ────────
-    if has_dur and y_dur_train is not None:
-        print("\n[TREINO] Treinando modelo de duração dinâmica (RF)...")
-
-        dur_model = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", RandomForestClassifier(
-                n_estimators=300,
-                max_depth=8,
-                min_samples_leaf=10,
-                class_weight="balanced",
-                random_state=42,
-                n_jobs=-1,
-            )),
-        ])
-        dur_model.fit(X_train, y_dur_train)
-
-        dur_preds = dur_model.predict(X_test)
-        dur_acc   = accuracy_score(y_dur_test, dur_preds)
-        print(f"[TREINO] Modelo de duração (RF) — Acurácia: {dur_acc:.4f}")
-        print(f"[TREINO] Durações candidatas: {CANDIDATE_DURATIONS}")
-
-        dur_payload = {
-            "model":     dur_model,
-            "features":  FEATURES,
-            "durations": CANDIDATE_DURATIONS,
-        }
-        _dur_dest = duration_output_path if duration_output_path else DURATION_MODEL_PATH
-        joblib.dump(dur_payload, _dur_dest)
-        print(f"[TREINO] Modelo de duração (RF) salvo em '{_dur_dest}'")
-    else:
-        print("[TREINO] Coluna 'optimal_duration' não encontrada — regenere o dataset antes de retreinar.")
-
-    # Interpretação da acurácia para o usuário
-    acc = best["acc"]
-    if acc >= 0.60:
-        tier = "Excelente para mercado financeiro"
-    elif acc >= 0.55:
-        tier = "Bom — acima do aleatório com margem útil"
-    elif acc >= 0.52:
-        tier = "Razoável — mercado muito ruidoso"
-    else:
-        tier = "Abaixo do esperado — colete mais ticks e retreine"
-
-    print(f"\n  Acurácia final: {acc:.2%} → {tier}")
-    print("\n  Próximo passo: python bot.py --demo")
-
-    # Salva métricas em model_metrics.json (append)
-    try:
-        import json as _json
-        from datetime import datetime as _dt
-        metrics_path = os.path.join(os.path.dirname(os.path.abspath(output_path)), "model_metrics.json")
-        history: list = []
-        if os.path.exists(metrics_path):
-            try:
-                with open(metrics_path) as _mf:
-                    history = _json.load(_mf)
-                if not isinstance(history, list):
-                    history = []
-            except Exception:
-                history = []
-        history.append({
-            "timestamp":          _dt.now().isoformat(),
-            "stage":              "final",
-            "best_model":         best["name"],
-            "auc":                round(best["auc"], 4),
-            "accuracy":           round(best["acc"], 4),
-            "f1":                 round(best.get("f1", 0.0), 4),
-            "n_train":            int(split),
-            "n_test":             int(len(X_test)),
-            "model_path":         str(output_path),
-            "models_comparison":  [
-                {"name": n, "auc": round(a, 4)}
-                for n, a in sorted(all_aucs, key=lambda t: t[1], reverse=True)
-            ],
-        })
-        with open(metrics_path, "w") as _mf:
-            _json.dump(history, _mf)
-    except Exception:
-        pass
-
-    return {
-        "best_model": best["name"],
-        "auc": float(best["auc"]),
-        "accuracy": float(best["acc"]),
-        "f1": float(best.get("f1", 0.0)),
-        "n_train": int(split),
-        "n_test": int(len(X_test)),
-    }
+        history = json.loads(Path(metrics_path).read_text())
+        if not isinstance(history, list):
+            history = []
+    except (OSError, ValueError):
+        history = []
+    write_json_atomic(metrics_path, history + [dict(final, model_path = str(output_path))])
+    return final
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Treina RandomForest + XGBoost + Stacking e salva o melhor modelo.",
-    )
-    parser.add_argument("--dataset",    default=DATASET_CSV,   help=f"Dataset de entrada (padrão: {DATASET_CSV})")
-    parser.add_argument("--output",     default=AI_MODEL_PATH, help=f"Arquivo de saída do modelo (padrão: {AI_MODEL_PATH})")
-    parser.add_argument("--test-ratio", type=float, default=0.2, metavar="RATIO", help="Proporção do conjunto de teste, ex: 0.2 (padrão)")
-    parser.add_argument("--gap-ratio",  type=float, default=0.02, metavar="RATIO", help="Gap temporal entre treino e teste como fração do dataset (padrão: 0.02)")
-    args = parser.parse_args()
+def main():
+    p = argparse.ArgumentParser(description = __doc__)
+    p.add_argument('--input', default = config.DATASET_CSV)
+    p.add_argument('--output', default = config.AI_MODEL_PATH + '.candidate')
+    p.add_argument('--test-ratio', type = float, default = .2)
+    p.add_argument('--symbol', default = None)
+    a = p.parse_args()
+    if a.symbol:
+        config.set_active_symbol(a.symbol)
+    from train_model import train as train_bundle
+    print(json.dumps(train_bundle(a.input, a.output, a.test_ratio), indent = 2))
 
-    train(args.dataset, args.output, args.test_ratio, args.gap_ratio)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

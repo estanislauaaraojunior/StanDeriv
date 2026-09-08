@@ -1,3 +1,5 @@
+from market_data import ensure_header, append_record
+import math
 """
 collector.py — coletor autônomo de ticks.
 
@@ -41,11 +43,8 @@ _seen_epochs_set: set = set()
 #  Utilitários
 # ─────────────────────────────────────────────────────────────
 
-def _ensure_header() -> None:
-    """Cria o arquivo com cabeçalho se não existir ou estiver vazio."""
-    if not os.path.exists(TICKS_CSV) or os.path.getsize(TICKS_CSV) == 0:
-        with open(TICKS_CSV, "w", newline="") as f:
-            csv.writer(f).writerow(["epoch", "datetime", "symbol", "price"])
+def _ensure_header():
+    ensure_header(TICKS_CSV)
 
 
 def _is_valid_tick(prev: float, new_price: float) -> bool:
@@ -123,6 +122,8 @@ def on_message(ws, message: str) -> None:
         tick      = data["tick"]
         epoch     = tick["epoch"]
         price     = tick["quote"]
+        if tick.get("symbol") != SYMBOL or not math.isfinite(price) or price <= 0:
+            return
         dt_str    = datetime.fromtimestamp(epoch).isoformat()
 
         # P5: deduplicação — ignora ticks já vistos (ex: reconexão)
@@ -145,8 +146,7 @@ def on_message(ws, message: str) -> None:
         _last_price = price
         _tick_count += 1
 
-        with open(TICKS_CSV, "a", newline="") as f:
-            csv.writer(f).writerow([epoch, dt_str, SYMBOL, price])
+        append_record(TICKS_CSV,epoch,SYMBOL,price)
 
         # Exibe contador na mesma linha para não poluir o terminal
         print(

@@ -12,6 +12,8 @@ Uso:
 """
 
 from typing import Optional
+import math
+from model_contract import FEATURE_WINDOW
 
 import indicators as ind
 from config import (
@@ -49,12 +51,19 @@ _PA_DEFAULTS = {
 }
 
 
-def compute_feature_map(prices: list) -> Optional[dict]:
+def compute_feature_map(prices: list, candles: list = None) -> Optional[dict]:
     """
     Calcula todos os indicadores para uma janela de preços.
 
     Retorna dict com 27 features ou None se dados insuficientes.
     """
+    prices = list(prices[-FEATURE_WINDOW:])
+    if not prices or any(not math.isfinite(float(p)) or p <= 0 for p in prices):
+        return None
+    if candles is not None:
+        candles = list(candles[-FEATURE_WINDOW:])
+        if len(candles) != len(prices) or any(c['close'] != p for c, p in zip(candles, prices)):
+            return None
     ema9  = ind.ema(prices, EMA_FAST)
     ema21 = ind.ema(prices, EMA_SLOW)
     rsi_v = ind.rsi(prices, RSI_PERIOD)
@@ -104,7 +113,8 @@ def compute_feature_map(prices: list) -> Optional[dict]:
     low5  = min(last5)
     hl5   = (high5 - low5) / price if price != 0 else 0.0
 
-    candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+    if candles is None:
+        candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
     pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
     pa_features = pa if pa is not None else _PA_DEFAULTS
 
@@ -129,13 +139,13 @@ def compute_feature_map(prices: list) -> Optional[dict]:
     }
 
 
-def extract_feature_vector(prices: list, feature_order: list) -> Optional[list]:
+def extract_feature_vector(prices: list, feature_order: list, candles: list = None) -> Optional[list]:
     """
     Extrai features de uma lista de preços como vetor ordenado.
 
     Retorna list[float] na ordem de feature_order, ou None se dados insuficientes.
     """
-    fm = compute_feature_map(prices)
+    fm = compute_feature_map(prices, candles)
     if fm is None:
         return None
     return [fm.get(f, 0.0) for f in feature_order]

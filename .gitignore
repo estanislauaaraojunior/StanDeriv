@@ -18,3 +18,15 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Dados versionados e recuperações locais (preservar fora de commits)
+ticks_v2.csv
+operacoes_v2.csv
+recovered_data/
+*.metadata.json
+*.candidate
+*.new
+executor.lock
+risk_accounts.json
+dataset_v2.csv
+dataset_v2.csv.tmp

@@ -1,3 +1,5 @@
+from pathlib import Path
+import math
 #!/usr/bin/env python3
 """
 pipeline.py — orquestrador automático do pipeline completo.
@@ -88,6 +90,8 @@ from config import (
 
 from executor import DerivBot
 from risk_manager import RiskManager
+from market_data import ensure_header, append_record, read_records, canonicalize
+from model_contract import FEATURE_WINDOW, compatible, usable, write_json_atomic, acquire_execution_lock
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -181,41 +185,16 @@ _shutdown = threading.Event()
 # Utilitários
 # ─────────────────────────────────────────────────────────────────
 
-def _count_ticks() -> int:
-    """Conta linhas de dados em ticks.csv, descontando o cabeçalho."""
-    if (
-        not os.path.exists(TICKS_CSV)
-        or os.path.getsize(TICKS_CSV) == 0
-    ):
+def _count_ticks():
+    """Conta apenas ticks identificados do ativo; closes históricos não antecipam treino."""
+    if not os.path.exists(TICKS_CSV):
         return 0
-
-    try:
-        with open(TICKS_CSV, "r", encoding="utf-8") as f:
-            return max(0, sum(1 for _ in f) - 1)
-    except Exception:
-        return 0
+    with open(TICKS_CSV,newline='') as f:
+        return sum(row.get('kind')=='tick' and row.get('symbol')==SYMBOL for row in csv.DictReader(f))
 
 
-def _ensure_ticks_header() -> None:
-    """Cria ticks.csv com cabeçalho caso não exista ou esteja vazio."""
-    if (
-        not os.path.exists(TICKS_CSV)
-        or os.path.getsize(TICKS_CSV) == 0
-    ):
-        with open(
-            TICKS_CSV,
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as f:
-            csv.writer(f).writerow(
-                [
-                    "epoch",
-                    "datetime",
-                    "symbol",
-                    "price",
-                ]
-            )
+def _ensure_ticks_header():
+    ensure_header(TICKS_CSV)
 
 
 def _uses_bearer_auth() -> bool:
@@ -330,7 +309,8 @@ def _fetch_prices_for_symbol(
                     "ticks_history": symbol,
                     "end": "latest",
                     "count": count,
-                    "style": "ticks",
+                    "style": "candles",
+                    "granularity": CANDLE_TIMEFRAME_SEC,
                     "adjust_start_time": 1,
                 }
             )
@@ -363,17 +343,11 @@ def _fetch_prices_for_symbol(
             _send_history_request(ws)
             return
 
-        if data.get("msg_type") == "history":
+        if data.get("msg_type") == "candles":
             try:
-                prices = (
-                    data.get("history", {})
-                    .get("prices", [])
-                )
-
-                received.extend(
-                    float(p)
-                    for p in prices
-                )
+                cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
+                received.extend(float(c['close']) for c in data.get('candles', [])
+                                if int(c['epoch'])+CANDLE_TIMEFRAME_SEC<=cutoff)
             except (TypeError, ValueError):
                 pass
 
@@ -466,7 +440,7 @@ def _score_trend(prices: list) -> float:
 
     ema_factor = (
         1.2
-        if ema9 != ema21
+        if (ema9 - ema21) * macd_hist > 0
         else 1.0
     )
 
@@ -752,6 +726,8 @@ def _fetch_historical_ticks(
             ) as f:
                 for row in csv.DictReader(f):
                     try:
+                        if row.get("kind") != "candle":
+                            continue
                         existing_epochs.add(
                             (
                                 int(row["epoch"]),
@@ -845,13 +821,8 @@ def _fetch_historical_ticks(
                         )
                     )
 
-                    if epoch > 0:
-                        received.append(
-                            (
-                                epoch,
-                                close,
-                            )
-                        )
+                    if epoch > 0 and epoch+CANDLE_TIMEFRAME_SEC <= int(time.time()):
+                        received.append((epoch,close,candle))
 
                 except (
                     TypeError,
@@ -909,38 +880,13 @@ def _fetch_historical_ticks(
 
     written = 0
 
-    with open(
-        TICKS_CSV,
-        "a",
-        newline="",
-        encoding="utf-8",
-    ) as f:
-        writer = csv.writer(f)
-
-        for epoch, close in received:
-            key = (
-                epoch,
-                SYMBOL,
-            )
-
-            if key in existing_epochs:
-                continue
-
-            dt_str = datetime.fromtimestamp(
-                epoch
-            ).isoformat()
-
-            writer.writerow(
-                [
-                    epoch,
-                    dt_str,
-                    SYMBOL,
-                    close,
-                ]
-            )
-
-            existing_epochs.add(key)
-            written += 1
+    for epoch,close,candle in received:
+        key=(epoch,SYMBOL)
+        if key in existing_epochs:
+            continue
+        append_record(TICKS_CSV,epoch,SYMBOL,close,kind='candle',timeframe=CANDLE_TIMEFRAME_SEC,candle=candle)
+        existing_epochs.add(key)
+        written+=1
 
     print(
         f"[HISTÓRICO] {written:,} candles "
@@ -1370,6 +1316,8 @@ class _CollectorThread(threading.Thread):
             ) as f:
                 for row in csv.DictReader(f):
                     try:
+                        if row.get("symbol") != SYMBOL or row.get("kind") != "tick":
+                            continue
                         epoch = int(
                             row["epoch"]
                         )
@@ -1500,7 +1448,8 @@ class _CollectorThread(threading.Thread):
         if epoch <= self._last_epoch:
             return
 
-        self._last_epoch = epoch
+        if tick.get("symbol") != SYMBOL or not math.isfinite(price) or price<=0:
+            return
 
         # Filtro anti-spike.
         if self._last_price != 0.0:
@@ -1525,6 +1474,7 @@ class _CollectorThread(threading.Thread):
 
                 return
 
+        self._last_epoch = epoch
         self._last_price = price
 
         dt_str = datetime.fromtimestamp(
@@ -1533,20 +1483,7 @@ class _CollectorThread(threading.Thread):
 
         self._local_count += 1
 
-        with open(
-            TICKS_CSV,
-            "a",
-            newline="",
-            encoding="utf-8",
-        ) as f:
-            csv.writer(f).writerow(
-                [
-                    epoch,
-                    dt_str,
-                    SYMBOL,
-                    price,
-                ]
-            )
+        append_record(TICKS_CSV,epoch,SYMBOL,price)
 
         print(
             f"\r[COLETOR] Ticks: "
@@ -1673,161 +1610,34 @@ def _trim_ticks(
         )
 
 
-def _load_latest_final_metrics() -> Optional[dict]:
-    """Lê a última métrica final registrada."""
-    metrics_path = os.path.join(
-        os.path.dirname(
-            os.path.abspath(
-                AI_MODEL_PATH
-            )
-        ),
-        "model_metrics.json",
-    )
-
-    if not os.path.exists(
-        metrics_path
-    ):
-        return None
-
+def _load_latest_final_metrics():
     try:
-        with open(
-            metrics_path,
-            "r",
-            encoding="utf-8",
-        ) as f:
-            hist = json.load(f)
-
-        if not isinstance(
-            hist,
-            list,
-        ):
-            return None
-
-        for item in reversed(hist):
-            if (
-                isinstance(
-                    item,
-                    dict,
-                )
-                and item.get(
-                    "stage"
-                )
-                == "final"
-            ):
-                return item
-
+        import joblib
+        payload=joblib.load(AI_MODEL_PATH)
+        metadata=payload.get('metadata',{})
+        if usable(metadata,SYMBOL):
+            return metadata.get('metrics')
     except Exception:
-        return None
-
+        pass
     return None
 
 
-def _should_promote_model(
-    current: Optional[dict],
-    challenger: Optional[dict],
-) -> tuple[bool, str]:
-    """Decide se o challenger pode substituir o champion."""
-    if challenger is None:
-        return (
-            False,
-            "métricas do challenger indisponíveis",
-        )
-
-    if current is None:
-        return (
-            True,
-            "sem champion anterior com métricas finais",
-        )
-
-    cur_auc = float(
-        current.get(
-            "auc",
-            0.0,
-        )
-    )
-
-    cur_acc = float(
-        current.get(
-            "accuracy",
-            0.0,
-        )
-    )
-
-    cur_f1 = float(
-        current.get(
-            "f1",
-            0.0,
-        )
-    )
-
-    ch_auc = float(
-        challenger.get(
-            "auc",
-            0.0,
-        )
-    )
-
-    ch_acc = float(
-        challenger.get(
-            "accuracy",
-            0.0,
-        )
-    )
-
-    ch_f1 = float(
-        challenger.get(
-            "f1",
-            0.0,
-        )
-    )
-
-    auc_ok = (
-        ch_auc
-        >= cur_auc
-        + MODEL_PROMOTION_MIN_AUC_DELTA
-    )
-
-    acc_ok = (
-        ch_acc
-        >= cur_acc
-        - MODEL_PROMOTION_MAX_ACC_DROP
-    )
-
-    f1_ok = (
-        ch_f1
-        >= cur_f1
-        - MODEL_PROMOTION_MAX_F1_DROP
-    )
-
-    if (
-        auc_ok
-        and acc_ok
-        and f1_ok
-    ):
-        return (
-            True,
-            (
-                f"AUC {ch_auc:.4f} >= "
-                f"{cur_auc:.4f}+"
-                f"{MODEL_PROMOTION_MIN_AUC_DELTA:.4f}, "
-                f"ACC {ch_acc:.4f} sem queda excessiva, "
-                f"F1 {ch_f1:.4f} sem queda excessiva"
-            ),
-        )
-
-    return (
-        False,
-        (
-            "gate reprovado | "
-            f"champion(AUC={cur_auc:.4f}, "
-            f"ACC={cur_acc:.4f}, "
-            f"F1={cur_f1:.4f}) "
-            "vs "
-            f"challenger(AUC={ch_auc:.4f}, "
-            f"ACC={ch_acc:.4f}, "
-            f"F1={ch_f1:.4f})"
-        ),
-    )
+def _should_promote_model(current,challenger):
+    if not challenger or not challenger.get('eligible'):
+        return False,'teste final não comprova qualidade mínima no vencimento configurado'
+    # A comparação usa reavaliação do bundle ativo no mesmo período do candidato.
+    baseline=challenger.get('champion_metrics')
+    if current is not None and baseline is None:
+        return False,'champion não pôde ser reavaliado fora da amostra no mesmo período'
+    if baseline is None:
+        return True,'primeiro bundle compatível com teste final aprovado'
+    for key in ('evaluation_start','evaluation_end','n_test'):
+        if baseline.get(key)!=challenger.get(key):
+            return False,'períodos de avaliação diferentes'
+    ok=(challenger['auc']>=baseline['auc']+MODEL_PROMOTION_MIN_AUC_DELTA
+        and challenger['accuracy']>=baseline['accuracy']-MODEL_PROMOTION_MAX_ACC_DROP
+        and challenger['f1']>=baseline['f1']-MODEL_PROMOTION_MAX_F1_DROP)
+    return ok,'comparação temporal no mesmo conjunto'
 
 
 def _run_training(
@@ -1901,8 +1711,8 @@ def _run_training(
                     index=False,
                 )
 
-        except Exception:
-            pass
+        except Exception as exc:
+            raise ValueError("snapshot sem esquema válido") from exc
 
         _trim_ticks(
             tmp_ticks,
@@ -1912,8 +1722,8 @@ def _run_training(
         n = dataset_builder.build_dataset(
             tmp_ticks,
             dataset_path,
-            window_size=50,
-            lookforward=TARGET_LOOKFORWARD,
+            window_size=FEATURE_WINDOW,
+            symbol=SYMBOL,
         )
 
         if n < 30:
@@ -1980,32 +1790,9 @@ def _run_training(
 # FASE 6 — Re-treino adaptativo
 # ─────────────────────────────────────────────────────────────────
 
-def _reset_ai_predictor() -> None:
-    """
-    Reseta os modelos singleton para que os novos modelos
-    sejam carregados na próxima inferência.
-    """
-    try:
-        import ai_predictor
-
-        ai_predictor._model = None
-        ai_predictor._model_loaded = False
-        ai_predictor._model_features = []
-
-        ai_predictor._dur_model = None
-        ai_predictor._dur_model_loaded = False
-        ai_predictor._dur_model_features = []
-
-        ai_predictor._tft_model = None
-        ai_predictor._tft_model_loaded = False
-
-        print(
-            "[RE-TREINO] Singleton da IA resetado — "
-            "novo modelo ativo na próxima predição."
-        )
-
-    except Exception:
-        pass
+def _reset_ai_predictor():
+    import ai_predictor
+    ai_predictor.reset()
 
 
 _retrain_state: dict = {
@@ -2249,21 +2036,9 @@ def _retrain_loop() -> None:
                     AI_MODEL_PATH,
                 )
 
-                if os.path.exists(
-                    tmp_tft
-                ):
-                    os.replace(
-                        tmp_tft,
-                        TRANSFORMER_MODEL_PATH,
-                    )
-
-                if os.path.exists(
-                    tmp_duration
-                ):
-                    os.replace(
-                        tmp_duration,
-                        DURATION_MODEL_PATH,
-                    )
+                metadata=tmp_model+'.metadata.json'
+                if os.path.exists(metadata):
+                    os.replace(metadata,AI_MODEL_PATH+'.metadata.json')
 
                 _reset_ai_predictor()
 
@@ -2432,6 +2207,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    execution_lock=acquire_execution_lock(Path(__file__).resolve().parent/"executor.lock")
 
     # ── Determina modo ────────────────────────────────────────
 
@@ -2488,11 +2264,10 @@ def main() -> None:
 
     import config as _cfg
 
-    detected = (
-        _detect_trending_symbol(
-            no_scan=args.no_scan
-        )
-    )
+    state_path=Path(__file__).resolve().parent/'state.json'
+    prior=json.loads(state_path.read_text()) if state_path.exists() else {}
+    pending=prior.get('active_contract')
+    detected=(pending.get('symbol') if pending else None) or _detect_trending_symbol(no_scan=args.no_scan)
 
     if detected != _cfg.SYMBOL:
         print(
@@ -2615,18 +2390,22 @@ def main() -> None:
 
     # ── FASES 2/3/4: Treino inicial ──────────────────────────
 
-    model_exists = (
-        os.path.exists(
-            AI_MODEL_PATH
-        )
-        and not args.force_retrain
-    )
+    model_exists = _load_latest_final_metrics() is not None and not args.force_retrain
 
-    if model_exists:
+    if not model_exists and not args.force_retrain and not pending:
+        print('[PIPELINE] Modelo incompatível: coleta apenas, sem contratos ou retreino automático. '
+              'Treino requer dados identificados e --force-retrain.')
+        if args.skip_collect:
+            _shutdown.set()
+            return
+        while not _shutdown.wait(5):
+            pass
+        return
+
+    if model_exists or pending:
         print(
             "\n[PIPELINE] Fases 2-4: "
-            "model.pkl encontrado — "
-            "treino inicial ignorado."
+            "treino inicial ignorado: modelo compatível ou contrato pendente a reconciliar."
         )
 
         print(
@@ -2640,10 +2419,11 @@ def main() -> None:
         )
 
         success, _metrics = (
-            _run_training()
+            _run_training(model_path=AI_MODEL_PATH+".new")
         )
 
-        if not success:
+        promote, reason = _should_promote_model(_load_latest_final_metrics(), _metrics)
+        if not success or not promote:
             print(
                 "\n[PIPELINE] Treino inicial "
                 "falhou. Encerrando."
@@ -2653,6 +2433,12 @@ def main() -> None:
 
             sys.exit(1)
 
+        os.replace(AI_MODEL_PATH+'.new',AI_MODEL_PATH)
+        if os.path.exists(AI_MODEL_PATH+'.new.metadata.json'):
+            os.replace(AI_MODEL_PATH+'.new.metadata.json',AI_MODEL_PATH+'.metadata.json')
+        model_exists=True
+        _reset_ai_predictor()
+
     # ── FASE 5: Re-treino ─────────────────────────────────────
 
     retrain_thread = threading.Thread(
@@ -2661,14 +2447,11 @@ def main() -> None:
         name="Retrain",
     )
 
-    retrain_thread.start()
-
-    print(
-        "\n[PIPELINE] Fase 5: "
-        "Re-treino adaptativo iniciado "
-        f"(backstop: "
-        f"{RETRAIN_MAX_INTERVAL_SEC // 60} min)."
-    )
+    if model_exists:
+        retrain_thread.start()
+        print('[PIPELINE] Re-treino adaptativo iniciado para o bundle compatível')
+    else:
+        print('[PIPELINE] Reconciliação de contratos; novas entradas e retreino bloqueados sem modelo compatível')
 
     # ── FASE 6: Bot ───────────────────────────────────────────
 
@@ -2697,6 +2480,8 @@ def main() -> None:
         initial_balance=initial_balance
     )
 
+    risk_manager._authenticated_initial_balance = initial_balance
+
     bot = DerivBot(
         risk_manager=risk_manager,
         demo=is_demo,
@@ -2711,6 +2496,7 @@ def main() -> None:
         ),
     )
 
+    bot._execution_lock=execution_lock
     bot.run()
 
 

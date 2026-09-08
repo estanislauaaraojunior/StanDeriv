@@ -50,6 +50,8 @@ from config import (
     get_active_symbol,
 )
 from feature_engine import FEATURES
+from model_contract import FEATURE_WINDOW, MAX_TICK_GAP_SEC
+from market_data import read_records, canonicalize
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ class SignalContext:
     adx_history: list[float]
     candle_alerts: list[dict]
     evaluation_epoch: int
+    candles: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -203,7 +206,7 @@ class HistoricalRiskManager:
         self.pause_until_epoch = 0
 
     def _advance_day(self, epoch: int) -> None:
-        day = datetime.fromtimestamp(epoch, timezone.utc).date()
+        day = datetime.fromtimestamp(epoch).date()  # mesmo calendário local do RiskManager
         if day != self.current_day:
             self.current_day = day
             self.daily_start_balance = self.balance
@@ -291,16 +294,15 @@ def load_ticks(
     if not source.exists():
         raise FileNotFoundError(f"arquivo de ticks não encontrado: {source}")
 
-    parsed: list[Tick] = []
-    invalid_rows = 0
-    with source.open(newline="", encoding="utf-8-sig") as handle:
-        for row in csv.reader(handle):
-            tick = _parse_tick_row(row)
-            if tick is None:
-                if row and row[0].strip().lower() not in {"epoch", "timestamp", "time"}:
-                    invalid_rows += 1
-                continue
-            parsed.append(tick)
+    records,rejected=read_records(source)
+    records,conflicts,_=canonicalize(records)
+    if rejected:
+        raise ValueError("registros inválidos; recupere os dados antes de avaliar")
+    if conflicts:
+        raise ValueError('ticks conflitantes no mesmo instante')
+    parsed=[Tick(r['epoch'],r['price'],r['symbol']) for r in records if r['kind'] != 'candle']
+    invalid_rows=len(rejected)
+    unknown=sum(r['kind']=='legacy_unknown' for r in records)
 
     if not parsed:
         raise ValueError("nenhum tick válido encontrado")
@@ -329,6 +331,7 @@ def load_ticks(
 
     quality = {
         "rows_valid": len(parsed),
+        "unknown_provenance": unknown,
         "rows_invalid": invalid_rows,
         "ticks_selected": len(selected_ticks),
         "symbols_found": dict(sorted(counts.items())),
@@ -401,6 +404,7 @@ class BacktestEngine:
         signal_provider: Optional[SignalProvider] = None,
         duration_provider: Optional[DurationProvider] = None,
     ) -> None:
+        self._strict_data = signal_provider is None
         self.ticks = ticks
         self.symbol = symbol
         self.settings = settings or BacktestSettings()
@@ -416,6 +420,7 @@ class BacktestEngine:
             candle_alerts=context.candle_alerts,
             use_ai_model=self.settings.use_ai,
             evaluation_time=context.evaluation_epoch,
+            candles=context.candles,
         )
 
     def _default_duration(self, context: SignalContext) -> int:
@@ -424,6 +429,8 @@ class BacktestEngine:
         return self.settings.duration
 
     def run(self, source: str = "") -> BacktestReport:
+        if self._strict_data and any(b.epoch-a.epoch>MAX_TICK_GAP_SEC for a,b in zip(self.ticks,self.ticks[1:])):
+            raise ValueError('backtest exige segmento contínuo de ticks identificados; separe lacunas antes de avaliar')
         candles = build_candles(self.ticks, self.settings.timeframe_sec)
         if len(candles) <= self.settings.min_candles:
             raise ValueError(
@@ -431,6 +438,16 @@ class BacktestEngine:
                 f"{len(candles)} <= {self.settings.min_candles}"
             )
 
+        if self.settings.use_ai:
+            import config
+            if (self.settings.timeframe_sec != config.CANDLE_TIMEFRAME_SEC or self.settings.duration != config.DURATION
+                    or self.settings.duration_unit != config.DURATION_UNIT or self.symbol != config.get_active_symbol()):
+                raise ValueError('backtest IA incompatível com o contrato do modelo')
+            info=ai_predictor.status()
+            if not info['ready']:
+                raise ValueError(info['reason'])
+            if self.ticks[0].epoch <= ai_predictor._metadata.get('last_seen_epoch',float('inf')):
+                raise ValueError('backtest deve usar período posterior à avaliação do modelo')
         risk = HistoricalRiskManager(self.settings)
         epochs = [tick.epoch for tick in self.ticks]
         closes: list[float] = []
@@ -475,6 +492,11 @@ class BacktestEngine:
                 evaluation_epoch,
             )
 
+            prior_adx=list(adx_history)
+            adx_value=ind.adx(closes[-FEATURE_WINDOW:],14)
+            if adx_value is not None:
+                adx_history.append(adx_value)
+
             if len(closes) < self.settings.min_candles or pending is not None:
                 continue
 
@@ -490,18 +512,17 @@ class BacktestEngine:
             if candles_since_last_entry < adaptive_interval:
                 continue
 
-            prices = closes[-self.settings.price_buffer_size :]
-            adx_min = strategy.get_adaptive_adx_min(list(adx_history))
+            prices = closes[-min(self.settings.price_buffer_size, FEATURE_WINDOW) :]
+            adx_min = strategy.get_adaptive_adx_min(prior_adx)
             context = SignalContext(
                 prices=list(prices),
                 adx_min=adx_min,
-                adx_history=list(adx_history),
+                adx_history=prior_adx,
                 candle_alerts=list(alerts),
                 evaluation_epoch=evaluation_epoch,
+                candles=[{k:getattr(c,k) for k in ("epoch","open","high","low","close")} for c in candles[max(0,index-FEATURE_WINDOW+1):index+1]],
             )
             signal, indicators = self.signal_provider(context)
-            if indicators.get("adx") is not None:
-                adx_history.append(float(indicators["adx"]))
             if signal not in {"BUY", "SELL"}:
                 continue
 
@@ -758,6 +779,8 @@ def main() -> int:
     )
     try:
         ticks, symbol, quality = load_ticks(args.input, args.symbol, args.max_ticks)
+        if quality.get("unknown_provenance"):
+            raise ValueError("arquivo legado sem proveniência; não pode fundamentar backtest de contratos")
         engine = BacktestEngine(ticks, symbol, settings)
         report = engine.run(source=str(Path(args.input).resolve()))
         report.data_quality.update(quality)

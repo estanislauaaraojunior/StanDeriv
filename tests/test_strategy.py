@@ -39,11 +39,11 @@ def _lateral(n=200, center=100.0, amp=0.02):
 # ──────────────────────────────────────────────────────────────────
 
 def _no_ai():
-    return patch.object(config, "USE_AI_MODEL", False)
+    return patch.object(strategy, "USE_AI_MODEL", False)
 
 
 def _no_weighted():
-    return patch.object(config, "USE_WEIGHTED_SIGNAL", False)
+    return patch.object(strategy, "USE_WEIGHTED_SIGNAL", False)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -138,13 +138,13 @@ class TestWeightedSignal(unittest.TestCase):
     def test_weighted_mode_runs(self):
         """Modo ponderado não deve lançar exceção."""
         prices = _uptrend(300, step=0.10)
-        with _no_ai(), patch.object(config, "USE_WEIGHTED_SIGNAL", True):
+        with _no_ai(), patch.object(strategy, "USE_WEIGHTED_SIGNAL", True):
             result = strategy.get_signal(prices, adx_min=0)
         self.assertIsInstance(result, tuple)
 
     def test_weighted_result_valid_signal(self):
         prices = _uptrend(300, step=0.10)
-        with _no_ai(), patch.object(config, "USE_WEIGHTED_SIGNAL", True):
+        with _no_ai(), patch.object(strategy, "USE_WEIGHTED_SIGNAL", True):
             sig, _ = strategy.get_signal(prices, adx_min=0)
         self.assertIn(sig, ("BUY", "SELL", None))
 

@@ -50,6 +50,12 @@ from config import (
 from risk_manager import RiskManager
 from strategy import get_signal, get_adaptive_adx_min
 import ai_predictor
+import config
+import math
+import hashlib
+import secrets
+from model_contract import FEATURE_WINDOW, MAX_TICK_GAP_SEC, duration_seconds, profitable_proposal, write_json_atomic, acquire_execution_lock
+from market_data import read_records, canonicalize
 import indicators as ind
 
 
@@ -76,6 +82,7 @@ class DerivBot:
         account_id: str = "",
         initial_ws_url: str = "",
     ) -> None:
+        self.symbol = SYMBOL
         self.risk_manager = risk_manager
         self.demo = demo
         self.auth_mode = auth_mode
@@ -92,6 +99,7 @@ class DerivBot:
         # Buffer de candles de tempo.
         self._candle_closes: deque = deque(maxlen=500)
         self._candle_epochs: deque = deque(maxlen=500)
+        self._candles: deque = deque(maxlen=500)
 
         # Vela em construção.
         self._cur_candle_open: Optional[float] = None
@@ -147,6 +155,17 @@ class DerivBot:
         self._api_history_loaded: bool = False
 
         self._ws: Optional[websocket.WebSocketApp] = None
+        self._phase = 'idle'
+        self._proposal_req_id = None
+        self._buy_req_id = None
+        self._request_counter = secrets.randbelow(1_000_000_000)
+        self._pending_payout = None
+        self._pending_buy_price = None
+        self._proposal_id = None
+        self._auth_verified = False
+        self._state_lock = threading.RLock()
+        self._restore_active_contract()
+
 
     def _uses_bearer_auth(self) -> bool:
         return self.auth_mode == "bearer" and bool(self.account_id)
@@ -167,37 +186,57 @@ class DerivBot:
             attempts=3,
         )
 
-    def _set_active_contract_state(self, clear: bool = False) -> None:
-        """Sincroniza contrato ativo no state.json para o dashboard."""
-        try:
-            state = {}
+    def _next_request_id(self):
+        self._request_counter += 1
+        return self._request_counter
 
-            if (
-                _STATE_JSON.exists()
-                and _STATE_JSON.stat().st_size > 0
-            ):
-                with _STATE_JSON.open("r", encoding="utf-8") as f:
-                    state = json.load(f)
+    def _restore_active_contract(self):
+        if not _STATE_JSON.exists():
+            return
+        saved = json.loads(_STATE_JSON.read_text()).get('active_contract')
+        if not saved:
+            return
+        self._phase = saved.get('phase', 'reconciling')
+        self._in_trade = True
+        self._open_contract_id = str(saved['contract_id']) if saved.get('contract_id') else None
+        self._pending_direction = saved.get('direction', '')
+        self._pending_stake = float(saved.get('stake', 0))
+        self._pending_duration = int(saved.get('duration', config.DURATION))
+        self._pending_indicators = saved.get('indicators', {})
+        self._pending_timestamp = float(saved.get('pending_timestamp', 0))
+        self._buy_timestamp = float(saved.get('buy_timestamp', 0))
+        self._pending_payout = saved.get('payout')
+        self._pending_buy_price = saved.get('buy_price')
+        self._proposal_req_id = saved.get('proposal_req_id')
+        self._buy_req_id = saved.get('buy_req_id')
+        self._saved_account_key = saved.get('account_key', '')
+        self._contract_symbol = saved.get('symbol', self.symbol)
+        # Uma proposta sem compra pode ser abandonada após reinício. Uma compra incerta não.
+        if self._phase == 'proposal':
+            self._clear_pending()
 
-            if clear:
-                state["active_contract"] = None
-            else:
-                state["active_contract"] = {
-                    "has_active": True,
-                    "contract_id": self._open_contract_id,
-                    "symbol": SYMBOL,
-                    "direction": self._pending_direction,
-                    "duration": self._pending_duration,
-                    "buy_timestamp": self._buy_timestamp,
-                    "entry_epoch": self._entry_epoch,
-                    "entry_price": self._entry_price,
-                }
+    def _set_active_contract_state(self, clear=False):
+        state = json.loads(_STATE_JSON.read_text()) if _STATE_JSON.exists() else {}
+        state['active_contract'] = None if clear else dict(
+            has_active=True, phase=self._phase, contract_id=self._open_contract_id,
+            symbol=getattr(self,'_contract_symbol',self.symbol), direction=self._pending_direction,
+            stake=self._pending_stake, duration=self._pending_duration, duration_unit=config.DURATION_UNIT,
+            buy_timestamp=self._buy_timestamp, pending_timestamp=self._pending_timestamp,
+            entry_epoch=self._entry_epoch, entry_price=self._entry_price,
+            payout=self._pending_payout, buy_price=self._pending_buy_price,
+            indicators=self._pending_indicators, proposal_req_id=self._proposal_req_id,
+            buy_req_id=self._buy_req_id, account_key=self.risk_manager._account_key)
+        write_json_atomic(_STATE_JSON,state)
 
-            with _STATE_JSON.open("w", encoding="utf-8") as f:
-                json.dump(state, f)
-
-        except Exception:
-            pass
+    def _clear_pending(self):
+        self._in_trade=False
+        self._phase='idle'
+        self._open_contract_id=None
+        self._proposal_req_id=self._buy_req_id=None
+        self._pending_timestamp=self._buy_timestamp=0.
+        self._entry_price=0.
+        self._entry_epoch=0
+        self._set_active_contract_state(clear=True)
 
     # ─────────────────────────────────────────────────────────
     # API pública
@@ -205,14 +244,16 @@ class DerivBot:
 
     def run(self) -> None:
         """Inicia o bot. Bloqueia até encerramento."""
-        self._set_active_contract_state(clear=True)
+        # Impede duas instâncias financeiras no mesmo workspace, inclusive via CLI.
+        if not hasattr(self,'_execution_lock'):
+            self._execution_lock=acquire_execution_lock(_STATE_JSON.with_name('executor.lock'))
         self._preload_candles_from_csv()
 
         mode = "DEMO" if self.demo else "REAL 💸"
 
         print(f"\n{'=' * 55}")
         print(f"  Deriv Trading Bot — Modo: {mode}")
-        print(f"  Símbolo : {SYMBOL}")
+        print(f"  Símbolo : {self.symbol}")
         print(f"  Duração : {DURATION} {DURATION_UNIT}")
         print(
             f"  Saldo   : "
@@ -250,93 +291,60 @@ class DerivBot:
 
                 time.sleep(5)
 
-    def _preload_candles_from_csv(self) -> None:
-        """
-        Pré-carrega closes de candles históricos do ticks.csv
-        para o símbolo ativo, eliminando o período de aquecimento.
-        """
-        try:
-            import csv as _csv
+    def _merge_candles(self, candles):
+        merged = {int(c['epoch']): c for c in self._candles}
+        for candle in candles:
+            c = {k:float(candle[k]) for k in ('open','high','low','close')}
+            c['epoch']=int(candle['epoch'])
+            if (c['epoch'] % CANDLE_TIMEFRAME_SEC or
+                    any(not math.isfinite(c[k]) or c[k] <= 0 for k in ('open','high','low','close')) or
+                    not c['low'] <= min(c['open'],c['close']) <= max(c['open'],c['close']) <= c['high']):
+                raise ValueError('candle inválido')
+            merged[c['epoch']]=c
+        ordered=[merged[k] for k in sorted(merged)][-500:]
+        # Indicadores não atravessam intervalos ausentes (mercado fechado/desconexão).
+        for i in range(len(ordered)-1,0,-1):
+            if ordered[i]['epoch']-ordered[i-1]['epoch'] != CANDLE_TIMEFRAME_SEC:
+                ordered=ordered[i:]
+                break
+        self._candles=deque(ordered,maxlen=500)
+        self._candle_closes=deque((c['close'] for c in ordered),maxlen=500)
+        self._candle_epochs=deque((c['epoch'] for c in ordered),maxlen=500)
 
-            ticks_path = Path(TICKS_CSV)
+    def _warm_adx(self):
+        self._adx_history.clear()
+        closes=list(self._candle_closes)
+        for end in range(29,len(closes)+1):
+            value=ind.adx(closes[max(0,end-FEATURE_WINDOW):end],config.ADX_PERIOD)
+            if value is not None:
+                self._adx_history.append(value)
 
-            if (
-                not ticks_path.exists()
-                or ticks_path.stat().st_size == 0
-            ):
-                return
-
-            ticks_list = []
-
-            with ticks_path.open("r", encoding="utf-8") as f:
-                reader = _csv.DictReader(f)
-
-                for row in reader:
-                    try:
-                        sym = row.get("symbol", "")
-
-                        if sym != SYMBOL:
-                            continue
-
-                        ticks_list.append(
-                            {
-                                "epoch": int(row["epoch"]),
-                                "price": float(row["price"]),
-                            }
-                        )
-
-                    except (KeyError, ValueError):
-                        continue
-
-            if len(ticks_list) < 60:
-                return
-
-            candles = ind.ticks_to_candles_by_time(
-                ticks_list,
-                CANDLE_TIMEFRAME_SEC,
-            )
-
-            if not candles:
-                return
-
-            # Carregar apenas os últimos 490 candles.
-            for candle in candles[-490:]:
-                self._candle_closes.append(candle["close"])
-                self._candle_epochs.append(candle["epoch"])
-
-            # Pré-aquecer histórico de ADX.
-            closes = list(self._candle_closes)
-
-            for i in range(14, len(closes)):
-                adx_value = ind.adx(
-                    closes[max(0, i - 50):i],
-                    14,
-                )
-
-                if adx_value:
-                    self._adx_history.append(adx_value)
-
-            n = len(self._candle_closes)
-
-            print(
-                f"[BOT] Pré-carregados {n} candles históricos "
-                f"de {SYMBOL} — aquecimento instantâneo."
-            )
-
-        except Exception as exc:
-            print(
-                f"[BOT] Aviso: pré-carga de candles falhou "
-                f"({exc}) — aguardando ao vivo."
-            )
-
-    # ─────────────────────────────────────────────────────────
-    # Handlers WebSocket
-    # ─────────────────────────────────────────────────────────
+    def _preload_candles_from_csv(self):
+        if not Path(TICKS_CSV).exists():
+            return
+        records, rejected=read_records(TICKS_CSV)
+        records,conflicts,_=canonicalize(records)
+        if rejected or conflicts:
+            print('[BOT] Histórico local inválido; aguardando OHLC autenticado')
+            return
+        cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
+        candles=[]
+        for row in records:
+            if row['symbol']==self.symbol and row['kind']=='candle' and row['timeframe']==CANDLE_TIMEFRAME_SEC and row['epoch']<cutoff:
+                candles.append(dict(epoch=row['epoch'],open=row['open'],high=row['high'],low=row['low'],close=row['price']))
+        self._merge_candles(candles)
+        self._warm_adx()
 
     def _on_open(self, ws) -> None:
         print("[BOT] Conectado à Deriv WebSocket API")
 
         if self._uses_bearer_auth():
+            accounts=deriv_session.get_options_accounts(app_id=APP_ID,token=TOKEN)
+            account=next((a for a in accounts if str(a.get('account_id') or a.get('id'))==self.account_id),None)
+            if not account or account.get('account_type') != ('demo' if self.demo else 'real'):
+                ws.close()
+                raise ValueError('conta Bearer não corresponde à conta e ao modo selecionados')
+            self._verify_account(hashlib.sha256(self.account_id.encode()).hexdigest(),float(account['balance']))
             self._start_authenticated_stream(ws)
         else:
             ws.send(json.dumps({"authorize": TOKEN}))
@@ -349,11 +357,14 @@ class DerivBot:
             return
 
         if "error" in data:
-            error = data.get("error") or {}
-            print(
-                f"[BOT] Erro API: "
-                f"{error.get('message', 'Erro desconhecido')}"
-            )
+            req_id=data.get('req_id')
+            if self._phase=='proposal' and req_id==self._proposal_req_id:
+                self._clear_pending()
+            elif self._phase=='buy' and req_id==self._buy_req_id:
+                # Resultado financeiro incerto: não repetir a compra automaticamente.
+                self._phase='reconciling'
+                self._set_active_contract_state()
+            print('[BOT] Requisição rejeitada pela API; estado correlacionado preservado')
             return
 
         msg_type = data.get("msg_type", "")
@@ -374,12 +385,14 @@ class DerivBot:
             self._handle_proposal(
                 ws,
                 data["proposal"],
+                req_id=data.get("req_id"),
             )
 
         elif msg_type == "buy":
             self._handle_buy(
                 ws,
                 data["buy"],
+                req_id=data.get("req_id"),
             )
 
         elif msg_type == "candles":
@@ -397,6 +410,7 @@ class DerivBot:
         print(f"[BOT] Erro WebSocket: {error}")
 
     def _on_close(self, ws, code, msg) -> None:
+        self._auth_verified=False
         print(
             f"[BOT] Conexão encerrada "
             f"(código: {code}) — tentando reconectar..."
@@ -406,28 +420,28 @@ class DerivBot:
     # Lógica de negócio
     # ─────────────────────────────────────────────────────────
 
-    def _handle_authorize(self, ws, auth: dict) -> None:
-        balance = float(
-            auth.get(
-                "balance",
-                self.risk_manager.balance,
-            )
-        )
-
-        self.risk_manager.balance = balance
-
-        # Bug #6: sincroniza saldo inicial diário
-        # com o saldo real da API.
-        self.risk_manager._daily_start_balance = balance
-
-        print(
-            f"[BOT] Autorizado | "
-            f"Saldo real: {balance:.2f} USD"
-        )
-
+    def _handle_authorize(self, ws, auth):
+        virtual=auth.get('is_virtual')
+        if virtual not in (0,1,False,True) or bool(virtual)!=self.demo or not auth.get('loginid'):
+            self._auth_verified=False
+            ws.close()
+            raise ValueError('conta autenticada não corresponde ao modo solicitado')
+        key=hashlib.sha256(str(auth['loginid']).encode()).hexdigest()
+        self._verify_account(key,float(auth['balance']))
         self._start_authenticated_stream(ws)
 
+    def _verify_account(self,key,balance):
+        saved=getattr(self,'_saved_account_key','')
+        if self._in_trade and (not saved or saved!=key):
+            raise ValueError('contrato pendente sem identidade de conta compatível; reconciliação necessária')
+        self.risk_manager.bind_account(key,balance,preserve_local_balance=self._in_trade)
+        self._auth_verified=True
+
     def _start_authenticated_stream(self, ws) -> None:
+        if not self._auth_verified:
+            return
+        if self._in_trade and not self._open_contract_id:
+            print('[BOT] Compra sem confirmação: entradas bloqueadas até reconciliação')
         # Re-subscrever ao contrato ativo em caso de reconexão.
         if (
             self._in_trade
@@ -450,28 +464,16 @@ class DerivBot:
                 f"{self._open_contract_id}"
             )
 
-        # Reconexão: candles já estão em memória.
-        if self._api_history_loaded:
-            ws.send(
-                json.dumps(
-                    {
-                        "ticks": SYMBOL,
-                        "subscribe": 1,
-                    }
-                )
-            )
-            return
-
         # Primeira conexão: solicita candles históricos.
         print(
             f"[BOT] Baixando 100 candles históricos "
-            f"de {SYMBOL} ({CANDLE_TIMEFRAME_SEC}s)..."
+            f"de {self.symbol} ({CANDLE_TIMEFRAME_SEC}s)..."
         )
 
         ws.send(
             json.dumps(
                 {
-                    "ticks_history": SYMBOL,
+                    "ticks_history": self.symbol,
                     "adjust_start_time": 1,
                     "count": 100,
                     "end": "latest",
@@ -481,80 +483,41 @@ class DerivBot:
             )
         )
 
-    def _handle_api_candles(
-        self,
-        ws,
-        candles: list,
-    ) -> None:
-        """Processa candles OHLC recebidos da API Deriv."""
-
-        if not candles:
-            print(
-                "[BOT] Histórico de candles vazio "
-                "— subscrevendo ticks direto."
-            )
-
-            self._api_history_loaded = True
-
-            ws.send(
-                json.dumps(
-                    {
-                        "ticks": SYMBOL,
-                        "subscribe": 1,
-                    }
-                )
-            )
-            return
-
-        # Popula closes e epochs.
-        # O último candle pode ainda estar aberto.
-        loaded = 0
-
-        for candle in candles[:-1]:
-            try:
-                self._candle_closes.append(
-                    float(candle["close"])
-                )
-
-                self._candle_epochs.append(
-                    int(candle["epoch"])
-                )
-
-                loaded += 1
-
-            except (KeyError, ValueError, TypeError):
-                continue
-
-        # Pré-aquecer histórico de ADX.
-        closes = list(self._candle_closes)
-
-        for i in range(14, len(closes)):
-            adx_value = ind.adx(
-                closes[max(0, i - 50):i],
-                14,
-            )
-
-            if adx_value:
-                self._adx_history.append(adx_value)
-
-        self._api_history_loaded = True
-
-        print(
-            f"[BOT] {loaded} candles históricos "
-            f"carregados via API — aquecimento instantâneo."
-        )
-
-        ws.send(
-            json.dumps(
-                {
-                    "ticks": SYMBOL,
-                    "subscribe": 1,
-                }
-            )
-        )
+    def _handle_api_candles(self, ws, candles):
+        cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
+        closed=[c for c in candles if int(c['epoch'])+CANDLE_TIMEFRAME_SEC<=cutoff]
+        self._merge_candles(closed)
+        self._warm_adx()
+        self._api_history_loaded=True
+        self._cur_candle_open=None
+        current=next((c for c in candles if int(c['epoch'])==cutoff),None)
+        if current is not None:
+            values=[float(current[k]) for k in ('open','high','low','close')]
+            if all(math.isfinite(v) and v>0 for v in values):
+                self._cur_candle_epoch=cutoff
+                self._cur_candle_open,self._cur_candle_high,self._cur_candle_low,self._cur_candle_close=values
+        self._candle_alerts.clear()
+        ws.send(json.dumps({'ticks':self.symbol,'subscribe':1}))
 
     def _handle_tick(self, ws, tick: dict) -> None:
-        price = float(tick["quote"])
+        if tick.get('symbol') != self.symbol or not self._auth_verified:
+            return
+        try:
+            price=float(tick['quote'])
+            epoch=int(tick['epoch'])
+        except (KeyError,ValueError,TypeError):
+            return
+        if not math.isfinite(price) or price<=0 or epoch<=self._last_tick_epoch:
+            return
+        if self._last_tick_price and abs(price/self._last_tick_price-1)>=config.TICK_SPIKE_THRESHOLD:
+            return
+        if self._last_tick_epoch and epoch-self._last_tick_epoch>MAX_TICK_GAP_SEC:
+            self._cur_candle_open=None
+            self._candles.clear()
+            self._candle_closes.clear()
+            self._candle_epochs.clear()
+            self._adx_history.clear()
+            self._candle_alerts.clear()
 
         self._last_tick_price = price
 
@@ -572,6 +535,15 @@ class DerivBot:
         # P9: reiniciar watchdog a cada tick.
         self._reset_watchdog()
 
+        if self._phase=='proposal' and time.time()-self._pending_timestamp>PROPOSAL_TIMEOUT_SEC:
+            self._clear_pending()
+        elif self._phase=='buy' and time.time()-self._pending_timestamp>PROPOSAL_TIMEOUT_SEC:
+            self._phase='reconciling'
+            self._set_active_contract_state()
+        if self._open_contract_id and self._buy_timestamp and time.time()-self._buy_timestamp>duration_seconds(self._pending_duration,DURATION_UNIT)+10:
+            if self._contract_poll_timer is None:
+                self._poll_contract_result(self._open_contract_id)
+
         # ── Montar vela de tempo ──────────────────────────────
 
         self._new_candle_closed = False
@@ -580,6 +552,8 @@ class DerivBot:
             self._cur_candle_open is None
             and epoch > 0
         ):
+            if epoch % CANDLE_TIMEFRAME_SEC > MAX_TICK_GAP_SEC:
+                return  # esperar início observado, sem fabricar OHLC de uma vela parcial
             # Primeira vela: alinhar ao início da janela.
             self._cur_candle_epoch = (
                 epoch // CANDLE_TIMEFRAME_SEC
@@ -613,14 +587,8 @@ class DerivBot:
                 self._cur_candle_close = price
 
             else:
-                # Fechar vela corrente.
-                self._candle_closes.append(
-                    self._cur_candle_close
-                )
-
-                self._candle_epochs.append(
-                    self._cur_candle_epoch
-                )
+                self._merge_candles([dict(epoch=self._cur_candle_epoch,open=self._cur_candle_open,
+                    high=self._cur_candle_high,low=self._cur_candle_low,close=self._cur_candle_close)])
 
                 self._new_candle_closed = True
                 self._candle_tick_counter = 0
@@ -638,83 +606,14 @@ class DerivBot:
                 # Verificar padrões da vela fechada.
                 self._check_candle_patterns(price)
 
-        # ── Aquecimento ───────────────────────────────────────
-
-        n_candles = len(self._candle_closes)
-
-        if n_candles < MIN_CANDLES:
-            remain_sec = (
-                (MIN_CANDLES - n_candles)
-                * CANDLE_TIMEFRAME_SEC
-                // 60
-            )
-
-            print(
-                f"\r[BOT] Aquecendo... "
-                f"{n_candles}/{MIN_CANDLES} velas"
-                f" (~{remain_sec} min restantes)",
-                end="",
-                flush=True,
-            )
-
+        n_candles=len(self._candle_closes)
+        if n_candles<MIN_CANDLES:
             return
-
-        # P1: timeout de proposal sem resposta.
-        if (
-            self._in_trade
-            and self._pending_timestamp > 0
-            and self._open_contract_id is None
-        ):
-            if (
-                time.time()
-                - self._pending_timestamp
-                > PROPOSAL_TIMEOUT_SEC
-            ):
-                print(
-                    f"\n[BOT] Proposal sem resposta por "
-                    f"{PROPOSAL_TIMEOUT_SEC}s — cancelando"
-                )
-
-                self._in_trade = False
-                self._pending_timestamp = 0.0
-                self._pending_direction = ""
-                self._pending_stake = 0.0
-
-        # P7: timeout de contrato aberto.
-        if (
-            self._in_trade
-            and self._open_contract_id
-            and self._buy_timestamp > 0
-        ):
-            contract_timeout = max(
-                self._pending_duration * 60 * 3,
-                180,
-            )
-
-            if (
-                time.time()
-                - self._buy_timestamp
-                > contract_timeout
-            ):
-                print(
-                    f"\n[BOT] Contrato "
-                    f"{self._open_contract_id} sem resultado "
-                    f"após {contract_timeout}s — resetando estado"
-                )
-
-                if self._contract_poll_timer is not None:
-                    self._contract_poll_timer.cancel()
-                    self._contract_poll_timer = None
-
-                self._in_trade = False
-                self._open_contract_id = None
-                self._buy_timestamp = 0.0
-                self._entry_price = 0.0
-                self._entry_epoch = 0
-
-                self._set_active_contract_state(
-                    clear=True
-                )
+        self._evaluation_adx_history=list(self._adx_history)
+        if self._new_candle_closed:
+            value=ind.adx(list(self._candle_closes)[-FEATURE_WINDOW:],config.ADX_PERIOD)
+            if value is not None:
+                self._adx_history.append(value)
 
         # Não abrir nova ordem se há contrato ativo.
         if self._in_trade:
@@ -775,21 +674,17 @@ class DerivBot:
         )
 
         adx_min = get_adaptive_adx_min(
-            list(self._adx_history)
+            self._evaluation_adx_history
         )
 
         signal, indicators = get_signal(
             candle_closes,
             adx_min=adx_min,
-            adx_history=list(self._adx_history),
+            adx_history=self._evaluation_adx_history,
             candle_alerts=list(self._candle_alerts),
+            candles=list(self._candles),
+            evaluation_time=self._last_tick_epoch,
         )
-
-        # Atualizar histórico de ADX.
-        if indicators.get("adx"):
-            self._adx_history.append(
-                indicators["adx"]
-            )
 
         self._print_status(
             price,
@@ -806,241 +701,123 @@ class DerivBot:
 
             self._candles_since_last_entry = 0
 
-    def _send_proposal(
-        self,
-        ws,
-        direction: str,
-        indicators: dict,
-    ) -> None:
-        contract_type = (
-            "CALL"
-            if direction == "BUY"
-            else "PUT"
-        )
-
-        stake = self.risk_manager.get_stake()
-
-        # Duração escolhida pela IA.
-        duration = ai_predictor.predict_duration(
-            list(self._candle_closes)
-        )
-
-        # Guardar estado da operação pendente.
-        self._pending_direction = direction
-        self._pending_stake = stake
-        self._pending_duration = duration
-        self._pending_indicators = indicators
-        self._pending_timestamp = time.time()
-
-        proposal = {
-            "proposal": 1,
-            "amount": stake,
-            "basis": BASIS,
-            "contract_type": contract_type,
-            "currency": CURRENCY,
-            "duration": duration,
-            "duration_unit": DURATION_UNIT,
-        }
-
-        if self._uses_bearer_auth():
-            proposal["underlying_symbol"] = SYMBOL
-        else:
-            proposal["symbol"] = SYMBOL
-
+    def _send_proposal(self,ws,direction,indicators):
+        if self._in_trade or not self._auth_verified or not self.risk_manager.can_trade():
+            return
+        if direction not in ('BUY','SELL'):
+            return
+        if time.time()-self._last_tick_epoch>MAX_TICK_GAP_SEC:
+            return
+        duration=ai_predictor.predict_duration(list(self._candle_closes))
+        if duration!=config.DURATION or DURATION_UNIT!=config.DURATION_UNIT:
+            return
+        if not indicators.get('model_id'):
+            return
+        probability=indicators.get('win_probability')
+        # Sem probabilidade calibrada não existe justificativa de compra pelo payout.
+        if probability is None or not math.isfinite(probability) or not 0<=probability<=1:
+            return
+        self._pending_payout=self._pending_buy_price=None
+        self._pending_direction=direction
+        self._pending_stake=self.risk_manager.get_stake()
+        self._pending_duration=duration
+        self._pending_indicators=dict(indicators)
+        self._pending_timestamp=time.time()
+        self._contract_symbol=self.symbol
+        self._saved_account_key=self.risk_manager._account_key
+        self._proposal_req_id=self._next_request_id()
+        self._phase='proposal'
+        self._in_trade=True
+        self._set_active_contract_state()
+        proposal=dict(proposal=1,amount=self._pending_stake,basis=BASIS,contract_type='CALL' if direction=='BUY' else 'PUT',
+                      currency=CURRENCY,duration=duration,duration_unit=DURATION_UNIT,req_id=self._proposal_req_id)
+        proposal['underlying_symbol' if self._uses_bearer_auth() else 'symbol']=self.symbol
         ws.send(json.dumps(proposal))
 
-        duration_unit_label = (
-            DURATION_UNIT
-            if DURATION_UNIT in ("t", "s", "m")
-            else DURATION_UNIT
-        )
+    def _handle_proposal(self,ws,proposal,req_id=None):
+        if self._phase!='proposal' or req_id is None or req_id!=self._proposal_req_id:
+            return
+        if time.time()-self._pending_timestamp>PROPOSAL_TIMEOUT_SEC:
+            self._clear_pending()
+            return
+        probability=self._pending_indicators.get('win_probability')
+        price,payout=proposal.get('ask_price'),proposal.get('payout')
+        if (not profitable_proposal(price,payout,probability) or float(price)>self._pending_stake
+                or not proposal.get('id') or not self.risk_manager.can_trade()):
+            self._clear_pending()
+            return
+        self._pending_buy_price=float(price)
+        self._pending_payout=float(payout)
+        self._proposal_id=proposal['id']
+        self._buy_req_id=self._next_request_id()
+        self._phase='buy'
+        self._pending_timestamp=time.time()
+        # Persiste a intenção ANTES de enviar; crash não autoriza segunda compra.
+        self._set_active_contract_state()
+        ws.send(json.dumps({'buy':self._proposal_id,'price':self._pending_buy_price,'req_id':self._buy_req_id}))
 
-        print(
-            f"\n[BOT] → {direction} | "
-            f"Stake: {stake:.2f} USD | "
-            f"Duração: {duration}"
-            f"{duration_unit_label} | "
-            f"ADX:{indicators.get('adx', 0):.1f} "
-            f"RSI:{indicators.get('rsi', 0):.1f}"
-        )
+    def _handle_buy(self,ws,buy,req_id=None):
+        if self._phase not in ('buy','reconciling') or req_id is None or req_id!=self._buy_req_id:
+            return
+        contract_id=str(buy.get('contract_id',''))
+        if not contract_id.isdigit():
+            return
+        self._open_contract_id=contract_id
+        self._pending_stake=self._pending_buy_price or self._pending_stake
+        self._phase='open'
+        self._in_trade=True
+        self._buy_timestamp=time.time()
+        self._pending_timestamp=0.
+        self._entry_price=0.
+        self._entry_epoch=0  # somente a atualização oficial fornece o spot
+        self._set_active_contract_state()
+        ws.send(json.dumps({'proposal_open_contract':1,'contract_id':int(contract_id),'subscribe':1}))
+        self._schedule_poll(contract_id,duration_seconds(self._pending_duration,DURATION_UNIT)+2)
 
-    def _handle_proposal(
-        self,
-        ws,
-        proposal: dict,
-    ) -> None:
-        proposal_id = proposal["id"]
-
-        self._in_trade = True
-
-        ws.send(
-            json.dumps(
-                {
-                    "buy": proposal_id,
-                    "price": self._pending_stake,
-                }
-            )
-        )
-
-    def _handle_buy(
-        self,
-        ws,
-        buy: dict,
-    ) -> None:
-        contract_id = str(
-            buy.get("contract_id", "")
-        )
-
-        self._open_contract_id = contract_id
-
-        # Proposal aceita.
-        self._pending_timestamp = 0.0
-
-        # P7: marcar abertura.
-        self._buy_timestamp = time.time()
-
-        self._entry_price = self._last_tick_price
-        self._entry_epoch = self._last_tick_epoch
-
-        self._set_active_contract_state(
-            clear=False
-        )
-
-        print(
-            f"[BOT] Contrato aberto | ID: {contract_id}"
-        )
-
-        # Subscrever atualizações do contrato.
-        if contract_id:
-            ws.send(
-                json.dumps(
-                    {
-                        "proposal_open_contract": 1,
-                        "contract_id": int(contract_id),
-                        "subscribe": 1,
-                    }
-                )
-            )
-
-        # P13: agendar poll ativo.
+    def _schedule_poll(self,contract_id,delay=5):
         if self._contract_poll_timer is not None:
             self._contract_poll_timer.cancel()
-
-        # Duração em minutos → segundos.
-        poll_delay = max(
-            self._pending_duration * 60 + 2,
-            5,
-        )
-
-        self._contract_poll_timer = threading.Timer(
-            poll_delay,
-            self._poll_contract_result,
-            args=[contract_id],
-        )
-
-        self._contract_poll_timer.daemon = True
+        self._contract_poll_timer=threading.Timer(delay,self._poll_contract_result,args=[contract_id])
+        self._contract_poll_timer.daemon=True
         self._contract_poll_timer.start()
 
-    def _handle_contract_update(
-        self,
-        contract: dict,
-    ) -> None:
-        # Ignorar contratos anteriores.
-        if (
-            str(contract.get("contract_id", ""))
-            != self._open_contract_id
-        ):
+    def _handle_contract_update(self,contract):
+        with self._state_lock:
+            if str(contract.get('contract_id',''))!=self._open_contract_id:
+                return
+            for key,attr,cast in [('entry_spot','_entry_price',float),('date_start','_entry_epoch',int)]:
+                if contract.get(key) is not None:
+                    setattr(self,attr,cast(contract[key]))
+            if contract.get('is_sold') not in (1, True, '1'):
+                return
+            try:
+                profit=float(contract['profit'])
+                if not math.isfinite(profit):
+                    return
+            except (ValueError,KeyError,TypeError):
+                return
+            details=dict(duration_unit=DURATION_UNIT,entry_price=contract.get('entry_spot',contract.get('entry_tick','')),
+                         exit_price=contract.get('exit_spot',contract.get('exit_tick','')),
+                         entry_epoch=contract.get('entry_tick_time',contract.get('date_start','')),exit_epoch=contract.get('exit_spot_time',contract.get('exit_tick_time',contract.get('date_expiry',''))),
+                         payout=contract.get('payout',self._pending_payout),buy_price=contract.get('buy_price',self._pending_buy_price))
+            self.risk_manager.record_result(symbol=getattr(self,'_contract_symbol',self.symbol),direction=self._pending_direction,
+                stake=self._pending_stake,duration=self._pending_duration,profit=profit,indicators=self._pending_indicators,
+                contract_id=self._open_contract_id,details=details)
+            if self._contract_poll_timer is not None:
+                self._contract_poll_timer.cancel()
+                self._contract_poll_timer=None
+            self._clear_pending()
+
+    def _poll_contract_result(self,contract_id,attempt=0):
+        if self._open_contract_id!=contract_id:
             return
-
-        if not contract.get("is_sold"):
-            return
-
-        profit = float(
-            contract.get("profit", 0.0)
-        )
-
-        self.risk_manager.record_result(
-            symbol=SYMBOL,
-            direction=self._pending_direction,
-            stake=self._pending_stake,
-            duration=self._pending_duration,
-            profit=profit,
-            indicators=self._pending_indicators,
-        )
-
-        self._in_trade = False
-        self._open_contract_id = None
-        self._buy_timestamp = 0.0
-        self._entry_price = 0.0
-        self._entry_epoch = 0
-
-        self._set_active_contract_state(
-            clear=True
-        )
-
-        # P13: cancelar poll.
-        if self._contract_poll_timer is not None:
-            self._contract_poll_timer.cancel()
-            self._contract_poll_timer = None
-
-    # ─────────────────────────────────────────────────────────
-    # P13 — Poll ativo de resultado
-    # ─────────────────────────────────────────────────────────
-
-    def _poll_contract_result(
-        self,
-        contract_id: str,
-        attempt: int = 0,
-    ) -> None:
-        """
-        Consulta pontual do estado do contrato.
-
-        Disparada após a duração esperada. Caso a subscrição
-        passiva tenha perdido o evento final, a consulta tenta
-        recuperar o resultado.
-
-        Tenta até 6 vezes, uma a cada 5 segundos.
-        """
-
-        if self._open_contract_id != contract_id:
-            return
-
-        ws = self._ws
-
-        if ws is None:
-            return
-
-        print(
-            f"\n[BOT] Poll de resultado para contrato "
-            f"{contract_id} "
-            f"(tentativa {attempt + 1})..."
-        )
-
-        ws.send(
-            json.dumps(
-                {
-                    "proposal_open_contract": 1,
-                    "contract_id": int(contract_id),
-                }
-            )
-        )
-
-        if attempt < 5:
-            self._contract_poll_timer = threading.Timer(
-                5,
-                self._poll_contract_result,
-                args=[
-                    contract_id,
-                    attempt + 1,
-                ],
-            )
-
-            self._contract_poll_timer.daemon = True
-            self._contract_poll_timer.start()
-
-    # ─────────────────────────────────────────────────────────
-    # P9 — Watchdog de heartbeat
-    # ─────────────────────────────────────────────────────────
+        self._contract_poll_timer=None
+        try:
+            if self._ws is not None:
+                self._ws.send(json.dumps({'proposal_open_contract':1,'contract_id':int(contract_id)}))
+        finally:
+            if self._open_contract_id==contract_id:
+                self._schedule_poll(contract_id,15)
 
     def _reset_watchdog(self) -> None:
         """Reinicia o timer de heartbeat a cada tick."""
@@ -1079,26 +856,9 @@ class DerivBot:
         para alimentar _candle_alerts.
         """
 
-        closes = list(
-            self._candle_closes
-        )
-
-        if len(closes) < 4:
+        candles=list(self._candles)[-FEATURE_WINDOW:]
+        if len(candles)<4:
             return
-
-        # Constrói candles a partir da série de closes.
-        candles = (
-            ind.ticks_to_candles(
-                closes,
-                max(4, len(closes) // 20),
-            )
-            if len(closes) >= 4
-            else []
-        )
-
-        if len(candles) < 4:
-            return
-
         patterns = ind.detect_candle_patterns(
             candles
         )
@@ -1176,7 +936,7 @@ class DerivBot:
                 "direction": pattern["direction"],
                 "strength": pattern["strength"],
                 "price": current_price,
-                "timestamp": time.time(),
+                "timestamp": self._last_tick_epoch,
                 "context": context,
             }
 

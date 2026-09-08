@@ -63,9 +63,9 @@ def _require_token(f):
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 
-TICKS_CSV      = _ROOT / "ticks.csv"
-OPERATIONS_CSV = _ROOT / "operacoes_log.csv"
-DATASET_CSV    = _ROOT / "dataset.csv"
+TICKS_CSV      = _ROOT / "ticks_v2.csv"
+OPERATIONS_CSV = _ROOT / "operacoes_v2.csv"
+DATASET_CSV    = _ROOT / "dataset_v2.csv"
 MODEL_PKL      = _ROOT / "model.pkl"
 TFT_PKL        = _ROOT / "transformer_model.pkl"
 DURATION_PKL   = _ROOT / "duration_model.pkl"
@@ -604,7 +604,7 @@ def api_bot_start():
         return jsonify({"ok": False, "msg": "mode deve ser 'demo' ou 'real'"}), 400
     try:
         balance = float(data.get("balance", 1000.0))
-        if balance <= 0:
+        if not _math.isfinite(balance) or balance <= 0:
             raise ValueError()
     except (TypeError, ValueError):
         return jsonify({"ok": False, "msg": "balance deve ser um número positivo"}), 400
@@ -626,33 +626,12 @@ def api_bot_start():
     if force_retrain:
         cmd += ["--force-retrain"]
 
-    # Reseta risk_state.json para que a nova sessão comece do zero
-    # (sem herdar consec_losses, pause ou daily_pnl de execuções anteriores)
-    try:
-        import datetime as _dt
-        _fresh_state = {
-            "is_paused": False,
-            "pause_remaining_sec": 0,
-            "daily_pnl": 0.0,
-            "daily_pnl_pct": 0.0,
-            "consec_losses": 0,
-            "drift_detected": False,
-            "win_rate_recent": 0.0,
-            "date": _dt.date.today().isoformat(),
-            "balance": balance,
-            "pause_until_epoch": 0.0,
-            "recent_results": [],
-        }
-        RISK_STATE_JSON.write_text(json.dumps(_fresh_state))
-    except Exception:
-        pass
-
+    # Reiniciar processo não redefine o risco diário nem apaga contratos pendentes.
     # Registra timestamp de início da sessão em state.json
     try:
         import datetime as _dt2
         _cur_state = _read_json_safe(STATE_JSON)
         _cur_state["session_start"] = _dt2.datetime.now().isoformat()
-        _cur_state["active_contract"] = None
         _cur_state["min_ticks_target"] = int(min_ticks_target)
         STATE_JSON.write_text(json.dumps(_cur_state))
     except Exception:
@@ -709,60 +688,21 @@ def api_bot_stop():
         if PID_FILE.exists():
             PID_FILE.unlink()
 
-        try:
-            _state = _read_json_safe(STATE_JSON)
-            _state["active_contract"] = None
-            STATE_JSON.write_text(json.dumps(_state))
-        except Exception:
-            pass
-
+        # O encerramento do processo não liquida o contrato na corretora.
         return jsonify({"ok": True, "pid": pid})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
 
 
-def _reset_operations_and_state() -> tuple[bool, str]:
-    """Reseta os arquivos de operações e estados usados pelo dashboard.
-
-    Retorna (True, "") em sucesso ou (False, mensagem) em erro.
-    """
-    try:
-        # Trunca/limpa o CSV de operações
-        try:
-            if OPERATIONS_CSV.exists():
-                OPERATIONS_CSV.write_text("", encoding="utf-8")
-        except Exception:
-            pass
-
-        # Reseta risk_state.json com valores iniciais seguros
-        try:
-            import datetime as _dt
-            _fresh_state = {
-                "is_paused": False,
-                "pause_remaining_sec": 0,
-                "daily_pnl": 0.0,
-                "daily_pnl_pct": 0.0,
-                "consec_losses": 0,
-                "drift_detected": False,
-                "win_rate_recent": 0.0,
-                "date": _dt.date.today().isoformat(),
-                "balance": 0.0,
-                "pause_until_epoch": 0.0,
-                "recent_results": [],
-            }
-            RISK_STATE_JSON.write_text(json.dumps(_fresh_state))
-        except Exception:
-            pass
-
-        # Reseta state.json para um dicionário vazio
-        try:
-            STATE_JSON.write_text(json.dumps({}))
-        except Exception:
-            pass
-
-        return True, ""
-    except Exception as e:
-        return False, str(e)
+def _reset_operations_and_state():
+    """Reseta apenas a visualização; ledger, PnL diário e contrato são preservados."""
+    if _bot_running()[0] or _read_json_safe(STATE_JSON).get('active_contract'):
+        return False, 'Contrato pendente ou bot ativo; não é possível limpar a sessão'
+    from model_contract import write_json_atomic
+    state=_read_json_safe(STATE_JSON)
+    state['session_start']=dt.datetime.now().isoformat()
+    write_json_atomic(STATE_JSON,state)
+    return True, ''
 
 
 @app.route("/api/bot/data/clear", methods=["POST"])
@@ -775,8 +715,8 @@ def api_bot_data_clear():
     try:
         ok, msg = _reset_operations_and_state()
         if not ok:
-            return jsonify({"ok": False, "msg": msg}), 500
-        return jsonify({"ok": True, "msg": "Dados limpos: operacoes_log.csv, risk_state.json, state.json"})
+            return jsonify({"ok": False, "msg": msg}), 409
+        return jsonify({"ok": True, "msg": "Visualização reiniciada; histórico e risco diário preservados"})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
 
@@ -1290,26 +1230,21 @@ def api_state():
     except Exception:
         model_info["min_ticks_target"] = 500
 
-    # — Métricas do último treino (model_metrics.json) —
+    # Métrica ativa precisa pertencer ao bundle publicado; candidatos ficam separados.
     try:
-        _mm_data = _read_json_safe(MODEL_METRICS_JSON)
-        if isinstance(_mm_data, list) and _mm_data:
-            _mm = _mm_data[-1]
-            model_info["last_metrics"] = {
-                "best_model": _mm.get("best_model"),
-                "accuracy":   _mm.get("accuracy"),
-                "auc":        _mm.get("auc"),
-                "f1":         _mm.get("f1"),
-                "n_train":    _mm.get("n_train"),
-                "n_test":     _mm.get("n_test"),
-                "timestamp":  _mm.get("timestamp"),
-            }
-        else:
-            model_info["last_metrics"] = {}
+        from model_contract import fingerprint, usable
+        manifest=_read_json_safe(Path(str(MODEL_PKL)+'.metadata.json'))
+        symbol=active_state_pre.get('symbol','')
+        valid=(MODEL_PKL.exists() and isinstance(manifest,dict) and manifest.get('approved')
+               and usable(manifest,symbol) and manifest.get('artifact_sha256')==fingerprint(MODEL_PKL))
+        model_info['ready']=bool(valid)
+        model_info['last_metrics']=manifest.get('metrics',{}) if valid else {}
+        model_info['blocked_reason']='' if valid else 'Modelo sem validação compatível com o ativo e vencimento'
+        candidates=_read_json_safe(MODEL_METRICS_JSON)
+        model_info['last_candidate_metrics']=candidates[-1] if isinstance(candidates,list) and candidates else {}
     except Exception:
-        model_info["last_metrics"] = {}
+        model_info.update(ready=False,last_metrics={},blocked_reason='Modelo não validado')
 
-    # — Risk state e state.json —
     risk_state = _read_json_safe(RISK_STATE_JSON)
     active_state = active_state_pre  # já lido acima para session_start
     active_contract = active_state.get("active_contract")
@@ -1434,14 +1369,19 @@ def api_model_history():
 
 @app.route("/api/model-metrics")
 def api_model_metrics():
-    data = _read_json_safe(MODEL_METRICS_JSON)
-    if not isinstance(data, list) or not data:
+    # Apenas métricas do artefato aprovado; histórico de candidatos tem rota própria.
+    entry = {}
+    try:
+        from model_contract import fingerprint, usable
+        manifest = _read_json_safe(Path(str(MODEL_PKL) + '.metadata.json'))
+        state = _read_json_safe(STATE_JSON)
+        symbol = state.get('symbol', '') if isinstance(state, dict) else ''
+        if (MODEL_PKL.exists() and isinstance(manifest, dict)
+                and usable(manifest, symbol)
+                and manifest.get('artifact_sha256') == fingerprint(MODEL_PKL)):
+            entry = manifest.get('metrics', {})
+    except Exception:
         entry = {}
-    else:
-        # Prefere a última entrada com stage "final" (que contém models_comparison).
-        # Fallback para a última entrada disponível.
-        final_entries = [e for e in data if e.get("stage") == "final"]
-        entry = final_entries[-1] if final_entries else data[-1]
     resp = jsonify(entry)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"

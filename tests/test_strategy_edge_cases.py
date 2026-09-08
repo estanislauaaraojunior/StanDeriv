@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import strategy
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -123,7 +124,7 @@ def test_rsi_boundary_oversold_blocks_sell():
     import config
 
     prices = _trend_down(200)
-    with patch.object(config, "USE_WEIGHTED_SIGNAL", False):
+    with patch.object(strategy, "USE_WEIGHTED_SIGNAL", False):
         sig, ind = get_signal(prices)
         # RSI em downtrend forte pode ser < 38 — SELL pode ou não ser gerado
         # O importante é que não haja exceção
@@ -139,7 +140,7 @@ def test_rsi_boundary_overbought_blocks_buy():
     import config
 
     prices = _trend_up(200)
-    with patch.object(config, "USE_WEIGHTED_SIGNAL", False):
+    with patch.object(strategy, "USE_WEIGHTED_SIGNAL", False):
         sig, ind = get_signal(prices)
         assert sig in (None, "BUY", "SELL")
 
@@ -152,7 +153,7 @@ def test_weighted_signal_returns_valid():
     import config
 
     prices = _trend_up(200)
-    with patch.object(config, "USE_WEIGHTED_SIGNAL", True):
+    with patch.object(strategy, "USE_WEIGHTED_SIGNAL", True):
         sig, ind = get_signal(prices)
         assert sig in (None, "BUY", "SELL")
         assert isinstance(ind, dict)
@@ -164,7 +165,7 @@ def test_weighted_signal_score_in_indicators():
     import config
 
     prices = _trend_up(200)
-    with patch.object(config, "USE_WEIGHTED_SIGNAL", True):
+    with patch.object(strategy, "USE_WEIGHTED_SIGNAL", True):
         sig, ind = get_signal(prices)
         if ind:  # só verifica se indicadores foram calculados
             assert "tech_score" in ind, "tech_score ausente nos indicadores ponderados"
