@@ -2,6 +2,21 @@
 
 Bot de opções binárias para índices sintéticos da plataforma Deriv, com análise técnica, Price Action e inteligência artificial (ensemble ML + Transformer).
 
+## Instruções para assistentes de IA
+
+O ponto de entrada é [AGENTS.md](AGENTS.md), que orienta a leitura do
+[prompt de engenharia do StanDeriv](docs/PROMPT_STANDERIV.md) e a consulta por
+área do [guia técnico](docs/GUIA_TECNICO.md). O prompt também pode ser copiado
+integralmente para um assistente com acesso ao repositório, sem campos a preencher.
+
+O Codex descobre `AGENTS.md` ao iniciar o trabalho no projeto, conforme a
+[documentação oficial](https://developers.openai.com/codex/guides/agents-md).
+Os outros documentos são lidos por instrução desse arquivo, conforme a tarefa;
+arquivos Markdown arbitrários não são carregados automaticamente. Após alterar
+essas instruções, inicie uma nova sessão no repositório ou peça à sessão atual
+para reler `AGENTS.md`. Em outros assistentes, indique esse arquivo explicitamente
+se a ferramenta não oferecer suporte a essa convenção.
+
 ---
 
 ## Arquitetura
