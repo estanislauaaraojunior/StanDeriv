@@ -17,10 +17,14 @@ load_dotenv()  # carrega variáveis de .env (ignorado se não existir)
 # False → opera na conta REAL (requer TOKEN de conta real + confirmação no terminal)
 DEMO_MODE = True
 
+# Limites comuns à simulação, conta demo e conta real.
+MIN_NET_PAYOUT = 0.60
+MIN_APPROVAL_WIN_RATE = 0.60
+
 
 # ----- Conexão -----
 _RAW_APP_ID = os.environ.get("DERIV_APP_ID", "1089").strip()
-_RAW_TOKEN = os.environ["DERIV_TOKEN"].strip()
+_RAW_TOKEN = os.environ.get("DERIV_TOKEN", "").strip()
 
 DERIV_AUTH_MODE = os.environ.get(
     "DERIV_AUTH_MODE",
@@ -425,3 +429,6 @@ TRANSFORMER_BATCH_SIZE = 128
 TRANSFORMER_LR = 3e-4
 
 TRANSFORMER_PATIENCE = 10
+
+# Retreino exige informação nova, não apenas mais ticks do mesmo candle.
+RETRAIN_NEW_LABELS_TRIGGER = 120

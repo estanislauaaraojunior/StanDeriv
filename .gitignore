@@ -30,3 +30,6 @@ executor.lock
 risk_accounts.json
 dataset_v2.csv
 dataset_v2.csv.tmp
+
+payout_quotes.csv
+training_reports/

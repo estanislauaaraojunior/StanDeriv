@@ -118,6 +118,34 @@ def test_train_and_inference_features_are_identical_and_pa_available(tmp_path):
     assert any(live[i] != 0 for i, k in enumerate(feature_engine.FEATURES) if k.startswith('pa_'))
 
 
+def test_historical_candles_can_warm_features_but_live_ticks_label_contracts(tmp_path):
+    import dataset_builder
+    source = tmp_path / 'ticks.csv'
+    out = tmp_path / 'dataset.csv'
+    base = 1_800_000_000
+    with source.open('w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(FIELDS)
+        for i in range(FEATURE_WINDOW):
+            epoch = base + i * config.CANDLE_TIMEFRAME_SEC
+            price = 100 + i * .01
+            writer.writerow([epoch, '', 'R_100', price, 'candle',
+                             config.CANDLE_TIMEFRAME_SEC, price - .01, price + .02, price - .02])
+        for offset in range(FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC,
+                            (FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC) + 2400):
+            writer.writerow([base + offset, '', 'R_100', 101 + offset * .00001,
+                             'tick', 0, '', '', ''])
+
+    estimated = dataset_builder.count_labelable_contracts(source, symbol='R_100')
+    build_dataset(source, out)
+    frame = pd.read_csv(out)
+    assert len(frame) == estimated
+    assert len(frame) > 0
+    assert frame.iloc[0].signal_epoch == base + FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC
+    assert frame.iloc[0].entry_epoch == frame.iloc[0].signal_epoch
+    assert frame.iloc[0].expiry_epoch == frame.iloc[0].entry_epoch + config.DURATION * 60
+
+
 def test_feature_window_ignores_older_prices():
     candles = [dict(epoch = i * 60, open = 100 + i * .1, high = 101 + i * .1, low = 99 + i * .1, close = 100 + i * .1) for i in range(200)]
     prices = [c['close'] for c in candles]
@@ -230,6 +258,26 @@ def test_model_loader_refuses_legacy_and_mismatching_contract(tmp_path, monkeypa
         assert ai_predictor.predict([100] * 100)[0] is None
 
 
+def test_model_loader_checks_sidecar_before_pickle(tmp_path, monkeypatch):
+    import joblib
+    path = tmp_path / 'model.pkl'
+    path.write_bytes(b'old pickle')
+    monkeypatch.setattr(config, 'AI_MODEL_PATH', str(path))
+    monkeypatch.setattr(joblib, 'load', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('pickle aberto cedo demais')))
+    ai_predictor.reset()
+    assert ai_predictor.status()['ready'] is False
+
+
+def test_missing_model_sidecar_error_is_actionable(tmp_path):
+    from model_contract import load_validated_bundle
+    path = tmp_path / 'model.pkl'
+    path.write_bytes(b'old pickle')
+    with pytest.raises(FileNotFoundError) as exc:
+        load_validated_bundle(path, config.get_active_symbol())
+    assert 'metadado do modelo não encontrado' in str(exc.value)
+    assert '--force-retrain' in str(exc.value)
+
+
 def test_one_minute_and_fifteen_minute_contracts_cannot_share_bundle(monkeypatch):
     metadata = specification(config.get_active_symbol())
     monkeypatch.setattr(config, 'DURATION', 1)
@@ -283,6 +331,295 @@ def test_scanner_requests_time_candles(monkeypatch):
     pipeline._fetch_prices_for_symbol('R_100', 100)
     request = next(m for m in sent if 'ticks_history' in m)
     assert request['style'] == 'candles' and request['granularity'] == config.CANDLE_TIMEFRAME_SEC
+
+
+def test_history_fetch_paginates_and_counts_candles(tmp_path, monkeypatch):
+    import pipeline
+    sent = []
+    now = 1_800_200_000
+
+    def candles(end, amount):
+        latest = now - config.CANDLE_TIMEFRAME_SEC if end == 'latest' else int(end)
+        start = latest - (amount - 1) * config.CANDLE_TIMEFRAME_SEC
+        return [
+            {'epoch': epoch, 'open': 100, 'high': 101, 'low': 99, 'close': 100}
+            for epoch in range(start, latest + 1, config.CANDLE_TIMEFRAME_SEC)
+        ]
+
+    class FakeSocket:
+        def __init__(self, url, on_open, on_message, on_error, on_close):
+            self.on_open = on_open
+            self.on_message = on_message
+            self.on_close = on_close
+        def run_forever(self):
+            self.on_open(self)
+        def send(self, raw):
+            message = json.loads(raw)
+            sent.append(message)
+            if 'authorize' in message:
+                self.on_message(self, json.dumps({'msg_type': 'authorize'}))
+                return
+            amount = min(int(message['count']), 1000)
+            self.on_message(self, json.dumps({'msg_type': 'candles', 'candles': candles(message['end'], amount)}))
+        def close(self):
+            self.on_close(self, None, None)
+
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
+    monkeypatch.setattr(pipeline, 'SYMBOL', 'frxEURAUD')
+    monkeypatch.setattr(pipeline, '_get_ws_url', lambda: 'offline')
+    monkeypatch.setattr(pipeline, '_uses_bearer_auth', lambda: False)
+    monkeypatch.setattr(pipeline, '_probe_symbol', lambda symbol: (True, ''))
+    monkeypatch.setattr(pipeline.websocket, 'WebSocketApp', FakeSocket)
+    monkeypatch.setattr(pipeline.time, 'time', lambda: now)
+
+    assert pipeline._fetch_historical_ticks(1200) == 1200
+    requests = [m for m in sent if 'ticks_history' in m]
+    assert [r['count'] for r in requests] == [1000, 200]
+    records, rejected = read_records(tmp_path / 'ticks.csv')
+    assert not rejected
+    assert len(records) == 1200 and {r['kind'] for r in records} == {'candle'}
+
+
+def test_history_fetch_refuses_closed_market_before_request(tmp_path, monkeypatch):
+    import pipeline
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
+    monkeypatch.setattr(pipeline, 'SYMBOL', 'frxEURAUD')
+    monkeypatch.setattr(pipeline, '_probe_symbol', lambda symbol: (False, 'market closed'))
+
+    def unexpected_socket(*args, **kwargs):
+        pytest.fail('nao deve abrir WebSocket de historico para mercado fechado')
+
+    monkeypatch.setattr(pipeline.websocket, 'WebSocketApp', unexpected_socket)
+    assert pipeline._fetch_historical_ticks(10) == 0
+
+
+def test_scan_skips_locally_closed_market_before_fetch(monkeypatch):
+    import pipeline
+    fetched = []
+    monkeypatch.setattr(pipeline, '_local_market_open', lambda symbol: symbol != 'frxEURUSD')
+    monkeypatch.setattr(pipeline, '_fetch_prices_for_symbol',
+                        lambda symbol, count: fetched.append(symbol) or [100 + i for i in range(60)])
+    results = pipeline._scan_group(['frxEURUSD', 'R_100'])
+    assert results['frxEURUSD'] == 0.0
+    assert fetched == ['R_100']
+
+
+def test_pipeline_training_wait_counts_only_live_ticks(tmp_path, monkeypatch):
+    import pipeline
+    path = tmp_path / 'ticks.csv'
+    base = 1_800_000_000
+    with path.open('w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(FIELDS)
+        for i in range(2000):
+            writer.writerow([base + i * config.CANDLE_TIMEFRAME_SEC, '', 'frxEURGBP', 0.86,
+                             'candle', config.CANDLE_TIMEFRAME_SEC, 0.85, 0.87, 0.84])
+        for i in range(2):
+            writer.writerow([base + 2000 * config.CANDLE_TIMEFRAME_SEC + i, '', 'frxEURGBP',
+                             0.86, 'tick', 0, '', '', ''])
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(path))
+    monkeypatch.setattr(pipeline, 'SYMBOL', 'frxEURGBP')
+    assert pipeline._count_market_records() == 2002
+    assert pipeline._count_ticks() == 2
+
+
+def test_pipeline_counts_runtime_symbol_after_scan(tmp_path, monkeypatch):
+    import pipeline
+    path = tmp_path / 'ticks.csv'
+    base = 1_800_000_000
+    with path.open('w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(FIELDS)
+        writer.writerow([base, '', 'R_100', 100, 'tick', 0, '', '', ''])
+        for i in range(3):
+            writer.writerow([base + i, '', 'frxEURAUD', 1.5, 'tick', 0, '', '', ''])
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(path))
+    monkeypatch.setattr(pipeline, 'SYMBOL', 'frxEURAUD')
+    assert pipeline._count_ticks() == 3
+
+
+def test_pipeline_fallback_uses_open_synthetic_when_default_unavailable(monkeypatch):
+    import pipeline
+    monkeypatch.setattr(pipeline, '_scan_group', lambda symbols: {s: 0.0 for s in symbols})
+
+    def fake_probe(symbol):
+        return (symbol == 'R_25'), ('closed' if symbol != 'R_25' else '')
+
+    monkeypatch.setattr(pipeline, '_probe_symbol', fake_probe)
+    assert pipeline._detect_trending_symbol() == 'R_25'
+
+
+def test_pipeline_raises_history_to_feature_warmup_minimum():
+    import pipeline
+    assert pipeline._minimum_history_candles() > FEATURE_WINDOW
+    assert pipeline._effective_history_count(1) == pipeline._minimum_history_candles()
+    assert pipeline._effective_history_count(pipeline._minimum_history_candles() + 10) == pipeline._minimum_history_candles() + 10
+    assert pipeline._effective_history_count(0) == 0
+
+
+def test_startup_minimum_survives_temporal_embargo():
+    from model_contract import minimum_history_candles, duration_seconds
+    from train_model import temporal_partitions
+    horizon = duration_seconds(config.DURATION, config.DURATION_UNIT)
+    count = minimum_history_candles() - FEATURE_WINDOW - math.ceil(horizon / config.CANDLE_TIMEFRAME_SEC)
+    signals = 1_800_000_000 + np.arange(count) * config.CANDLE_TIMEFRAME_SEC
+    df = pd.DataFrame({'entry_epoch': signals, 'expiry_epoch': signals + horizon,
+                       'feature_start_epoch': signals - FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC,
+                       'target': np.arange(count) % 2})
+    parts = temporal_partitions(df)
+    assert all(len(part) >= 30 for part in parts)
+    assert len(parts[-1]) * config.CANDLE_TIMEFRAME_SEC >= 30 * horizon
+
+
+def test_training_starts_with_2280_rows_after_market_gaps(monkeypatch):
+    import pipeline
+    monkeypatch.setattr(pipeline, '_count_ticks', lambda: 150492)
+    monkeypatch.setattr(pipeline, '_count_labelable_contracts_for_training', lambda: 2280)
+    def unexpected_wait(*args):
+        pytest.fail('Dados suficientes ficaram aguardando o orcamento de coleta')
+    monkeypatch.setattr(pipeline.time, 'sleep', unexpected_wait)
+    pipeline._wait_for_ticks(200)
+
+
+def test_new_training_start_archives_learning_only(tmp_path, monkeypatch):
+    import pipeline
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', 'ticks_v2.csv')
+    monkeypatch.setattr(pipeline, 'DATASET_CSV', 'dataset_v2.csv')
+    monkeypatch.setattr(pipeline, 'AI_MODEL_PATH', 'model.pkl')
+    learning = ['ticks_v2.csv', 'ticks.csv', 'dataset.csv', 'dataset_v2.csv',
+                'model.pkl', 'model.pkl.new.metadata.json', 'model_metrics.json',
+                'transformer_model.pkl', 'duration_model.pkl']
+    operational = ['state.json', 'risk_state.json', 'risk_accounts.json', 'operacoes_v2.csv',
+                   '.env', 'pipeline.log']
+    for name in learning + operational:
+        (tmp_path / name).write_text(name)
+    archive = pipeline._prepare_training_start()
+    manifest = json.loads((archive / 'manifest.json').read_text())
+    assert len(manifest) == len(learning)
+    for entry in manifest:
+        assert (archive / entry['backup']).read_text() == Path(entry['source']).name
+        assert not Path(entry['source']).exists()
+    for name in operational:
+        assert (tmp_path / name).read_text() == name
+    assert pipeline._prepare_training_start() is None
+
+
+@pytest.mark.parametrize('options', [dict(pending={'symbol': 'R_100'}),
+                                     dict(reuse=True), dict(skip_collect=True)])
+def test_training_reset_preserves_reconciliation_and_reuse(tmp_path, monkeypatch, options):
+    import pipeline
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'model.pkl').write_text('old model')
+    assert pipeline._prepare_training_start(**options) is None
+    assert (tmp_path / 'model.pkl').read_text() == 'old model'
+
+
+def test_pipeline_missing_sidecar_requests_new_training(tmp_path, monkeypatch, capsys):
+    import pipeline
+    model = tmp_path / 'model.pkl'
+    model.write_bytes(b'legacy pickle must not be loaded')
+    monkeypatch.setattr(pipeline, 'AI_MODEL_PATH', str(model))
+    assert pipeline._load_latest_final_metrics() is None
+    assert 'treino inicial automatico' in capsys.readouterr().out
+
+
+def test_collector_backfills_while_live_ticks_continue(tmp_path, monkeypatch):
+    import pipeline
+    from market_data import ensure_header
+    from unittest.mock import Mock
+    path = tmp_path / 'ticks.csv'
+    ensure_header(path)
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(path))
+    monkeypatch.setattr(pipeline, '_minimum_history_candles', lambda: 2)
+    base = 1_800_000_000
+    collector = pipeline._CollectorThread('R_100')
+    ws = Mock()
+    def tick(epoch):
+        collector._on_message(ws, json.dumps({'tick': {'epoch': epoch, 'quote': 100, 'symbol': 'R_100'}}))
+    def history(epochs):
+        collector._on_message(ws, json.dumps({'msg_type': 'history',
+                              'history': {'times': epochs, 'prices': [100] * len(epochs)}}))
+    tick(base)
+    request = next(json.loads(call.args[0]) for call in ws.send.call_args_list
+                   if 'ticks_history' in json.loads(call.args[0]))
+    assert request['end'] == base - 1
+    assert request['start'] == base - 120
+    tick(base + 1)
+    history(list(range(base - 60, base)))
+    assert json.loads(ws.send.call_args.args[0])['end'] == base - 61
+    tick(base + 2)
+    history(list(range(base - 120, base - 60)))
+    assert collector.history_ready.is_set()
+    records, rejected = read_records(path)
+    records, conflicts, duplicates = canonicalize(records)
+    assert not rejected and not conflicts and not duplicates
+    assert [r['epoch'] for r in records] == list(range(base - 120, base + 3))
+
+
+def test_complete_history_ohlc_survives_partial_live_overlap():
+    from dataset_builder import _merge_feature_candles
+    historical = dict(epoch=1_800_000_000, kind='candle', open=100, high=110, low=90, price=101)
+    ticks = [dict(epoch=1_800_000_050, price=101), dict(epoch=1_800_000_060, price=102)]
+    candles = _merge_feature_candles([historical], ticks)
+    assert candles[0]['high'] == 110 and candles[0]['low'] == 90
+
+
+def test_dataset_training_does_not_apply_live_candle_blocker(tmp_path, monkeypatch):
+    import dataset_builder
+    source = tmp_path / 'ticks.csv'
+    out = tmp_path / 'dataset.csv'
+    base = 1_800_000_000
+    with source.open('w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(FIELDS)
+        for i in range(9000):
+            writer.writerow([base + i, '', 'R_100', 100 + i * .001, 'tick', 0, '', '', ''])
+
+    calls = []
+    original_get_signal = dataset_builder.strategy.get_signal
+
+    def wrapped_get_signal(*args, **kwargs):
+        calls.append(kwargs.get('candle_alerts'))
+        return original_get_signal(*args, **kwargs)
+
+    monkeypatch.setattr(dataset_builder.strategy, 'get_signal', wrapped_get_signal)
+    build_dataset(source, out)
+    assert calls
+    assert all(alerts == [] for alerts in calls)
+
+
+def test_pipeline_waits_for_compatible_model_before_executor(monkeypatch):
+    import pipeline
+    calls = {'count': 0}
+
+    def fake_metrics():
+        calls['count'] += 1
+        if calls['count'] == 1:
+            return None
+        return {'eligible': True}
+
+    monkeypatch.setattr(pipeline, '_load_latest_final_metrics', fake_metrics)
+    assert pipeline._wait_for_compatible_model(poll_sec=0)
+    assert calls['count'] == 2
+
+
+def test_pipeline_refreshes_latest_history_even_when_old_candles_exist(tmp_path, monkeypatch):
+    import pipeline
+    path = tmp_path / 'ticks.csv'
+    base = 1_800_000_000
+    with path.open('w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(FIELDS)
+        for i in range(2000):
+            epoch = base + i * config.CANDLE_TIMEFRAME_SEC
+            writer.writerow([epoch, '', 'R_100', 100, 'candle',
+                             config.CANDLE_TIMEFRAME_SEC, 99, 101, 98])
+
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(path))
+    monkeypatch.setattr(pipeline, 'SYMBOL', 'R_100')
+    assert pipeline._count_candles() == 2000
+    assert pipeline._history_fetch_count_for_start(1) == pipeline._minimum_history_candles()
 
 
 def test_minimum_quality_gate_uses_nonoverlapping_contracts():

@@ -8,10 +8,10 @@ Consulte somente as áreas afetadas pela tarefa. Caminhos abaixo são relativos 
 | --- | --- | --- |
 | Configuração e limites | `config.py` e consumidores dos parâmetros alterados | `tests/test_config_thresholds.py` |
 | Indicadores e sinais | `indicators.py`, `strategy.py`, `feature_engine.py` | `tests/test_indicators.py`, `tests/test_strategy.py`, `tests/test_strategy_edge_cases.py` |
-| Coleta, features e modelos | `market_data.py`, `model_contract.py`, `collector.py`, `dataset_builder.py`, `feature_engine.py`, `train_model.py`, `transformer_model.py`, `ai_predictor.py` | `tests/test_contract_regressions.py`, `tests/test_indicators.py`, `tests/test_pipeline_integration.py`; conferir a cobertura real e criar regressão específica se necessário |
+| Coleta, features e modelos | `market_data.py`, `model_contract.py`, `collector.py`, `dataset_builder.py`, `feature_engine.py`, `train_model.py`, `training_evaluation.py`, `training_experiments.py`, `payout_quotes.py`, `transformer_model.py`, `ai_predictor.py` | `tests/test_training_evaluation.py`, `tests/test_contract_regressions.py`, `tests/test_indicators.py`, `tests/test_pipeline_integration.py`; conferir a cobertura real e criar regressão específica se necessário |
 | Autenticação e execução | `deriv_session.py`, `executor.py`, `bot.py`, `config.py` | `tests/test_executor_trade_flow.py`; autenticação pode exigir cobertura adicional com mocks |
 | Risco e persistência | `risk_manager.py`, `executor.py` | `tests/test_risk_manager.py`, `tests/test_executor_trade_flow.py` |
-| Orquestração e seleção de símbolos | `pipeline.py`, `collector.py`, `executor.py`, `config.py` | `tests/test_pipeline_integration.py`, `tests/test_executor_trade_flow.py` |
+| Orquestração e seleção de símbolos | `pipeline.py`, `collector.py`, `executor.py`, `config.py` | `tests/test_pipeline_integration.py`, `tests/test_pipeline_live_feed.py`, `tests/test_market_failover.py`, `tests/test_executor_trade_flow.py` |
 | Backtest | `backtest.py`, `strategy.py`, `risk_manager.py`, `ai_predictor.py` | `tests/test_backtest.py` |
 | Dashboard | `dashboard/server.py`, `dashboard/app.js`, `dashboard/index.html`, `dashboard/style.css`, `dashboard/start.sh` | `tests/test_server_endpoints.py`, `tests/test_backtest.py` quando envolver simulação |
 
@@ -56,3 +56,14 @@ Para alterações apenas em Markdown, confira caminhos, links, comandos citados 
 ## Contratos v2
 
 Consulte `docs/CORRECOES_CONTRATOS_2026-09-08.md` para recuperação, esquema temporal e limitações. Novos dados usam `ticks_v2.csv`, `dataset_v2.csv` e `operacoes_v2.csv`; preserve também esses arquivos, metadados, `recovered_data/`, `risk_accounts.json` e `executor.lock`. A origem `legacy_unknown` não pode ser promovida a tick por inferência de espaçamento. Treino e inferência usam `model_contract.py` e 100 candles OHLC; mudanças exigem nova versão de esquema e validação. A suíte dispõe de `tests/conftest.py` para isolar artefatos, mas novas fixtures continuam exigindo inspeção.
+
+As features experimentais de contexto ficam em `feature_engine.py`, são gravadas pelo dataset e avaliadas apenas no development por `training_experiments.py`. Não alteram o contrato operacional de 27 features. `payout_quotes.py` consulta propostas sem comprar; `QuoteHistory` rejeita uso de cotações futuras ou com mais de 900 segundos. Preserve `payout_quotes.csv` e `training_reports/` como artefatos.
+
+O estudo `training_experiments.py --study training` exige diretório novo, captura
+CSV/metadados/cotações e chama o treinador sem acesso ao champion. O holdout só
+é avaliado depois da escolha do estimador/calibrador no development; o estudo
+padrão de features continua sem avaliar o holdout. Consulte também
+`tests/test_training_recommendations.py` para calibração, baselines, seleção,
+serialização e isolamento. O calendário simulado é
+`model_contract.EVALUATION_RISK_TIMEZONE`, registrado separadamente do fuso local
+operacional. As curvas de limiar são diagnósticas e preservam o piso de confiança.

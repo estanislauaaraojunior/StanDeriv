@@ -23,6 +23,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from model_contract import MIN_EXPECTED_RETURN, meets_payout_floor, profitable_proposal
 
 import ai_predictor
 import indicators as ind
@@ -107,8 +110,13 @@ class BacktestSettings:
     use_ai: bool = False
     dynamic_duration: bool = False
     use_candle_patterns: bool = True
+    risk_timezone: str = "UTC"
 
     def validate(self) -> None:
+        try:
+            ZoneInfo(self.risk_timezone)
+        except (ZoneInfoNotFoundError, ValueError, TypeError) as exc:
+            raise ValueError("risk_timezone deve identificar um fuso IANA válido") from exc
         if self.initial_balance <= 0:
             raise ValueError("initial_balance deve ser positivo")
         if not 0 <= self.payout_ratio <= 10:
@@ -197,6 +205,7 @@ class HistoricalRiskManager:
 
     def __init__(self, settings: BacktestSettings) -> None:
         self.settings = settings
+        self.timezone = ZoneInfo(settings.risk_timezone)
         self.balance = settings.initial_balance
         self.daily_start_balance = settings.initial_balance
         self.daily_profit = 0.0
@@ -206,7 +215,7 @@ class HistoricalRiskManager:
         self.pause_until_epoch = 0
 
     def _advance_day(self, epoch: int) -> None:
-        day = datetime.fromtimestamp(epoch).date()  # mesmo calendário local do RiskManager
+        day = datetime.fromtimestamp(epoch, self.timezone).date()
         if day != self.current_day:
             self.current_day = day
             self.daily_start_balance = self.balance
@@ -251,10 +260,10 @@ class HistoricalRiskManager:
                 extra = self.consecutive_losses - self.settings.max_consecutive_losses
                 pause = int(
                     self.settings.pause_base_sec
-                    * (self.settings.pause_scale_factor ** extra)
+                    * (self.settings.pause_scale_factor ** min(extra, 20))
                 )
                 self.pause_until_epoch = epoch + min(pause, 7200)
-        else:
+        elif net_profit > 0:
             self.consecutive_losses = 0
 
         return balance_before, self.balance
@@ -395,6 +404,14 @@ def _utc_iso(epoch: int) -> str:
     return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
 
 
+def _ticks_fingerprint(ticks: list[Tick]) -> str:
+    digest = hashlib.sha256()
+    for tick in ticks:
+        digest.update(json.dumps(asdict(tick), sort_keys=True).encode())
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 class BacktestEngine:
     def __init__(
         self,
@@ -527,6 +544,18 @@ class BacktestEngine:
                 continue
 
             signals_generated += 1
+            if not meets_payout_floor(self.settings.payout_ratio):
+                blocked_reasons['low_payout'] += 1
+                continue
+            stake = risk.get_stake()
+            costs = stake * self.settings.cost_rate + self.settings.fixed_cost
+            if self.settings.use_ai and not profitable_proposal(
+                1.0, 1.0 + self.settings.payout_ratio,
+                indicators.get('win_probability'),
+                margin=MIN_EXPECTED_RETURN + costs / stake,
+            ):
+                blocked_reasons['unprofitable_proposal'] += 1
+                continue
             duration = int(self.duration_provider(context))
             if duration < 1:
                 raise ValueError("provedor de duração retornou valor inválido")
@@ -541,7 +570,6 @@ class BacktestEngine:
                 skipped_without_expiry += 1
                 continue
 
-            stake = risk.get_stake()
             entry_tick = self.ticks[entry_tick_index]
             expiry_tick = self.ticks[expiry_index]
             won = (
@@ -551,7 +579,6 @@ class BacktestEngine:
             )
             tied = expiry_tick.price == entry_tick.price
             gross_profit = stake * self.settings.payout_ratio if won else -stake
-            costs = stake * self.settings.cost_rate + self.settings.fixed_cost
             net_profit = gross_profit - costs
             pending = TradeRecord(
                 trade_id=len(trades) + 1,
@@ -589,6 +616,8 @@ class BacktestEngine:
         )
         artifacts = {
             "strategy_sha256": _artifact_fingerprint(strategy.__file__),
+            "backtest_sha256": _artifact_fingerprint(__file__),
+            "ticks_sha256": _ticks_fingerprint(self.ticks),
             "feature_schema": list(FEATURES),
         }
         if self.settings.use_ai:
@@ -679,6 +708,22 @@ class BacktestEngine:
         durations = Counter(str(trade.duration) for trade in trades)
         directions = Counter(trade.direction for trade in trades)
         n_trades = len(trades)
+        win_streak = loss_streak = max_wins = max_losses = 0
+        by_day = {}
+        for trade in trades:
+            # Sequências do relatório são globais, mesmo quando o risco diário reinicia.
+            if trade.net_profit > 0:
+                win_streak += 1
+                loss_streak = 0
+            elif trade.net_profit < 0:
+                loss_streak += 1
+                win_streak = 0
+            max_wins = max(max_wins, win_streak)
+            max_losses = max(max_losses, loss_streak)
+            day = datetime.fromtimestamp(trade.expiry_epoch, risk.timezone).date().isoformat()
+            daily = by_day.setdefault(day, {"trades": 0, "net_profit": 0.0})
+            daily["trades"] += 1
+            daily["net_profit"] = round(daily["net_profit"] + trade.net_profit, 10)
         return {
             "trades": n_trades,
             "wins": wins,
@@ -701,10 +746,24 @@ class BacktestEngine:
             ),
             "expectancy": round(net_profit / n_trades, 10) if n_trades else 0.0,
             "total_staked": round(sum(trade.stake for trade in trades), 10),
+            "average_stake": round(sum(trade.stake for trade in trades) / n_trades, 10) if n_trades else 0.0,
             "total_costs": round(sum(trade.costs for trade in trades), 10),
             "max_drawdown_abs": round(max_drawdown_abs, 10),
             "max_drawdown_pct": round(max_drawdown_pct * 100, 4),
-            "max_consecutive_losses": risk.max_consecutive_losses_seen,
+            "max_consecutive_losses": max_losses,
+            "max_consecutive_wins": max_wins,
+            "by_settlement_day": by_day,
+            "simulation_assumptions": {
+                "payout": "fixed_configurable_hypothesis",
+                "payout_ratio": self.settings.payout_ratio,
+                "entry": "first_tick_after_closed_candle",
+                "expiry": "first_tick_at_or_after_expiry_or_tick_offset",
+                "tie": "loss",
+                "risk_timezone": self.settings.risk_timezone,
+                "streak_basis": "net_profit_across_days_zero_preserves_streak",
+                "not_simulated": ["latency", "slippage", "requotes", "unavailability",
+                                  "websocket_failure", "proposal_rejection"],
+            },
             "signals_generated": signals_generated,
             "signals_without_expiry": skipped_without_expiry,
             "risk_blocks": dict(sorted(blocked_reasons.items())),
@@ -754,6 +813,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--duration-unit", choices=("m", "s", "t"), default=DURATION_UNIT)
     parser.add_argument("--timeframe", type=int, default=CANDLE_TIMEFRAME_SEC, help="vela em segundos")
+    parser.add_argument("--risk-timezone", default="UTC", help="fuso IANA dos stops diários (padrão: UTC)")
     parser.add_argument("--min-candles", type=int, default=MIN_CANDLES)
     parser.add_argument("--max-ticks", type=int)
     parser.add_argument("--with-ai", action="store_true", help="habilita modelos; exige período fora da amostra")
@@ -776,6 +836,7 @@ def main() -> int:
         use_ai=args.with_ai,
         dynamic_duration=args.dynamic_duration,
         use_candle_patterns=not args.no_candle_patterns,
+        risk_timezone=args.risk_timezone,
     )
     try:
         ticks, symbol, quality = load_ticks(args.input, args.symbol, args.max_ticks)

@@ -522,6 +522,17 @@ def test_start_does_not_reset_risk_or_pending_contract(client):
     assert json.loads(srv.STATE_JSON.read_text())['active_contract']==active
 
 
+def test_start_uses_minimum_history_candles_by_default(client):
+    import dashboard.server as srv
+    proc=MagicMock()
+    proc.pid=99999999
+    with patch.object(srv,'_bot_running',return_value=(False,None)),patch.object(srv,'_backtest_running',return_value=(False,None)),patch.object(srv.subprocess,'Popen',return_value=proc) as popen,patch.object(srv,'PID_FILE',srv.STATE_JSON.parent/'bot.pid'),patch.object(srv,'PIPELINE_LOG_TXT',srv.STATE_JSON.parent/'pipeline.log'):
+        response=client.post('/api/bot/start',json={'mode':'demo','balance':1000})
+    assert response.status_code==200
+    cmd = popen.call_args.args[0]
+    assert cmd[cmd.index('--history-count') + 1] == str(srv.MIN_HISTORY_CANDLES)
+
+
 def test_clear_cannot_remove_active_contract(client):
     import dashboard.server as srv
     srv.STATE_JSON.write_text(json.dumps({'active_contract':{'has_active':True,'contract_id':'1'}}))

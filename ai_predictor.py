@@ -1,13 +1,10 @@
 """Inferência de bundle validado para o ativo, OHLC e vencimento configurados."""
 import threading
-import io
-import hashlib
-from pathlib import Path
 import math
 import numpy as np
 import config
 from feature_engine import FEATURES as _FEATURES, compute_feature_map
-from model_contract import FEATURE_WINDOW, compatible, fingerprint
+from model_contract import FEATURE_WINDOW, load_validated_bundle
 
 _model = None
 _model_features = []
@@ -31,20 +28,12 @@ def _load_model():
     _loaded_symbol = config.get_active_symbol()
     _model = None
     try:
-        import joblib
-        artifact = Path(config.AI_MODEL_PATH).read_bytes()
-        payload = joblib.load(io.BytesIO(artifact))
-        metadata = payload.get('metadata', {})
-        if not compatible(metadata, _loaded_symbol) or not metadata.get('approved'):
-            raise ValueError('modelo sem validação compatível com ativo, OHLC e expiração')
-        import sklearn, xgboost
-        if metadata.get('dependencies') != {'sklearn': sklearn.__version__, 'xgboost': xgboost.__version__}:
-            raise ValueError('versões de dependências incompatíveis')
+        payload, metadata = load_validated_bundle(config.AI_MODEL_PATH, _loaded_symbol)
         _model = payload['model']
         _model_features = payload['features']
         if _model_features != _FEATURES:
             raise ValueError('ordem de features incompatível')
-        _metadata = dict(metadata, model_id = hashlib.sha256(artifact).hexdigest())
+        _metadata = metadata
         _load_error = ''
     except Exception as exc:
         _model = None
@@ -117,7 +106,7 @@ def predict(prices, candles = None):
                 return None, 0.0
             direction, confidence = ('BUY', up) if up > down else ('SELL', down)
             _prediction_context.model_id = _metadata['model_id']
-            return (direction if confidence >= config.AI_CONFIDENCE_MIN else None), confidence
+            return (direction if confidence > config.AI_CONFIDENCE_MIN else None), confidence
         except Exception:
             return None, 0.0
 

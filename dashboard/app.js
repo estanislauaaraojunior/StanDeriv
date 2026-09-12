@@ -633,19 +633,49 @@ async function pollState() {
     const m = d.model ?? {};
     if (el('infoTicks')) el('infoTicks').textContent = m.ticks_count?.toLocaleString('pt-BR') ?? '—';
     if (el('infoDataset')) el('infoDataset').textContent = m.dataset_rows?.toLocaleString('pt-BR') ?? '—';
-    if (el('infoModel')) { el('infoModel').textContent = m.model_exists ? '✓ OK' : '✗ Ausente'; el('infoModel').style.color = m.model_exists ? '#00ff88' : '#ff4757'; }
+    const candidate = m.last_candidate_metrics ?? {};
+    if (el('infoModel')) {
+      el('infoModel').textContent = m.ready ? '✓ Aprovado' : candidate.timestamp ? 'Treinado; aguardando aprovação' : 'Aguardando treino';
+      el('infoModel').style.color = m.ready ? '#00ff88' : '#ffb830';
+      el('infoModel').title = (candidate.rejection_reasons ?? []).join('; ') || m.blocked_reason || '';
+    }
     if (el('infoTft')) { el('infoTft').textContent = m.tft_exists ? '✓ OK' : '✗ Ausente'; el('infoTft').style.color = m.tft_exists ? '#00ff88' : '#ff4757'; }
     if (el('infoModelMtime') && m.model_mtime) el('infoModelMtime').textContent = new Date(m.model_mtime * 1000).toLocaleString('pt-BR');
 
     // — Métricas do último treino (via /api/state para atualização a cada 5s) —
-    const mm = m.last_metrics ?? {};
-    if (el('mmBestModel'))  el('mmBestModel').textContent  = mm.best_model || '—';
+    const mm = m.ready ? (m.last_metrics ?? {}) : candidate;
+    if (el('mmStatus')) el('mmStatus').textContent = m.ready
+      ? 'Modelo aprovado para operação.'
+      : candidate.timestamp
+        ? `Candidato treinado; operações bloqueadas. ${(candidate.rejection_reasons ?? []).join('; ') || m.blocked_reason || ''}`
+        : 'Aguardando dados e primeiro treinamento.';
+    if (el('mmBestModel'))  el('mmBestModel').textContent  = mm.best_model ? `${mm.best_model}${m.ready ? '' : ' (candidato)'}` : '—';
     if (el('mmAccuracy'))   el('mmAccuracy').textContent   = mm.accuracy != null ? fmtPct(mm.accuracy * 100) : '—';
     if (el('mmAuc'))        el('mmAuc').textContent        = mm.auc       != null ? fmt(mm.auc, 4)           : '—';
     if (el('mmF1'))         el('mmF1').textContent         = mm.f1        != null ? fmt(mm.f1, 4)            : '—';
     if (el('mmNTrain'))     el('mmNTrain').textContent     = mm.n_train   != null ? mm.n_train.toLocaleString('pt-BR') : '—';
     if (el('mmNTest'))      el('mmNTest').textContent      = mm.n_test    != null ? mm.n_test.toLocaleString('pt-BR')  : '—';
     if (el('mmTimestamp'))  el('mmTimestamp').textContent  = mm.timestamp ? new Date(mm.timestamp).toLocaleString('pt-BR') : '—';
+    if (el('mmDiagnostics')) {
+      const lines = [];
+      for (const [key, label] of [['ai_only', 'IA'], ['technical_only', 'Sinais técnicos'], ['combined', 'Estratégia completa']]) {
+        const result = mm.components?.[key];
+        if (result) lines.push(`${label}: ${result.trades} contratos simulados, ${result.wins} acertos (${fmtPct(result.win_rate * 100)}).`);
+      }
+      const selected = (mm.walk_forward ?? []).find(row => mm.selected_recipe
+        ? row.recipe_id === mm.selected_recipe : row.name === mm.best_model);
+      if (selected) lines.push(`Validação em ${selected.folds.length} janelas futuras: ${selected.trades} contratos; AUC média ${fmt(selected.mean_auc, 4)}.`);
+      if (mm.calibration) lines.push(`Qualidade das probabilidades: Brier ${fmt(mm.calibration.multiclass_brier, 4)}; log loss ${fmt(mm.calibration.log_loss, 4)} (menor é melhor).`);
+      if (mm.calibration_method) lines.push(`Calibração selecionada: ${mm.calibration_method}; calendário da avaliação: ${mm.evaluation_risk_timezone ?? 'não informado'}.`);
+      const observed = mm.observed_payout_evaluation;
+      if (observed) lines.push(`Payouts observados: ${observed.trades} contratos avaliados; ${observed.blockers?.missing_observed_payout ?? 0} entradas sem cotação histórica adequada.`);
+      for (const warning of mm.selection_warnings ?? []) lines.push(`Atenção: ${warning}.`);
+      el('mmDiagnostics').replaceChildren(...lines.map(line => {
+        const paragraph = document.createElement('p');
+        paragraph.textContent = line;
+        return paragraph;
+      }));
+    }
     if (el('mmAccuracy')) {
       el('mmAccuracy').style.color = mm.accuracy == null
         ? '#8b949e'
@@ -1324,7 +1354,7 @@ async function confirmStart() {
   const noScan          = el('noScan') ? el('noScan').checked : false;
   const retrainInterval = el('retrainInterval') ? (parseInt(el('retrainInterval').value) || 10) : 10;
   const minTicks        = el('minTicks') ? (parseInt(el('minTicks').value) || 500) : 500;
-  const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 500) : 500;
+  const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 2520) : 2520;
   const forceRetrain    = el('forceRetrain') ? el('forceRetrain').checked : false;
 
   if (mode === 'real') {

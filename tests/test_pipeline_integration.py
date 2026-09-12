@@ -159,22 +159,6 @@ class TestModelMetricsInApiState:
             f"Chaves ausentes: {expected_keys - entry.keys()}"
         )
 
-    def test_pipeline_trim_limit_is_at_least_200k(self):
-        """Verifica que o pipeline usa max_ticks >= 200000 no retrain."""
-        import re, os
-        pipeline_path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
-        with open(pipeline_path) as f:
-            source = f.read()
-        matches = re.findall(
-            r"_trim_ticks\(\s*tmp_ticks,\s*max_ticks=(\d+),?\s*\)",
-            source,
-        )
-        assert matches, "_trim_ticks com max_ticks não encontrado em pipeline.py"
-        for val in matches:
-            assert int(val) >= 200000, (
-                f"max_ticks={val} é muito pequeno (mínimo 200000 para dataset crescer com o tempo)"
-            )
-
     def test_train_model_metrics_path_is_absolute(self):
         """Garante que train_model.py usa caminho absoluto para model_metrics.json."""
         import re, os
@@ -186,6 +170,15 @@ class TestModelMetricsInApiState:
         assert 'os.path.dirname(output_path) or "."' not in source, (
             "Caminho relativo 'or \".\"' ainda presente — corrigir para os.path.abspath"
         )
+
+    def test_pipeline_does_not_collect_forever_when_model_is_missing(self):
+        """Sem bundle compatível, o pipeline deve tentar treino inicial após coletar dados."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
+        with open(path) as f:
+            source = f.read()
+        assert "coleta apenas, sem contratos ou retreino automático" not in source
+        assert '_run_training(model_path=AI_MODEL_PATH+".new")' in source
 
 
 class TestRecommendedConfig:

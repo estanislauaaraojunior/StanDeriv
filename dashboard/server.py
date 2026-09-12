@@ -31,6 +31,7 @@ sys.path.insert(0, str(_ROOT))
 import pandas as pd
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from model_contract import FEATURE_WINDOW, minimum_history_candles
 
 try:
     import psutil
@@ -79,6 +80,7 @@ MODEL_METRICS_JSON = _ROOT / "model_metrics.json"
 PIPELINE_LOG_TXT = _ROOT / "pipeline.log"
 BACKTEST_ROOT = _ROOT / "backtest_reports" / "dashboard"
 BACKTEST_STATE_JSON = BACKTEST_ROOT / "state.json"
+MIN_HISTORY_CANDLES = minimum_history_candles()
 
 # ─── Flask App ────────────────────────────────────────────────────────────────
 
@@ -611,7 +613,7 @@ def api_bot_start():
     skip_collect = bool(data.get("skip_collect", False))
     no_scan = bool(data.get("no_scan", False))
     min_ticks = int(data.get("min_ticks", 200))
-    history_count = int(data.get("history_count", 2000))
+    history_count = int(data.get("history_count", MIN_HISTORY_CANDLES))
     force_retrain = bool(data.get("force_retrain", False))
 
     cmd = [sys.executable, "-u", str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]

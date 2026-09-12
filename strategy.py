@@ -357,7 +357,7 @@ def _apply_ai_filter(
     indicators["ai_direction"] = ai_direction
     indicators["ai_confidence"] = ai_conf if math.isfinite(ai_conf) else None
     indicators["model_id"] = ai_predictor.prediction_model_id()
-    if ai_direction != signal or not math.isfinite(ai_conf) or not AI_CONFIDENCE_MIN <= ai_conf <= 1:
+    if ai_direction != signal or not math.isfinite(ai_conf) or not AI_CONFIDENCE_MIN < ai_conf <= 1:
         indicators["ai_score"] = None
         indicators["ai_block"] = "abstention_or_disagreement"
         return None, indicators

@@ -83,6 +83,7 @@ from config import (
     RETRAIN_WIN_RATE_TRIGGER,
     RETRAIN_CONFIDENCE_TRIGGER,
     RETRAIN_NEW_TICKS_TRIGGER,
+    RETRAIN_NEW_LABELS_TRIGGER,
     RETRAIN_MIN_INTERVAL_SEC,
     RETRAIN_MAX_INTERVAL_SEC,
     OPERATIONS_LOG,
@@ -91,15 +92,18 @@ from config import (
 from executor import DerivBot
 from risk_manager import RiskManager
 from market_data import ensure_header, append_record, read_records, canonicalize
-from model_contract import FEATURE_WINDOW, compatible, usable, write_json_atomic, acquire_execution_lock
+from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, compatible, usable,
+                            write_json_atomic, acquire_execution_lock,
+                            minimum_history_candles, minimum_training_rows)
 
 
 # ─────────────────────────────────────────────────────────────────
 # Defaults do pipeline
 # ─────────────────────────────────────────────────────────────────
 
-_DEFAULT_HISTORY_COUNT = 500
+_DEFAULT_HISTORY_COUNT = minimum_history_candles()
 _DEFAULT_MIN_TICKS = 100
+_MIN_LABELABLE_CONTRACTS = minimum_training_rows()
 
 _WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
@@ -177,25 +181,140 @@ def _symbol_display(symbol: str) -> str:
     return f"{symbol} — {name}" if name else symbol
 
 
+def _runtime_symbol() -> str:
+    """Símbolo efetivamente selecionado para o processo atual."""
+    import config as _cfg
+
+    return str(globals().get("SYMBOL") or _cfg.get_active_symbol() or _cfg.SYMBOL)
+
+
+def _set_runtime_symbol(symbol):
+    """Sincroniza consumidores mesmo quando o ativo escolhido é o default."""
+    import config as cfg
+    import executor
+    import strategy
+    for module in (cfg, executor, strategy, dataset_builder, train_model):
+        if hasattr(module, 'SYMBOL'):
+            module.SYMBOL = symbol
+    cfg.set_active_symbol(symbol)
+    globals()['SYMBOL'] = symbol
+
+
 # Evento global: sinaliza encerramento a todas as threads
 _shutdown = threading.Event()
+_market_switch = threading.Event()
+
+
+class MarketUnavailable(Exception):
+    pass
+
+
+def _request_market_switch(symbol):
+    if symbol == _runtime_symbol():
+        if not _market_switch.is_set():
+            print(f'\n[MERCADO] {symbol}: contrato indisponível; buscando outro ativo após concluir pendências.')
+        _market_switch.set()
+
+
+def _check_market_switch():
+    if _market_switch.is_set():
+        raise MarketUnavailable(_runtime_symbol())
+
 
 
 # ─────────────────────────────────────────────────────────────────
 # Utilitários
 # ─────────────────────────────────────────────────────────────────
 
-def _count_ticks():
-    """Contagem operacional do ativo: ticks identificados e candles fechados."""
+def _count_records(kinds=('tick',)):
+    """Conta registros identificados do ativo ativo para os tipos informados."""
     if not os.path.exists(TICKS_CSV):
         return 0
+    symbol = _runtime_symbol()
     with open(TICKS_CSV,newline='') as f:
-        return sum(row.get('symbol')==SYMBOL and row.get('kind') in ('tick','candle')
+        allowed = set(kinds)
+        return sum(row.get('symbol')==symbol and row.get('kind') in allowed
                    for row in csv.DictReader(f))
+
+
+def _count_ticks():
+    """Contagem de ticks reais do ativo; candles históricos não rotulam contratos."""
+    return _count_records(('tick',))
+
+
+def _count_market_records():
+    """Contagem para status operacional: ticks reais e candles históricos fechados."""
+    return _count_records(('tick', 'candle'))
+
+
+def _count_candles():
+    return _count_records(('candle',))
+
+
+def _minimum_history_candles():
+    """Reserva features, vencimento, embargo e quatro particoes temporais."""
+    return minimum_history_candles()
+
+
+def _effective_history_count(requested):
+    try:
+        requested = int(requested)
+    except (TypeError, ValueError):
+        requested = 0
+    if requested <= 0:
+        return 0
+    return max(requested, _minimum_history_candles())
+
+
+def _history_fetch_count_for_start(requested):
+    """Na inicialização, sempre atualiza os candles mais recentes do símbolo ativo."""
+    return _effective_history_count(requested)
 
 
 def _ensure_ticks_header():
     ensure_header(TICKS_CSV)
+
+
+def _prepare_training_start(*, reuse=False, skip_collect=False, pending=None):
+    """Archive previous learning artifacts while the caller owns executor.lock."""
+    if pending or reuse or skip_collect:
+        print('[PIPELINE] Dados preservados: reconciliacao pendente ou reutilizacao solicitada.')
+        return None
+    import tempfile
+    import config
+
+    bases = [TICKS_CSV, DATASET_CSV, AI_MODEL_PATH, config.LEGACY_TICKS_CSV,
+             'dataset.csv', config.TRANSFORMER_MODEL_PATH, config.DURATION_MODEL_PATH,
+             'model_metrics.json']
+    paths = set()
+    for base in bases:
+        for suffix in ('', '.metadata.json', '.new', '.new.metadata.json',
+                       '.candidate', '.candidate.metadata.json', '.tmp', '.train_snapshot'):
+            path = Path(str(base) + suffix).absolute()
+            if path.is_file():
+                paths.add(path)
+    if not paths:
+        print('[PIPELINE] Nova coleta: nenhum dado ou modelo anterior para reutilizar.')
+        return None
+    archive_root = Path(TICKS_CSV).absolute().parent / 'recovered_data' / 'training_resets'
+    archive_root.mkdir(parents=True, exist_ok=True)
+    archive = Path(tempfile.mkdtemp(prefix=datetime.now().strftime('%Y%m%d-%H%M%S-'),
+                                    dir=archive_root))
+    moved = []
+    try:
+        for index, source in enumerate(sorted(paths)):
+            destination = archive / f'{index:02d}-{source.name}'
+            os.replace(source, destination)
+            moved.append((source, destination))
+        write_json_atomic(archive / 'manifest.json',
+                          [{'source': str(src), 'backup': dst.name} for src, dst in moved])
+    except Exception:
+        for source, destination in reversed(moved):
+            os.replace(destination, source)
+        raise
+    _reset_ai_predictor()
+    print(f'[PIPELINE] Nova coleta e novo treino. {len(moved)} arquivos antigos arquivados em {archive}')
+    return archive
 
 
 def _uses_bearer_auth() -> bool:
@@ -476,6 +595,12 @@ def _scan_group(candidates: list) -> dict:
     lock = threading.Lock()
 
     def _scan_one(symbol: str) -> None:
+        if not _local_market_open(symbol):
+            with lock:
+                results[symbol] = 0.0
+            print(f"  {symbol:<12} fechado pelo calendário local")
+            return
+
         prices = _fetch_prices_for_symbol(
             symbol,
             _SCAN_TICKS,
@@ -557,6 +682,148 @@ def _best_from(results: dict) -> tuple:
     )
 
 
+def _scan_candidates() -> list:
+    return (
+        list(_SCAN_SYMBOLS_FOREX)
+        + list(_SCAN_SYMBOLS_PRIMARY)
+        + list(_SCAN_SYMBOLS_SECONDARY)
+    )
+
+
+def _local_market_open(symbol):
+    try:
+        import config as _cfg
+        return _cfg.is_market_open(symbol)
+    except Exception:
+        return True
+
+
+def _probe_symbol(symbol, timeout=20):
+    """Check the actual account feed and contract catalogue without placing orders."""
+    import config as cfg
+    done = threading.Event()
+    result = {'tick': False, 'contracts': False, 'quotes': set(),
+              'reason': 'tempo limite sem tick/catalogo/propostas validos'}
+
+    def request(ws):
+        ws.send(json.dumps({'ticks': symbol, 'subscribe': 1}))
+        ws.send(json.dumps({'contracts_for': symbol}))
+        for req_id, direction in ((910001, 'CALL'), (910002, 'PUT')):
+            request = dict(proposal=1, amount=1, basis='stake', contract_type=direction,
+                           currency=cfg.CURRENCY, duration=cfg.DURATION,
+                           duration_unit=cfg.DURATION_UNIT, req_id=req_id)
+            request['underlying_symbol' if _uses_bearer_auth() else 'symbol'] = symbol
+            ws.send(json.dumps(request))
+
+    def on_open(ws):
+        if _uses_bearer_auth():
+            request(ws)
+        else:
+            ws.send(json.dumps({'authorize': TOKEN}))
+
+    def on_message(ws, raw):
+        try:
+            data = json.loads(raw)
+            if 'error' in data:
+                result['reason'] = data['error'].get('message', 'erro API')
+                done.set()
+                ws.close()
+                return
+            if data.get('msg_type') == 'authorize':
+                request(ws)
+            if 'tick' in data:
+                tick = data['tick']
+                price, epoch = float(tick['quote']), int(tick['epoch'])
+                result['tick'] = (tick.get('symbol') == symbol and math.isfinite(price)
+                                  and price > 0 and 0 <= time.time() - epoch <= MAX_TICK_GAP_SEC)
+            if 'contracts_for' in data:
+                kinds = {c.get('contract_type') for c in data['contracts_for'].get('available', [])}
+                result['contracts'] = {'CALL', 'PUT'} <= kinds
+                if not result['contracts']:
+                    result['reason'] = 'CALL/PUT indisponiveis nesta sessao'
+                    done.set()
+                    ws.close()
+                    return
+            if 'proposal' in data and data.get('req_id') in (910001, 910002):
+                proposal = data['proposal']
+                price, payout = float(proposal['ask_price']), float(proposal['payout'])
+                if proposal.get('id') and math.isfinite(price) and math.isfinite(payout) and 0 < price < payout:
+                    result['quotes'].add(data['req_id'])
+            if result['tick'] and result['contracts'] and len(result['quotes']) == 2:
+                result['reason'] = ''
+                done.set()
+                ws.close()
+        except (ValueError, TypeError, KeyError):
+            result['reason'] = 'resposta de mercado invalida'
+            done.set()
+            ws.close()
+
+    def on_error(ws, error):
+        result['reason'] = 'falha de conexao na validacao do ativo'
+        done.set()
+        ws.close()
+
+    try:
+        ws = websocket.WebSocketApp(_get_ws_url(), on_open=on_open, on_message=on_message,
+                                    on_error=on_error, on_close=lambda *_: done.set())
+        worker = threading.Thread(target=ws.run_forever, daemon=True)
+        worker.start()
+        done.wait(timeout)
+        ws.close()
+        worker.join(timeout=1)
+    except Exception as exc:
+        return False, f'falha ao validar ativo ({type(exc).__name__})'
+    return result['tick'] and result['contracts'] and len(result['quotes']) == 2 and not result['reason'], result['reason']
+
+
+def _best_live_from(results):
+    for symbol in sorted(results, key=results.get, reverse=True):
+        if results[symbol] < _ADX_TREND_MIN:
+            break
+        available, reason = _probe_symbol(symbol)
+        if available:
+            return symbol, results[symbol]
+        print(f'[TENDENCIA] {symbol} descartado: {reason}')
+    return '', 0.0
+
+
+def _first_live_symbol(candidates):
+    """Retorna o primeiro símbolo com tick recente e CALL/PUT disponíveis."""
+    seen = set()
+    for symbol in candidates:
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        available, reason = _probe_symbol(symbol)
+        if available:
+            return symbol
+        print(f'[TENDENCIA] {symbol} indisponivel para fallback: {reason}')
+    return ''
+
+
+def _require_live_symbol(symbol, *, allow_fallback=False):
+    available, reason = _probe_symbol(symbol)
+    if available:
+        return symbol
+    if allow_fallback:
+        print(f'[TENDENCIA] {symbol} indisponivel para operar: {reason}')
+        fallback = _first_live_symbol(
+            [s for s in _scan_candidates() if s != symbol]
+        )
+        if fallback:
+            print(
+                "\n[TENDÊNCIA] ✔ Ativo fechado substituído por: "
+                f"{_symbol_display(fallback)}"
+            )
+            return fallback
+    raise RuntimeError(f'Ativo {symbol} indisponivel para operar: {reason}')
+
+
+def _ensure_operable_symbol(symbol):
+    """Confirma mercado aberto e CALL/PUT antes de iniciar coleta de dados."""
+    return _require_live_symbol(symbol, allow_fallback=True)
+
+
 def _detect_trending_symbol(
     no_scan: bool = False,
 ) -> str:
@@ -573,7 +840,7 @@ def _detect_trending_symbol(
     import config as _cfg
 
     if no_scan:
-        return _cfg.SYMBOL
+        return _require_live_symbol(_cfg.SYMBOL, allow_fallback=True)
 
     # ── Etapa 1: Scan Forex ───────────────────────────────────
 
@@ -591,7 +858,7 @@ def _detect_trending_symbol(
         _SCAN_SYMBOLS_FOREX
     )
 
-    best_fx, score_fx = _best_from(
+    best_fx, score_fx = _best_live_from(
         forex
     )
 
@@ -629,7 +896,7 @@ def _detect_trending_symbol(
         _SCAN_SYMBOLS_PRIMARY
     )
 
-    best, score = _best_from(
+    best, score = _best_live_from(
         primary
     )
 
@@ -665,7 +932,7 @@ def _detect_trending_symbol(
         _SCAN_SYMBOLS_SECONDARY
     )
 
-    best2, score2 = _best_from(
+    best2, score2 = _best_live_from(
         secondary
     )
 
@@ -685,10 +952,22 @@ def _detect_trending_symbol(
         "\n[TENDÊNCIA] ⚠ Nenhum instrumento "
         "com tendência clara "
         f"(melhor score secundário={score2:.2f}). "
-        f"Usando padrão: {_cfg.SYMBOL}."
+        "Procurando sintético operável..."
     )
 
-    return _cfg.SYMBOL
+    synthetic_fallback = _first_live_symbol(
+        [_cfg.SYMBOL]
+        + [s for s in _SCAN_SYMBOLS_PRIMARY if s != _cfg.SYMBOL]
+        + [s for s in _SCAN_SYMBOLS_SECONDARY if s != _cfg.SYMBOL]
+    )
+    if synthetic_fallback:
+        print(
+            "\n[TENDÊNCIA] ✔ Fallback sintético aberto: "
+            f"{_symbol_display(synthetic_fallback)}"
+        )
+        return synthetic_fallback
+
+    raise RuntimeError("nenhum índice sintético com tick recente e CALL/PUT disponível")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -704,11 +983,19 @@ def _fetch_historical_ticks(
     Epochs já existentes são ignorados.
     """
     tf_min = CANDLE_TIMEFRAME_SEC // 60
+    symbol = _runtime_symbol()
+    available, reason = _probe_symbol(symbol)
+    if not available:
+        print(
+            f"\n[HISTÓRICO] {symbol} fechado ou sem CALL/PUT "
+            f"({reason}); histórico não será baixado."
+        )
+        return 0
 
     print(
         f"\n[HISTÓRICO] Buscando os últimos "
         f"{count:,} candles de {tf_min} min "
-        f"de '{_symbol_display(SYMBOL)}'..."
+        f"de '{_symbol_display(symbol)}'..."
     )
 
     _ensure_ticks_header()
@@ -736,6 +1023,7 @@ def _fetch_historical_ticks(
                                     "symbol",
                                     "",
                                 ),
+                                int(row.get("timeframe") or 0),
                             )
                         )
                     except (
@@ -749,14 +1037,16 @@ def _fetch_historical_ticks(
     received: list = []
     done = threading.Event()
     error_msg: list = []
+    next_end = ["latest"]
 
     def _send_history_request(ws) -> None:
+        remaining = max(1, count - len(received))
         ws.send(
             json.dumps(
                 {
-                    "ticks_history": SYMBOL,
-                    "end": "latest",
-                    "count": count,
+                    "ticks_history": symbol,
+                    "end": next_end[0],
+                    "count": min(remaining, 1000),
                     "style": "candles",
                     "granularity": CANDLE_TIMEFRAME_SEC,
                     "adjust_start_time": 1,
@@ -800,6 +1090,7 @@ def _fetch_historical_ticks(
             return
 
         if data.get("msg_type") == "candles":
+            page = []
             for candle in data.get(
                 "candles",
                 [],
@@ -823,7 +1114,7 @@ def _fetch_historical_ticks(
                     )
 
                     if epoch > 0 and epoch+CANDLE_TIMEFRAME_SEC <= int(time.time()):
-                        received.append((epoch,close,candle))
+                        page.append((epoch,close,candle))
 
                 except (
                     TypeError,
@@ -831,7 +1122,19 @@ def _fetch_historical_ticks(
                 ):
                     continue
 
-            ws.close()
+            if page:
+                known = {item[0] for item in received}
+                for item in page:
+                    if item[0] not in known:
+                        received.append(item)
+                        known.add(item[0])
+                oldest = min(item[0] for item in page)
+                next_end[0] = oldest - 1
+
+            if len(received) >= count or not page:
+                ws.close()
+            else:
+                _send_history_request(ws)
 
     def _on_error(ws, err) -> None:
         error_msg.append(str(err))
@@ -882,17 +1185,17 @@ def _fetch_historical_ticks(
     written = 0
 
     for epoch,close,candle in received:
-        key=(epoch,SYMBOL)
+        key=(epoch,symbol,CANDLE_TIMEFRAME_SEC)
         if key in existing_epochs:
             continue
-        append_record(TICKS_CSV,epoch,SYMBOL,close,kind='candle',timeframe=CANDLE_TIMEFRAME_SEC,candle=candle)
+        append_record(TICKS_CSV,epoch,symbol,close,kind='candle',timeframe=CANDLE_TIMEFRAME_SEC,candle=candle)
         existing_epochs.add(key)
         written+=1
 
     print(
         f"[HISTÓRICO] {written:,} candles "
         f"de {tf_min}min gravados — "
-        f"total no CSV: {_count_ticks():,}"
+        f"total do ativo no CSV: {_count_market_records():,}"
     )
 
     return written
@@ -930,7 +1233,8 @@ def _banner(
     )
     print(
         f"  Candles p/ treino  : "
-        f"{min_ticks:,}"
+        f"{_MIN_LABELABLE_CONTRACTS:,} contratos rotuláveis "
+        f"({min_ticks:,} ticks reais mínimos)"
     )
     print(
         "  Re-treino          : "
@@ -941,7 +1245,7 @@ def _banner(
         f"{RETRAIN_WIN_RATE_TRIGGER:.0%} | "
         f"Conf < "
         f"{RETRAIN_CONFIDENCE_TRIGGER:.0%} | "
-        f"+{RETRAIN_NEW_TICKS_TRIGGER} ticks | "
+        f"+{RETRAIN_NEW_LABELS_TRIGGER} contratos rotulados | "
         f"backstop "
         f"{RETRAIN_MAX_INTERVAL_SEC // 60}min"
     )
@@ -1037,6 +1341,10 @@ def _validate_deriv_token(
                 {},
             )
 
+            if auth.get('is_virtual') not in (0, 1) or bool(auth['is_virtual']) != demo:
+                result['message'] = 'Tipo de conta autenticada não corresponde ao modo solicitado.'
+                ws.close()
+                return
             result["ok"] = True
             result["loginid"] = str(
                 auth.get(
@@ -1289,6 +1597,18 @@ class _CollectorThread(threading.Thread):
         )
 
         self._symbol = symbol
+        self.fatal_error = ''
+        self._stopped = threading.Event()
+        self._first_tick_timer = None
+        self.history_ready = threading.Event()
+        self._history_start = None
+        self._history_end = None
+        self._history_seen = set()
+        from payout_quotes import ProposalRecorder
+        import config as cfg
+        self._payout_recorder = ProposalRecorder(Path(TICKS_CSV).with_name('payout_quotes.csv'),
+            symbol, cfg.DURATION, cfg.DURATION_UNIT, cfg.CURRENCY,
+            on_unavailable=_request_market_switch)
 
         self._ws: Optional[
             websocket.WebSocketApp
@@ -1343,7 +1663,7 @@ class _CollectorThread(threading.Thread):
     def run(self) -> None:
         _ensure_ticks_header()
 
-        while not _shutdown.is_set():
+        while not _shutdown.is_set() and not self._stopped.is_set() and not self.fatal_error:
             try:
                 ws = websocket.WebSocketApp(
                     _get_ws_url(),
@@ -1355,9 +1675,8 @@ class _CollectorThread(threading.Thread):
 
                 self._ws = ws
 
-                ws.run_forever(
-                    reconnect=5
-                )
+                # OTP URLs are single-use: reconnect through a new session URL.
+                ws.run_forever(ping_interval=30, ping_timeout=10)
 
             except Exception as exc:
                 if not _shutdown.is_set():
@@ -1366,9 +1685,16 @@ class _CollectorThread(threading.Thread):
                         f"{exc} — reconectando em 5s"
                     )
 
-                    time.sleep(5)
+            finally:
+                if self._first_tick_timer:
+                    self._first_tick_timer.cancel()
+            if self.fatal_error or self._stopped.wait(5):
+                break
 
     def stop(self) -> None:
+        self._stopped.set()
+        if self._first_tick_timer:
+            self._first_tick_timer.cancel()
         if self._ws:
             try:
                 self._ws.close()
@@ -1376,9 +1702,17 @@ class _CollectorThread(threading.Thread):
                 pass
 
     def _on_open(self, ws) -> None:
+        self._first_tick_timer = threading.Timer(30, ws.close)
+        self._first_tick_timer.daemon = True
+        self._first_tick_timer.start()
+        self.history_ready.clear()
+        self._history_start = None
+        records, _ = read_records(TICKS_CSV)
+        self._history_seen = {r['epoch'] for r in records
+                              if r['symbol'] == self._symbol and r['kind'] == 'tick'}
         print(
             f"\n[COLETOR] Conectado | "
-            f"{_symbol_display(SYMBOL)}"
+            f"{_symbol_display(self._symbol)}"
         )
 
         if not _uses_bearer_auth():
@@ -1389,7 +1723,10 @@ class _CollectorThread(threading.Thread):
                     }
                 )
             )
+            return
+        self._subscribe(ws)
 
+    def _subscribe(self, ws):
         ws.send(
             json.dumps(
                 {
@@ -1412,11 +1749,22 @@ class _CollectorThread(threading.Thread):
         ):
             return
 
+        if self._payout_recorder.handle(data):
+            return
+
         if "error" in data:
+            error = data['error']
+            from payout_quotes import market_unavailable
+            if market_unavailable(error):
+                _request_market_switch(self._symbol)
+            if (error.get('code') in ('InvalidSymbol', 'MarketIsClosed', 'AuthorizationRequired', 'InvalidToken')
+                    or 'invalid symbol' in error.get('message', '').lower()):
+                self.fatal_error = f"{self._symbol}: {error.get('message', 'erro API')}"
             print(
                 "\n[COLETOR] Erro API: "
                 f"{data['error'].get('message', 'Erro desconhecido')}"
             )
+            ws.close()
             return
 
         if data.get(
@@ -1426,6 +1774,41 @@ class _CollectorThread(threading.Thread):
                 "[COLETOR] Autorizado. "
                 "Coleta iniciada..."
             )
+            self._subscribe(ws)
+            return
+
+        if data.get('msg_type') == 'history':
+            if self._history_start is None:
+                return
+            history = data.get('history', {})
+            try:
+                times, prices = history['times'], history['prices']
+                if len(times) != len(prices):
+                    raise ValueError('historico com tamanhos divergentes')
+                page = sorted((int(e), float(p)) for e, p in zip(times, prices))
+                if any(e <= 0 or not math.isfinite(p) or p <= 0 for e, p in page):
+                    raise ValueError('tick historico invalido')
+            except (KeyError, TypeError, ValueError, OverflowError):
+                print('[COLETOR] Resposta historica invalida; reconectando para recuperar.')
+                ws.close()
+                return
+            if not page or page[0][0] > self._history_end:
+                print('[COLETOR] Historico incompleto; aguardando dados continuos.')
+                self.history_ready.set()
+                return
+            for epoch, price in page:
+                if (self._history_start <= epoch <= self._history_end
+                        and epoch not in self._history_seen
+                        and math.isfinite(price) and price > 0):
+                    append_record(TICKS_CSV, epoch, self._symbol, price)
+                    self._history_seen.add(epoch)
+            print(f'[COLETOR] Historico: {len(self._history_seen):,} ticks identificados; coleta ao vivo ativa.')
+            if page[0][0] <= self._history_start + MAX_TICK_GAP_SEC:
+                print('[COLETOR] Ticks historicos recuperados; fluxo ao vivo permanece ativo.')
+                self.history_ready.set()
+            else:
+                self._history_end = page[0][0] - 1
+                self._request_tick_history(ws)
             return
 
         if "tick" not in data:
@@ -1455,6 +1838,15 @@ class _CollectorThread(threading.Thread):
         if tick.get("symbol") != self._symbol or not math.isfinite(price) or price<=0:
             return
 
+        if self._first_tick_timer:
+            self._first_tick_timer.cancel()
+
+        if self._history_start is None:
+            self._history_start = (epoch // CANDLE_TIMEFRAME_SEC - _minimum_history_candles()) * CANDLE_TIMEFRAME_SEC
+            self._history_end = epoch - 1
+            print(f'[COLETOR] Recuperando ticks dos ultimos {_minimum_history_candles():,} candles para treino inicial.')
+            self._request_tick_history(ws)
+
         # Filtro anti-spike.
         if self._last_price != 0.0:
             variation = abs(
@@ -1478,6 +1870,11 @@ class _CollectorThread(threading.Thread):
 
                 return
 
+        try:
+            self._payout_recorder.sample(ws, bearer=_uses_bearer_auth())
+        except Exception as exc:
+            print(f'[PAYOUT] Amostragem indisponível: {type(exc).__name__}')
+
         self._last_epoch = epoch
         self._last_price = price
 
@@ -1488,6 +1885,7 @@ class _CollectorThread(threading.Thread):
         self._local_count += 1
 
         append_record(TICKS_CSV,epoch,self._symbol,price)
+        self._history_seen.add(epoch)
 
         print(
             f"\r[COLETOR] Ticks: "
@@ -1496,6 +1894,11 @@ class _CollectorThread(threading.Thread):
             end="",
             flush=True,
         )
+
+    def _request_tick_history(self, ws):
+        ws.send(json.dumps({'ticks_history': self._symbol, 'style': 'ticks',
+                            'start': self._history_start, 'end': self._history_end,
+                            'count': 5000}))
 
     def _on_error(
         self,
@@ -1507,6 +1910,7 @@ class _CollectorThread(threading.Thread):
                 f"\n[COLETOR] Erro WebSocket: "
                 f"{error}"
             )
+        ws.close()
 
     def _on_close(
         self,
@@ -1514,10 +1918,11 @@ class _CollectorThread(threading.Thread):
         code,
         msg,
     ) -> None:
-        if not _shutdown.is_set():
+        if not _shutdown.is_set() and not self._stopped.is_set():
+            action = 'coleta bloqueada' if self.fatal_error else 'reconectando...'
             print(
                 f"\n[COLETOR] Conexão encerrada "
-                f"(código: {code}) — reconectando..."
+                f"(código: {code}) — {action}"
             )
 
 
@@ -1528,40 +1933,67 @@ class _CollectorThread(threading.Thread):
 def _wait_for_ticks(
     min_ticks: int,
     poll_sec: int = 10,
+    collector=None,
 ) -> None:
-    """Bloqueia até ticks.csv conter min_ticks linhas."""
-    current = _count_ticks()
+    """Bloqueia até haver ticks e contratos rotuláveis para treino temporal."""
+    def check_collector():
+        _check_market_switch()
+        if collector is not None and (collector.fatal_error or not collector.is_alive()):
+            raise RuntimeError(collector.fatal_error or 'coletor encerrado sem dados')
 
-    if current >= min_ticks:
+    check_collector()
+    current = _count_ticks()
+    labelable = _count_labelable_contracts_for_training()
+
+    if current >= min_ticks and labelable >= _MIN_LABELABLE_CONTRACTS:
         print(
-            f"[PIPELINE] {current:,} candles "
+            f"[PIPELINE] {current:,} ticks reais "
+            f"e {labelable:,} contratos rotuláveis "
             "já disponíveis — pronto para treino."
         )
         return
 
     print(
         f"\n[PIPELINE] Aguardando "
-        f"{min_ticks:,} candles para o primeiro treino "
-        f"(atual: {current:,})..."
+        f"{min_ticks:,} ticks reais para o primeiro treino "
+        f"e {_MIN_LABELABLE_CONTRACTS:,} contratos rotuláveis "
+        f"(atual: {current:,} ticks, {labelable:,} contratos)..."
     )
 
     while not _shutdown.is_set():
         time.sleep(poll_sec)
+        check_collector()
 
         current = _count_ticks()
+        labelable = _count_labelable_contracts_for_training()
 
         print(
-            f"\r[PIPELINE] Candles: "
-            f"{current:,} / {min_ticks:,}   ",
+            f"\r[PIPELINE] Ticks reais: "
+            f"{current:,} / {min_ticks:,} | "
+            f"contratos rotuláveis: {labelable:,} / {_MIN_LABELABLE_CONTRACTS:,}   ",
             end="",
             flush=True,
         )
 
-        if current >= min_ticks:
+        if current >= min_ticks and labelable >= _MIN_LABELABLE_CONTRACTS:
             print()
             return
 
     sys.exit(0)
+
+
+def _count_labelable_contracts_for_training() -> int:
+    if not os.path.exists(TICKS_CSV):
+        return 0
+    try:
+        return dataset_builder.count_labelable_contracts(
+            TICKS_CSV,
+            symbol=_runtime_symbol(),
+            window_size=FEATURE_WINDOW,
+        )
+    except Exception as exc:
+        print(f'[PIPELINE] Dados ainda indisponiveis para treino: {exc}')
+        return 0
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1592,7 +2024,7 @@ def _trim_ticks(
                 - max_ticks
             )
 
-            df = df.tail(
+            df = df.sort_values('epoch').tail(
                 max_ticks
             )
 
@@ -1617,12 +2049,15 @@ def _trim_ticks(
 def _load_latest_final_metrics():
     """Métricas do bundle ativo; None quando o bundle não existe ou não é utilizável."""
     try:
-        import joblib
         if not os.path.exists(AI_MODEL_PATH):
             return None
-        payload=joblib.load(AI_MODEL_PATH)
-        metadata=payload.get('metadata') or {}
-        if usable(metadata,SYMBOL):
+        if not os.path.exists(AI_MODEL_PATH + '.metadata.json'):
+            print('[PIPELINE] Modelo antigo sem metadados ignorado; treino inicial automatico necessario.')
+            return None
+        from model_contract import load_validated_bundle
+        symbol = _runtime_symbol()
+        payload, metadata = load_validated_bundle(AI_MODEL_PATH, symbol)
+        if usable(metadata, symbol):
             return metadata.get('metrics')
         print(f"[PIPELINE] Bundle existente inutilizável: symbol={metadata.get('symbol')} "
               f"approved={metadata.get('approved')} "
@@ -1634,7 +2069,8 @@ def _load_latest_final_metrics():
 
 def _should_promote_model(current,challenger):
     if not challenger or not challenger.get('eligible'):
-        return False,'teste final não comprova qualidade mínima no vencimento configurado'
+        reasons = (challenger or {}).get('rejection_reasons')
+        return False, '; '.join(reasons) if reasons else 'teste final não comprova qualidade mínima no vencimento configurado'
     # A comparação usa reavaliação do bundle ativo no mesmo período do candidato.
     baseline=challenger.get('champion_metrics')
     if current is not None and baseline is None:
@@ -1675,18 +2111,16 @@ def _run_training(
     )
 
     try:
-        shutil.copy2(
-            TICKS_CSV,
-            tmp_ticks,
-        )
+        import fcntl
+        with open(TICKS_CSV, 'rb') as source, open(tmp_ticks, 'wb') as target:
+            fcntl.flock(source, fcntl.LOCK_SH)
+            shutil.copyfileobj(source, target)
 
         # Filtra o snapshot para o símbolo ativo.
         try:
             import pandas as _pd
-            import config as _cfg
-
             _active_sym = (
-                _cfg.get_active_symbol()
+                _runtime_symbol()
             )
 
             _snap_df = _pd.read_csv(
@@ -1724,16 +2158,14 @@ def _run_training(
         except Exception as exc:
             raise ValueError("snapshot sem esquema válido") from exc
 
-        _trim_ticks(
-            tmp_ticks,
-            max_ticks=200000,
-        )
+        # Preserve the collected temporal coverage. A tick-count cap shrinks
+        # evaluation differently for each feed and prevents learning from growing.
 
         n = dataset_builder.build_dataset(
             tmp_ticks,
             dataset_path,
             window_size=FEATURE_WINDOW,
-            symbol=SYMBOL,
+            symbol=_runtime_symbol(),
         )
 
         if n < 30:
@@ -1774,13 +2206,24 @@ def _run_training(
     metrics: Optional[dict] = None
 
     try:
+        from model_contract import fingerprint, specification
+        dataset_key = (fingerprint(dataset_path), json.dumps(specification(_runtime_symbol()), sort_keys=True), test_ratio)
+        if getattr(_run_training, '_last_dataset_key', None) == dataset_key:
+            print('[PIPELINE] Dataset rotulado inalterado; aguardando novos contratos vencidos para retreinar.')
+            return False, None
         metrics = train_model.train(
             dataset_path,
             model_path,
             test_ratio,
             tft_output_path=tft_output_path,
             duration_output_path=duration_output_path,
+            payout_quotes_path=Path(TICKS_CSV).with_name("payout_quotes.csv"),
         )
+        _run_training._last_dataset_key = dataset_key
+        _retrain_state["last_label_count"] = n
+        print(f"[PIPELINE] Modelo treinado: {metrics.get('best_model')} | "
+              f"teste={metrics.get('n_test')} amostras | contratos={metrics.get('trades')} | "
+              f"AUC={metrics.get('auc', 0):.4f} | aprovado={metrics.get('eligible')}")
 
     except SystemExit:
         return False, None
@@ -1808,7 +2251,10 @@ def _reset_ai_predictor():
 _retrain_state: dict = {
     "last_epoch": 0.0,
     "last_tick_count": 0,
+    "last_label_count": 0,
 }
+
+_model_ready = threading.Event()
 
 
 def _should_retrain_now() -> tuple[bool, str]:
@@ -1838,6 +2284,12 @@ def _should_retrain_now() -> tuple[bool, str]:
                 f"{RETRAIN_MIN_INTERVAL_SEC}s)"
             ),
         )
+
+    import config as cfg
+    labels = _count_labelable_contracts_for_training()
+    new_labels = labels - _retrain_state.get('last_label_count', 0)
+    if new_labels < cfg.RETRAIN_NEW_LABELS_TRIGGER:
+        return False, f'{new_labels} novos contratos rotulados; aguardando {cfg.RETRAIN_NEW_LABELS_TRIGGER}'
 
     if (
         elapsed
@@ -1933,33 +2385,7 @@ def _should_retrain_now() -> tuple[bool, str]:
     except Exception:
         pass
 
-    ticks_now = _count_ticks()
-
-    new_ticks = (
-        ticks_now
-        - _retrain_state[
-            "last_tick_count"
-        ]
-    )
-
-    if (
-        new_ticks
-        >= RETRAIN_NEW_TICKS_TRIGGER
-    ):
-        return (
-            True,
-            (
-                f"{new_ticks:,} novos ticks "
-                "acumulados "
-                f"(limiar: "
-                f"{RETRAIN_NEW_TICKS_TRIGGER:,})"
-            ),
-        )
-
-    return (
-        False,
-        "nenhum gatilho acionado",
-    )
+    return True, f'{new_labels} novos contratos rotulados disponíveis'
 
 
 def _retrain_loop() -> None:
@@ -1975,6 +2401,9 @@ def _retrain_loop() -> None:
     _retrain_state[
         "last_tick_count"
     ] = _count_ticks()
+
+    if not _retrain_state.get('last_label_count'):
+        _retrain_state['last_label_count'] = _count_labelable_contracts_for_training()
 
     while not _shutdown.is_set():
 
@@ -2051,6 +2480,7 @@ def _retrain_loop() -> None:
                     os.replace(metadata,AI_MODEL_PATH+'.metadata.json')
 
                 _reset_ai_predictor()
+                _model_ready.set()
 
                 print(
                     "[RE-TREINO] model.pkl "
@@ -2059,6 +2489,10 @@ def _retrain_loop() -> None:
                 )
 
             else:
+                # Keep the last trained candidate reviewable without publishing it.
+                os.replace(tmp_model, AI_MODEL_PATH + '.candidate')
+                if os.path.exists(tmp_model + '.metadata.json'):
+                    os.replace(tmp_model + '.metadata.json', AI_MODEL_PATH + '.candidate.metadata.json')
                 print(
                     "[RE-TREINO] Challenger "
                     f"não promovido: {promo_reason}"
@@ -2090,6 +2524,29 @@ def _retrain_loop() -> None:
                     os.remove(tmp)
                 except OSError:
                     pass
+
+
+def _wait_for_compatible_model(collector=None, poll_sec: int = 10) -> bool:
+    """Aguarda promoção de bundle antes de permitir entrada no executor."""
+    print(
+        "[PIPELINE] Aguardando primeiro modelo compatível "
+        "antes de iniciar o bot de trading..."
+    )
+    while not _shutdown.is_set():
+        _check_market_switch()
+        if _load_latest_final_metrics() is not None:
+            _model_ready.set()
+            return True
+        if collector is not None and (collector.fatal_error or not collector.is_alive()):
+            print(
+                "[PIPELINE] Coletor encerrado antes de existir modelo compatível; "
+                "bot não será iniciado."
+            )
+            return False
+        _model_ready.wait(timeout=poll_sec)
+        if _model_ready.is_set() and _load_latest_final_metrics() is not None:
+            return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -2125,7 +2582,7 @@ def _confirm_real_mode() -> bool:
 # Entry point
 # ─────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def _main_session(resources, forced_symbol=None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -2207,17 +2664,20 @@ def main() -> None:
         ),
     )
 
+    parser.add_argument('--reuse-training-data', action='store_true',
+                        help='Reutiliza dados/modelos anteriores; por padrao inicia uma nova coleta e treino.')
+
     parser.add_argument(
         "--no-scan",
         action="store_true",
         help=(
             "Pula o scan de tendência e "
-            "usa SYMBOL de config.py."
+            "prefere SYMBOL de config.py, com fallback se indisponível."
         ),
     )
 
     args = parser.parse_args()
-    execution_lock=acquire_execution_lock(Path(__file__).resolve().parent/"executor.lock")
+    execution_lock=resources["lock"]
 
     # ── Determina modo ────────────────────────────────────────
 
@@ -2236,12 +2696,6 @@ def main() -> None:
                 "Operação cancelada."
             )
             sys.exit(0)
-
-    _banner(
-        args.history_count,
-        args.min_ticks,
-        is_demo,
-    )
 
     # ── Ctrl+C ────────────────────────────────────────────────
 
@@ -2277,15 +2731,14 @@ def main() -> None:
     state_path=Path(__file__).resolve().parent/'state.json'
     prior=json.loads(state_path.read_text()) if state_path.exists() else {}
     pending=prior.get('active_contract')
-    detected=(pending.get('symbol') if pending else None) or _detect_trending_symbol(no_scan=args.no_scan)
-
-    if detected != _cfg.SYMBOL:
-        _banner(
-            args.history_count,
-            args.min_ticks,
-            is_demo,
-            symbol=detected,
-        )
+    try:
+        detected=(pending.get('symbol') if pending else None) or (
+            forced_symbol or (_cfg.SYMBOL if args.skip_collect else _detect_trending_symbol(no_scan=args.no_scan)))
+        if not pending and not args.skip_collect:
+            detected = _ensure_operable_symbol(detected)
+    except RuntimeError as exc:
+        print(f'[PIPELINE] Sem mercado disponível na seleção: {exc}')
+        raise MarketUnavailable(_runtime_symbol()) from exc
 
     if detected != _cfg.SYMBOL:
         print(
@@ -2293,31 +2746,19 @@ def main() -> None:
             f"{_cfg.SYMBOL} → {detected}"
         )
 
-        import executor
-        import strategy
+    _set_runtime_symbol(detected)
 
-        for module in (
-            _cfg,
-            executor,
-            strategy,
-            dataset_builder,
-            train_model,
-        ):
-            if hasattr(
-                module,
-                "SYMBOL",
-            ):
-                setattr(
-                    module,
-                    "SYMBOL",
-                    detected,
-                )
+    history_count = _history_fetch_count_for_start(args.history_count)
 
-        _cfg.set_active_symbol(
-            detected
-        )
+    _prepare_training_start(reuse=args.reuse_training_data or forced_symbol is not None,
+                            skip_collect=args.skip_collect, pending=pending)
 
-        globals()["SYMBOL"] = detected
+    _banner(
+        history_count,
+        args.min_ticks,
+        is_demo,
+        symbol=detected,
+    )
 
     # ── Guarda símbolo no state.json ─────────────────────────
 
@@ -2359,10 +2800,17 @@ def main() -> None:
 
     # ── FASE 0: Histórico ─────────────────────────────────────
 
+    collector = None
+    if not args.skip_collect:
+        _ensure_ticks_header()
+        collector = _CollectorThread(detected)
+        resources["collector"] = collector
+        collector.start()
+
     if not args.skip_collect:
         n_hist = (
             _fetch_historical_ticks(
-                args.history_count
+                history_count
             )
         )
 
@@ -2382,14 +2830,7 @@ def main() -> None:
 
     # ── FASE 1: Coletor ───────────────────────────────────────
 
-    collector: Optional[
-        _CollectorThread
-    ] = None
-
     if not args.skip_collect:
-        collector = _CollectorThread(detected)
-        collector.start()
-
         print(
             "[PIPELINE] Fase 1: Coletor "
             "iniciado em background "
@@ -2410,16 +2851,6 @@ def main() -> None:
 
     model_exists = _load_latest_final_metrics() is not None and not args.force_retrain
 
-    if not model_exists and not args.force_retrain and not pending:
-        print('[PIPELINE] Modelo incompatível: coleta apenas, sem contratos ou retreino automático. '
-              'Treino requer dados identificados e --force-retrain.')
-        if args.skip_collect:
-            _shutdown.set()
-            return
-        while not _shutdown.wait(5):
-            pass
-        return
-
     if model_exists or pending:
         print(
             "\n[PIPELINE] Fases 2-4: "
@@ -2437,9 +2868,13 @@ def main() -> None:
         success, _metrics = False, None
 
         while not _shutdown.is_set() and not success:
-            _wait_for_ticks(
-                args.min_ticks
-            )
+            try:
+                _wait_for_ticks(args.min_ticks, collector=collector)
+            except RuntimeError as exc:
+                print(f'[PIPELINE] Coleta interrompida; treino bloqueado: {exc}')
+                if collector:
+                    collector.stop()
+                return
 
             print(
                 "[PIPELINE] Tentativa de treino inicial "
@@ -2457,24 +2892,28 @@ def main() -> None:
                     "Nova tentativa após mais coleta."
                 )
 
-                if _shutdown.wait(300):
+                if _market_switch.wait(300):
+                    _check_market_switch()
+                if _shutdown.is_set():
                     return
 
         if not success:
             return
 
+        _check_market_switch()
         champion_metrics = _load_latest_final_metrics()
 
         if success and _metrics and not _metrics.get('champion_metrics'):
             # Reavalia o champion no mesmo período do candidato para comparação justa.
             try:
-                import joblib as _jl
                 import train_model as _tm
+                from model_contract import load_validated_bundle
 
-                _champion_bundle = _jl.load(AI_MODEL_PATH)
+                _symbol = _runtime_symbol()
+                _champion_bundle, _cm = load_validated_bundle(AI_MODEL_PATH, _symbol)
                 _cm = _champion_bundle.get('metadata', {})
 
-                if usable(_cm, SYMBOL):
+                if usable(_cm, _symbol):
                     _champ_model = _champion_bundle['model']
 
                     import pandas as _pd
@@ -2495,7 +2934,7 @@ def main() -> None:
             print(
                 "\n[PIPELINE] Treino inicial "
                 "produziu modelo não elegível. "
-                "Aguardando mais dados para nova tentativa."
+                f"Motivo: {reason}. Aguardando mais dados para nova tentativa."
             )
 
             _retrain_state["last_epoch"] = time.time()
@@ -2508,6 +2947,7 @@ def main() -> None:
                 name="Retrain",
             )
 
+            resources["retrain"] = retrain_thread
             retrain_thread.start()
             print('[PIPELINE] Re-treino adaptativo assumirá a promoção do primeiro bundle elegível')
         else:
@@ -2515,21 +2955,26 @@ def main() -> None:
             if os.path.exists(AI_MODEL_PATH+'.new.metadata.json'):
                 os.replace(AI_MODEL_PATH+'.new.metadata.json',AI_MODEL_PATH+'.metadata.json')
             model_exists=True
+            _model_ready.set()
             _reset_ai_predictor()
 
     # ── FASE 5: Re-treino ─────────────────────────────────────
 
-    retrain_thread = threading.Thread(
-        target=_retrain_loop,
-        daemon=True,
-        name="Retrain",
-    )
-
-    if model_exists:
-        retrain_thread.start()
-        print('[PIPELINE] Re-treino adaptativo iniciado para o bundle compatível')
+    if model_exists or pending:
+        retrain_thread = threading.Thread(
+            target=_retrain_loop,
+            daemon=True,
+            name="Retrain",
+        )
+        if model_exists:
+            resources["retrain"] = retrain_thread
+            retrain_thread.start()
+            print('[PIPELINE] Re-treino adaptativo iniciado para o bundle compatível')
     else:
-        print('[PIPELINE] Reconciliação de contratos; novas entradas e retreino bloqueados sem modelo compatível')
+        print('[PIPELINE] Sem modelo compatível; entradas permanecem bloqueadas até promoção.')
+        if not _wait_for_compatible_model(collector=collector):
+            return
+        model_exists = True
 
     # ── FASE 6: Bot ───────────────────────────────────────────
 
@@ -2575,7 +3020,57 @@ def main() -> None:
     )
 
     bot._execution_lock=execution_lock
+    bot.market_switch_requested = _market_switch.is_set
+    bot.on_market_unavailable = _request_market_switch
     bot.run()
+    _check_market_switch()
+
+
+def _finish_market_session(resources):
+    # Never change module symbols while the previous training job can still write.
+    _shutdown.set()
+    collector = resources.pop('collector', None)
+    if collector:
+        collector.stop()
+        while collector.is_alive():
+            collector.join(timeout=30)
+    retrain = resources.pop('retrain', None)
+    if retrain:
+        while retrain.is_alive():
+            print('[MERCADO] Aguardando treino atual terminar antes da troca de ativo...')
+            retrain.join(timeout=30)
+
+
+def main() -> None:
+    resources = {'lock': acquire_execution_lock(Path(__file__).resolve().parent/'executor.lock')}
+    forced_symbol = None
+    try:
+        while True:
+            _shutdown.clear()
+            _market_switch.clear()
+            try:
+                _main_session(resources, forced_symbol)
+                return
+            except MarketUnavailable as exc:
+                old_symbol = str(exc)
+            finally:
+                _finish_market_session(resources)
+            # Keep risk, historical data and account state. Only the market changes.
+            _shutdown.clear()
+            forced_symbol = ''
+            while not forced_symbol and not _shutdown.is_set():
+                forced_symbol = _first_live_symbol([s for s in _scan_candidates() if s != old_symbol])
+                if not forced_symbol:
+                    print('[MERCADO] Nenhum alternativo disponível; nova consulta em 60 segundos.')
+                    _shutdown.wait(60)
+            if not forced_symbol:
+                return
+            print(f'[MERCADO] {old_symbol} → {forced_symbol}; modelo compatível será exigido.')
+            _model_ready.clear()
+            _retrain_state.update(last_epoch=0, last_tick_count=0, last_label_count=0)
+            _reset_ai_predictor()
+    finally:
+        resources['lock'].close()
 
 
 if __name__ == "__main__":

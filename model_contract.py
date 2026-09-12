@@ -7,7 +7,33 @@ from pathlib import Path
 SCHEMA_VERSION = 2
 FEATURE_WINDOW = 100
 MAX_TICK_GAP_SEC = 10
-MIN_EXPECTED_RETURN = 0.02
+# Entrada autorizada quando o retorno esperado não é negativo.
+MIN_EXPECTED_RETURN = 0.0
+EVALUATION_RISK_TIMEZONE = 'UTC'
+
+
+def minimum_training_rows():
+    import config
+    horizon = math.ceil(duration_seconds(config.DURATION, config.DURATION_UNIT)
+                        / config.CANDLE_TIMEFRAME_SEC)
+    # 15% calibration/validation partitions lose a feature window plus expiry.
+    embargo = FEATURE_WINDOW + horizon
+    # Menor calibração do walk-forward: 20% dos primeiros 55% do development.
+    return max(math.ceil((embargo + 31) / .15),
+               math.ceil(((embargo + 32) / (.55 * .2) + embargo) / .8))
+
+
+def minimum_history_candles():
+    import config
+    horizon = math.ceil(duration_seconds(config.DURATION, config.DURATION_UNIT)
+                        / config.CANDLE_TIMEFRAME_SEC)
+    # Collection budget includes room for final evaluation; it is not a gate
+    # for attempting training when fewer usable rows survive real market gaps.
+    # Only 20% reaches final evaluation. Reserve 120 non-overlapping
+    # opportunities there, before technical filters and historical risk pauses.
+    # The old budget reserved 30 at best, making approval practically unreachable.
+    reserve = max(minimum_training_rows(), math.ceil(120 * (horizon + 1) / .2))
+    return FEATURE_WINDOW + horizon + reserve + 5
 
 
 def duration_seconds(duration, unit):
@@ -26,6 +52,9 @@ def specification(symbol):
             'target': 'first_tick_after_signal_to_first_tick_at_expiry_strict_v2',
             'features': FEATURES, 'ohlc': 'time_candles', 'ties': 'separate_class_2',
             'max_tick_gap_sec': MAX_TICK_GAP_SEC,
+            'approval_policy': {'version': 2, 'min_net_payout': config.MIN_NET_PAYOUT,
+                                'min_win_rate': config.MIN_APPROVAL_WIN_RATE,
+                                'min_trades': 1, 'wilson_gate': False},
             'strategy_parameters': {key:getattr(config,key) for key in (
                 'USE_WEIGHTED_SIGNAL','SIGNAL_SCORE_MIN','AI_CONFIDENCE_MIN','AI_SCORE_MIN',
                 'AI_TECH_WEIGHT','AI_MODEL_WEIGHT','ADX_MIN','ADX_ADAPTIVE','ADX_ADAPTIVE_PERCENTILE',
@@ -57,6 +86,36 @@ def fingerprint(path):
     return h.hexdigest()
 
 
+def load_validated_bundle(path, symbol):
+    """Valida sidecar e contrato antes de abrir o pickle do modelo."""
+    import sklearn, xgboost
+    import joblib
+
+    model_path = Path(path)
+    metadata_path = Path(str(model_path) + '.metadata.json')
+    if not model_path.exists():
+        raise FileNotFoundError(f"modelo não encontrado: {model_path}")
+    if not metadata_path.exists():
+        raise FileNotFoundError(
+            f"metadado do modelo não encontrado: {metadata_path}; "
+            "gere um bundle v2 com train_model.py ou pipeline.py --force-retrain"
+        )
+    metadata = json.loads(metadata_path.read_text())
+    artifact_sha256 = fingerprint(model_path)
+    if metadata.get('artifact_sha256') != artifact_sha256:
+        raise ValueError('fingerprint do modelo difere do metadado')
+    metadata = {k: v for k, v in metadata.items() if k != 'artifact_sha256'}
+    if not compatible(metadata, symbol) or not metadata.get('approved'):
+        raise ValueError('modelo sem validação compatível com ativo, OHLC e expiração')
+    if metadata.get('dependencies') != {'sklearn': sklearn.__version__, 'xgboost': xgboost.__version__}:
+        raise ValueError('versões de dependências incompatíveis')
+    payload = joblib.load(model_path)
+    payload_metadata = payload.get('metadata', {})
+    if payload_metadata != metadata:
+        raise ValueError('metadado embutido difere do sidecar validado')
+    return payload, dict(metadata, model_id=artifact_sha256)
+
+
 def write_json_atomic(path, value):
     import os, tempfile
     p = Path(path)
@@ -72,13 +131,31 @@ def write_json_atomic(path, value):
             os.unlink(tmp)
 
 
+def net_payout_ratio(price, payout):
+    # Decimal preserves the inclusive boundary for quoted currency amounts.
+    from decimal import Decimal
+    price, payout = Decimal(str(price)), Decimal(str(payout))
+    return float((payout - price) / price)
+
+
+def meets_payout_floor(net_payout):
+    import config
+    try:
+        ratio = float(net_payout)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(ratio) and ratio >= config.MIN_NET_PAYOUT
+
+
 def profitable_proposal(price, payout, probability, margin = MIN_EXPECTED_RETURN):
+    import config
     try:
         price, payout, probability = map(float, (price, payout, probability))
     except (TypeError, ValueError):
         return False
     return (all(math.isfinite(v) for v in (price, payout, probability))
-            and 0 < price < payout and 0 <= probability <= 1
+            and 0 < price < payout and config.AI_CONFIDENCE_MIN < probability <= 1
+            and meets_payout_floor(net_payout_ratio(price, payout))
             and probability * payout / price - 1 >= margin)
 
 

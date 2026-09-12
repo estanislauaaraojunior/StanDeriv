@@ -266,7 +266,7 @@ class DerivBot:
         )
         print(f"{'=' * 55}\n")
 
-        while True:
+        while not self._market_switch_ready():
             try:
                 ws = websocket.WebSocketApp(
                     self._get_ws_url(),
@@ -349,7 +349,16 @@ class DerivBot:
         else:
             ws.send(json.dumps({"authorize": TOKEN}))
 
+    def _market_switch_pending(self):
+        return getattr(self, 'market_switch_requested', lambda: False)()
+
+    def _market_switch_ready(self):
+        return self._market_switch_pending() and not self._in_trade
+
     def _on_message(self, ws, message: str) -> None:
+        if self._market_switch_ready():
+            ws.close()
+            return
         try:
             data = json.loads(message)
         except (TypeError, json.JSONDecodeError) as exc:
@@ -359,6 +368,11 @@ class DerivBot:
         if "error" in data:
             req_id=data.get('req_id')
             if self._phase=='proposal' and req_id==self._proposal_req_id:
+                from payout_quotes import market_unavailable
+                if market_unavailable(data['error']):
+                    callback = getattr(self, 'on_market_unavailable', None)
+                    if callback:
+                        callback(self.symbol)
                 self._clear_pending()
             elif self._phase=='buy' and req_id==self._buy_req_id:
                 # Resultado financeiro incerto: não repetir a compra automaticamente.
@@ -702,7 +716,7 @@ class DerivBot:
             self._candles_since_last_entry = 0
 
     def _send_proposal(self,ws,direction,indicators):
-        if self._in_trade or not self._auth_verified or not self.risk_manager.can_trade():
+        if self._market_switch_pending() or self._in_trade or not self._auth_verified or not self.risk_manager.can_trade():
             return
         if direction not in ('BUY','SELL'):
             return
@@ -715,7 +729,7 @@ class DerivBot:
             return
         probability=indicators.get('win_probability')
         # Sem probabilidade calibrada não existe justificativa de compra pelo payout.
-        if probability is None or not math.isfinite(probability) or not 0<=probability<=1:
+        if probability is None or not math.isfinite(probability) or not config.AI_CONFIDENCE_MIN<probability<=1:
             return
         self._pending_payout=self._pending_buy_price=None
         self._pending_direction=direction
@@ -737,7 +751,7 @@ class DerivBot:
     def _handle_proposal(self,ws,proposal,req_id=None):
         if self._phase!='proposal' or req_id is None or req_id!=self._proposal_req_id:
             return
-        if time.time()-self._pending_timestamp>PROPOSAL_TIMEOUT_SEC:
+        if self._market_switch_pending() or time.time()-self._pending_timestamp>PROPOSAL_TIMEOUT_SEC:
             self._clear_pending()
             return
         probability=self._pending_indicators.get('win_probability')

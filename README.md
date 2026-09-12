@@ -143,6 +143,15 @@ disponíveis até o fechamento da vela, exige um segmento contínuo de ticks ide
 contratos simultâneos e aplica stake percentual, stops diários e pausas por
 perdas sobre o relógio histórico.
 
+Os stops usam dias em **UTC** por padrão, independentemente do fuso da máquina.
+Para reproduzir o calendário de um processo operacional em São Paulo, informe
+`--risk-timezone America/Sao_Paulo`. O resultado pertence ao dia da liquidação;
+a virada do dia reinicia os limites diários, mas preserva pausas pendentes.
+O relatório registra o fuso, o hash dos ticks selecionados, o stake médio,
+sequências globais por P&L líquido e resultados agrupados pelo dia de liquidação.
+O payout fixo é uma hipótese configurável. A simulação não modela latência,
+slippage, requotes, indisponibilidade, falhas WebSocket ou rejeição de propostas.
+
 ### Dashboard
 
 ```bash
@@ -209,13 +218,51 @@ Cada padrão inclui `strength` (0-1) e notificação em tempo real no terminal e
 
 ## Modelos e contrato temporal
 
-O treino atual compara RandomForest e XGBoost, calibra probabilidades em um período separado, seleciona o candidato na validação e avalia no teste final. As partições têm embargo temporal. O bundle registra ativo, janela de 100 candles OHLC, features, versões de dependências e vencimento.
+O treino atual compara RandomForest e XGBoost em três janelas walk-forward com calibração e embargo temporal. A seleção considera amostra, estabilidade do resultado, drawdown, qualidade das probabilidades e AUC, usando somente o período de desenvolvimento. O candidato escolhido é avaliado no teste final reservado. O bundle registra ativo, janela de 100 candles OHLC, features, versões de dependências e vencimento.
 
 O target representa alta, queda ou empate entre o primeiro tick após o sinal e o primeiro tick no vencimento. Empate perde tanto CALL quanto PUT. A duração atual é fixa em 15 minutos (`DURATION=15`, `DURATION_UNIT="m"`). As duas próximas observações e sua média não são usadas como target.
 
 Abstenção, divergência, falta de dados e modelo incompatível bloqueiam entradas. A força técnica real participa do score; o score não representa probabilidade de vitória. Antes da compra, a probabilidade calibrada da direção é confrontada com preço e payout da proposta.
 
 Os artefatos antigos de TFT, stacking e duração foram preservados, mas não participam do novo caminho operacional. A flag legada `USE_TRANSFORMER` não promove automaticamente um ensemble não validado.
+
+O relatório separa IA, sinais técnicos e estratégia completa, com bloqueios, resultados por direção/horário/confiança e calibração. O retreino exige 120 novos contratos rotulados (`RETRAIN_NEW_LABELS_TRIGGER`), além do intervalo mínimo. O coletor consulta CALL/PUT a cada cinco minutos, sem compra, e registra `payout_quotes.csv`. Avaliações com cotações observadas usam somente dados anteriores à entrada, com até 900 segundos de idade, sem preencher lacunas. Os cenários fixos de payout líquido de 85% e 70% continuam explicitamente identificados como hipóteses; os critérios anteriores de promoção são preservados.
+
+O conjunto operacional continua com 27 features. O experimento de contexto temporal acrescenta oito colunas ao dataset, mas só compara modelos no período de desenvolvimento; não publica um bundle de 35 features:
+
+```bash
+.venv/bin/python training_experiments.py --input /tmp/dataset-v2.csv \
+  --output /tmp/feature-comparison.json --symbol frxUSDCAD
+```
+
+O dataset deve ser reconstruído com `dataset_builder.py` para conter as novas colunas. Relatórios de treino ficam em `training_reports/`. Veja [a implementação e a avaliação de 10/09](docs/MELHORIAS_AVALIACAO_2026-09-10.md).
+
+O treinador também compara regressão logística e frequência de classes, além de
+RandomForest/XGBoost. Cada estimador é avaliado com calibração multinomial e
+temperature scaling; probabilidades brutas e frequência de classes são controles
+diagnósticos, sem seleção para publicação. A busca usa seed 42 e quatro
+configurações adicionais de árvores por padrão (`--search-trials`, de 0 a 10).
+A receita é escolhida apenas no development e o ajuste final usa seus 80% iniciais,
+seguido por calibração temporal separada, com embargo antes do teste final.
+
+Para comparar a receita nova com a anterior em um snapshot, sem consultar ou
+substituir o champion, use um **diretório de saída novo**:
+
+```bash
+.venv/bin/python training_experiments.py --study training \
+  --input dataset_v2.csv --symbol frxUSDCAD \
+  --output /tmp/standeriv-training-study --search-trials 4 \
+  --payout-quotes payout_quotes.csv
+```
+
+O comando preserva os snapshots, grava `comparison.json` e um `model.candidate`
+experimental no diretório indicado. Omita `--payout-quotes` se não houver histórico
+de propostas. O relatório inclui probabilidades brutas/calibradas, percentis de
+confiança, AUC por direção, ganho sobre frequência de classes e curvas de precisão,
+cobertura e retorno para payouts fixos de 60%, 70% e 85%. Essas curvas não ajustam
+limiares no teste. O fuso da avaliação é registrado separadamente como
+`evaluation_risk_timezone=UTC`; `risk_timezone` continua descrevendo o calendário
+local da operação. Veja [a aplicação e seus resultados](docs/APLICACAO_TREINO_2026-09-11.md).
 
 ### Preparação e treino offline
 
@@ -257,7 +304,7 @@ A origem não é alterada. Registros sem identificação de tick/candle recebem 
 `ENTRY_CANDLE_INTERVAL = 1` controla o intervalo mínimo entre entradas em velas fechadas (1 = avalia a cada nova vela).
 
 ### Promoção de Modelo (Champion-Challenger)
-Além de pelo menos 30 contratos de teste não sobrepostos e evidência acima do ponto de equilíbrio, o challenger precisa ser comparado com o champion no mesmo período fora da amostra:
+Além de pelo menos um contrato de teste, taxa de acerto observada mínima de 60% (independente da quantidade de contratos) e AUC acima de 0,50, o challenger precisa ser comparado com o champion no mesmo período fora da amostra:
 - `MODEL_PROMOTION_MIN_AUC_DELTA = 0.001` — AUC do novo modelo deve ser ≥ AUC atual + delta
 - `MODEL_PROMOTION_MAX_ACC_DROP = 0.02` — queda máxima tolerada de acurácia
 - `MODEL_PROMOTION_MAX_F1_DROP = 0.05` — queda máxima tolerada de F1
@@ -330,3 +377,29 @@ Os itens abaixo registram versões passadas; o comportamento atual está descrit
 - Janela temporal de 50k ticks para retreino
 - Dashboard: painel de padrões de vela com polling automático
 - 27 features no total (16 técnicas + 11 PA)
+
+
+O payout líquido mínimo é `MIN_NET_PAYOUT=0.60`: retorno total de pelo menos
+1,60 por unidade de stake. O filtro vale no backtest, na avaliação de treino e
+nas compras em contas demo e reais. `MIN_APPROVAL_WIN_RATE=0.60` substitui o
+antigo bloqueio por amostra de 30 contratos e limite de Wilson; Wilson continua
+como diagnóstico. Acurácia de classificação e taxa de acerto dos contratos são
+métricas distintas. Os filtros de retorno esperado, risco e comparação entre
+modelos permanecem. Bundles anteriores exigem reavaliação sob a nova política.
+
+### Regra de entrada: confiança e payout
+
+A confiança estimada para cada entrada deve ser **estritamente maior que 55%**.
+A proposta só permite compra quando `probabilidade × payout_total / preço − 1 >= 0`,
+substituindo a margem anterior de 2%. O payout líquido mínimo de 60%, os filtros
+técnicos e os controles de risco continuam ativos. Isso representa retorno
+esperado não negativo segundo o modelo; não garante ausência de perdas.
+A confiança de uma previsão difere da taxa histórica de acerto: a aprovação
+do treino continua exigindo pelo menos 60% de acertos e AUC acima de 0,50.
+Mudanças no código não reiniciam o executor nem promovem modelos existentes.
+
+O backtest com IA aplica a mesma função `profitable_proposal` do executor,
+exigindo `win_probability` válida, confiança acima de 55% e retorno esperado
+não negativo. Custos hipotéticos configurados no backtest são descontados
+antes da aceitação. Rejeições aparecem como `unprofitable_proposal` no relatório.
+O modo técnico permanece um comparador sem previsão probabilística.

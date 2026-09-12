@@ -42,7 +42,21 @@ As próximas gravações usam `ticks_v2.csv`, `dataset_v2.csv` e `operacoes_v2.c
 
 A manutenção não iniciou conexões, operações, coleta ou retreino operacional. Houve uma tentativa externa de iniciar o pipeline durante as alterações, registrada no log; essas mudanças externas em log/PID/estado foram preservadas.
 
-Sem modelo compatível, uma futura execução normal do pipeline mantém apenas a coleta, sem iniciar contratos ou retreino automático. Com `--skip-collect`, encerra em vez de ficar aguardando dados que não chegarão. Contratos pendentes têm prioridade de reconciliação independentemente da disponibilidade do modelo.
+Sem modelo compatível, o pipeline coleta e tenta treinar automaticamente assim que houver amostras contínuas suficientes. Contratos pendentes têm prioridade de reconciliação independentemente da disponibilidade do modelo.
+
+O histórico inicial mínimo é calculado em `model_contract.minimum_history_candles`: na configuração de candles de 1 minuto e vencimento de 15 minutos, são 9.720 candles, reservando 9.600 amostras antes dos embargos temporais e 120 oportunidades sem sobreposição na fração de teste antes dos filtros. Esse orçamento foi ampliado na [manutenção de 10/09](MANUTENCAO_TREINO_2026-09-10.md). Esse orçamento de coleta não bloqueia o início do treino: `minimum_training_rows` calcula o piso estrutural de 1.815 amostras (incluindo a calibração das janelas walk-forward), e o treinador valida as partições reais, classes e embargo. Lacunas de mercado podem reduzir as linhas aproveitáveis. As exigências estatísticas de aprovação continuam inalteradas. Valores positivos menores de `--history-count` são elevados ao mínimo.
+
+Uma inicialização normal começa agora um novo ciclo de aprendizado. Depois de obter exclusão de execução e antes de iniciar a coleta, arquiva ticks, datasets, modelos anteriores, candidatos e metadados em `recovered_data/training_resets/`, com manifesto. Não apaga contratos, risco, credenciais ou logs. O histórico recente é solicitado novamente nessa inicialização; os CSVs e modelos das execuções anteriores não são usados. `--reuse-training-data` permite reutilização explícita; `--skip-collect` também preserva os dados para uso offline. A presença de contrato pendente suspende o arquivamento para priorizar reconciliação. O arquivamento não é executado sobre o processo ativo pela manutenção.
+
+Um `model.pkl` sem sidecar é considerado legado e ignorado pelo pipeline com aviso de treino automático, sem abrir o pickle ou inventar metadados. O novo treinamento grava o bundle e seu sidecar juntos no fluxo de candidatura e promoção.
+
+O scanner valida os candidatos por score com uma assinatura de ticks e consulta de CALL/PUT na sessao da conta. Historico disponivel sozinho nao admite o ativo: exige tick do mesmo simbolo, preco valido e idade maxima de 10 segundos. Candidato rejeitado e descartado e o proximo e verificado. `--no-scan` prefere o símbolo configurado, mas procura outro se ele estiver indisponível. A validação também exige propostas CALL e PUT aceitas para a moeda e duração configuradas, sem efetuar compras. A validacao ocorre antes de arquivar dados; contratos pendentes continuam tendo prioridade e nao sao redirecionados para outro ativo.
+
+O coletor legado aguarda autorizacao antes de assinar ticks. Desconexoes fecham o socket e a reconexao obtem nova URL de sessao, em vez de reutilizar a URL OTP anterior. Ha heartbeat e prazo de 30 segundos para receber o primeiro tick aceito. Erros definitivos de simbolo/autorizacao encerram a coleta e interrompem a espera pelo treino com o motivo, sem permanecer em zero ticks indefinidamente. A sondagem usa apenas [ticks](https://developers.deriv.com/comparison/ticks/) e [contracts_for](https://developers.deriv.com/comparison/contracts-for/), sem enviar propostas ou compras.
+
+O coletor começa antes da busca dos candles e, ao receber o primeiro tick ao vivo, pagina os ticks históricos até o início desse período. Os ticks ao vivo continuam sendo gravados enquanto o histórico é recuperado e durante o treino. A recuperação também ocorre nas reconexões; épocas já presentes são deduplicadas. Candles completos da API prevalecem sobre agregações parciais na sobreposição. O snapshot de treino usa o mesmo bloqueio de arquivo dos escritores e é ordenado temporalmente antes de limitar seu tamanho.
+
+Os preços de entrada e vencimento continuam vindo de ticks identificados, obtidos pelo endpoint [ticks_history da Deriv](https://developers.deriv.com/comparison/ticks-history/). Candles sozinhos não fornecem esses preços. Se a API não fornecer cobertura contínua, houver fechamento de mercado ou classes insuficientes, o pipeline informa o bloqueio e continua coletando. Não preenche lacunas com preços inventados. Depois de aprovado e promovido, o bundle é carregado pelo bot; as compras dependem da decisão da IA, dos filtros técnicos, do payout e do risco.
 
 Após existir quantidade suficiente de ticks v2 para partições temporais independentes, a preparação offline pode usar um snapshot estável e um ativo explícito:
 
@@ -80,3 +94,31 @@ A suíte foi executada em cópia temporária do projeto, com token fictício, mo
 Também há um teste de treino/calibração/serialização com dados inteiramente artificiais e quatro árvores por estimador, em diretório temporário. Ele valida a implementação, sem usar dados ou substituir modelos operacionais.
 
 Fontes de protocolo verificadas: [compra](https://developers.deriv.com/comparison/buy/), [resultado de contrato](https://developers.deriv.com/comparison/proposal-open-contract/) e [ticks](https://developers.deriv.com/comparison/ticks/).
+
+
+## Troca automática de mercado (2026-09-10)
+
+Restrições de mercado identificadas nas propostas amostradas, nas propostas do
+executor ou no feed solicitam uma troca. Um `ContractBuyValidationError` genérico
+não basta: a mensagem precisa identificar indisponibilidade de negociação.
+A amostragem ocorre a cada 300 segundos enquanto chegam ticks; erros de ordens
+são tratados ao receber a resposta.
+
+O executor bloqueia novas propostas e cancela propostas ainda não compradas.
+Compras incertas continuam em reconciliação e contratos abertos são acompanhados
+até liquidação antes da troca. Coletor e retreino anteriores terminam antes de
+alterar os símbolos dos módulos. O lock de execução permanece adquirido.
+
+A busca verifica os outros candidatos configurados com ticks recentes, catálogo
+e propostas CALL/PUT para a duração configurada. Se nenhum passar, aguarda 60
+segundos antes de nova busca. Dados e estado de risco são preservados; o novo
+ativo exige seu próprio modelo aprovado e compatível. Um mercado disponível não
+significa que já exista um modelo elegível para negociar nele.
+
+Validação desta alteração: 315 testes passaram em cópia isolada, além de
+compilação dos módulos alterados e `git diff --check`. Consultas autenticadas na
+conta demo confirmaram a restrição do `frxUSDCHF` e propostas aceitas em `R_100`
+e `R_50`. Após reinício com reutilização dos dados, o fallback real selecionou
+`R_10`, iniciou coleta e recuperação do histórico. Nenhuma compra foi necessária
+para validar disponibilidade; não foi afirmada aprovação de modelo para o novo
+ativo.

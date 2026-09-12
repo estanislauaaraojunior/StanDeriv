@@ -8,7 +8,8 @@ from pathlib import Path
 
 import config
 import indicators as ind
-from feature_engine import compute_feature_map
+from feature_engine import (compute_feature_map, compute_experimental_features,
+                            EXPERIMENTAL_FEATURES, EXPERIMENTAL_FEATURES_VERSION)
 from market_data import read_records, canonicalize
 from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, duration_seconds,
                             specification, fingerprint, write_json_atomic)
@@ -18,14 +19,20 @@ def _extract_features(window, candles = None):
     return compute_feature_map(window, candles)
 
 
-def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookforward = None, symbol = None):
-    if window_size != FEATURE_WINDOW:
-        raise ValueError(f'janela deve ser {FEATURE_WINDOW}, igual à inferência')
-    horizon = duration_seconds(config.DURATION, config.DURATION_UNIT)
-    if lookforward is not None and lookforward * config.CANDLE_TIMEFRAME_SEC != horizon:
-        raise ValueError('lookforward incompatível com o vencimento configurado')
-    symbol = symbol or config.get_active_symbol()
-    source_hash = fingerprint(ticks_path)
+def _record_to_candle(record):
+    return dict(epoch=record['epoch'], open=record['open'], high=record['high'],
+                low=record['low'], close=record['price'])
+
+
+def _merge_feature_candles(selected, ticks):
+    """Candles históricos aquecem features; ticks reais continuam rotulando contratos."""
+    by_epoch = {r['epoch']: _record_to_candle(r) for r in selected if r['kind'] == 'candle'}
+    for candle in ind.ticks_to_candles_by_time(ticks, config.CANDLE_TIMEFRAME_SEC):
+        by_epoch.setdefault(candle['epoch'], candle)
+    return [by_epoch[e] for e in sorted(by_epoch)]
+
+
+def _load_training_series(ticks_path, symbol):
     records, rejected = read_records(ticks_path)
     if rejected:
         raise ValueError('CSV contém registros inválidos; recupere antes de treinar')
@@ -38,8 +45,53 @@ def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookfor
     ticks = [r for r in selected if r['kind'] == 'tick']
     if not ticks:
         raise ValueError(f'nenhum tick identificado para {symbol}; candles históricos não servem como ticks de entrada')
-    epochs = [r['epoch'] for r in ticks]
-    candles = ind.ticks_to_candles_by_time(ticks, config.CANDLE_TIMEFRAME_SEC)
+    return selected, ticks, [r['epoch'] for r in ticks], _merge_feature_candles(selected, ticks)
+
+
+def count_labelable_contracts(ticks_path, symbol = None, window_size = FEATURE_WINDOW):
+    """Conta janelas com features causais, entrada real e vencimento real observáveis."""
+    if window_size != FEATURE_WINDOW:
+        raise ValueError(f'janela deve ser {FEATURE_WINDOW}, igual à inferência')
+    symbol = symbol or config.get_active_symbol()
+    horizon = duration_seconds(config.DURATION, config.DURATION_UNIT)
+    selected, ticks, epochs, candles = _load_training_series(ticks_path, symbol)
+    bad_gaps = [0]
+    for a, b in zip(epochs, epochs[1:]):
+        bad_gaps.append(bad_gaps[-1] + (b - a > MAX_TICK_GAP_SEC))
+    rows = 0
+    segment_start, previous_tick = 0, 0
+    for i in range(len(candles)):
+        last_tick = bisect.bisect_left(epochs, candles[i]['epoch'] + config.CANDLE_TIMEFRAME_SEC) - 1
+        if (i and candles[i]['epoch'] - candles[i - 1]['epoch'] != config.CANDLE_TIMEFRAME_SEC
+                or (last_tick >= 0 and previous_tick >= 0 and bad_gaps[last_tick] != bad_gaps[previous_tick])):
+            segment_start = i + 1
+        previous_tick = last_tick
+        window = candles[max(segment_start, i - FEATURE_WINDOW + 1): i + 1]
+        if len(window) < FEATURE_WINDOW:
+            continue
+        signal_epoch = window[-1]['epoch'] + config.CANDLE_TIMEFRAME_SEC
+        entry = bisect.bisect_left(epochs, signal_epoch)
+        if entry == len(ticks) or epochs[entry] - signal_epoch > MAX_TICK_GAP_SEC:
+            continue
+        expiry_epoch = epochs[entry] + horizon
+        expiry = bisect.bisect_left(epochs, expiry_epoch, lo=entry)
+        if (expiry == len(ticks) or epochs[expiry] - expiry_epoch > MAX_TICK_GAP_SEC
+                or bad_gaps[expiry] != bad_gaps[entry]
+                or any(b['epoch'] - a['epoch'] != config.CANDLE_TIMEFRAME_SEC for a, b in zip(window, window[1:]))):
+            continue
+        rows += 1
+    return rows
+
+
+def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookforward = None, symbol = None):
+    if window_size != FEATURE_WINDOW:
+        raise ValueError(f'janela deve ser {FEATURE_WINDOW}, igual à inferência')
+    horizon = duration_seconds(config.DURATION, config.DURATION_UNIT)
+    if lookforward is not None and lookforward * config.CANDLE_TIMEFRAME_SEC != horizon:
+        raise ValueError('lookforward incompatível com o vencimento configurado')
+    symbol = symbol or config.get_active_symbol()
+    source_hash = fingerprint(ticks_path)
+    selected, ticks, epochs, candles = _load_training_series(ticks_path, symbol)
     bad_gaps = [0]
     for a, b in zip(epochs, epochs[1:]):
         bad_gaps.append(bad_gaps[-1] + (b - a > MAX_TICK_GAP_SEC))
@@ -49,7 +101,8 @@ def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookfor
     for i in range(len(candles)):
         last_tick = bisect.bisect_left(epochs, candles[i]['epoch']+config.CANDLE_TIMEFRAME_SEC)-1
         if (i and candles[i]['epoch']-candles[i-1]['epoch'] != config.CANDLE_TIMEFRAME_SEC
-                or bad_gaps[last_tick] != bad_gaps[previous_tick]):
+                or (last_tick >= 0 and previous_tick >= 0
+                    and bad_gaps[last_tick] != bad_gaps[previous_tick])):
             adx_history.clear()
             alerts.clear()
             segment_start = i + 1
@@ -77,8 +130,7 @@ def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookfor
         expiry = bisect.bisect_left(epochs, expiry_epoch, lo = entry)
         start = bisect.bisect_left(epochs, window[0]['epoch'])
         if (expiry == len(ticks) or epochs[expiry] - expiry_epoch > MAX_TICK_GAP_SEC
-                or epochs[start] - window[0]['epoch'] > MAX_TICK_GAP_SEC
-                or bad_gaps[expiry] != bad_gaps[start]
+                or bad_gaps[expiry] != bad_gaps[entry]
                 or any(b['epoch'] - a['epoch'] != config.CANDLE_TIMEFRAME_SEC for a, b in zip(window, window[1:]))):
             continue
         features = compute_feature_map([c['close'] for c in window], window)
@@ -86,7 +138,7 @@ def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookfor
             continue
         technical_signal, technical = strategy.get_signal(
             prices, adx_min=strategy.get_adaptive_adx_min(prior_adx), adx_history=prior_adx,
-            candle_alerts=list(alerts), use_ai_model=False, evaluation_time=epochs[entry], candles=window)
+            candle_alerts=[], use_ai_model=False, evaluation_time=epochs[entry], candles=window)
         change = ticks[expiry]['price'] - ticks[entry]['price']
         features.update(technical_signal={'BUY':1,'SELL':0}.get(technical_signal,-1),
                         tech_score=technical.get('tech_score',1.0 if technical_signal else 0.0),
@@ -96,6 +148,8 @@ def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookfor
                         entry_price = ticks[entry]['price'], exit_price = ticks[expiry]['price'],
                         target = 1 if change > 0 else (0 if change < 0 else 2),
                         duration = config.DURATION, duration_unit = config.DURATION_UNIT)
+        experimental = compute_experimental_features(prices, signal_epoch, config.CANDLE_TIMEFRAME_SEC)
+        features.update(experimental or {key: float('nan') for key in EXPERIMENTAL_FEATURES})
         rows.append(features)
     if not rows:
         raise ValueError('nenhuma janela contínua com entrada e vencimento observáveis')
@@ -106,6 +160,7 @@ def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookfor
         w.writeheader()
         w.writerows(rows)
     metadata = specification(symbol)
+    metadata['experimental_features_version'] = EXPERIMENTAL_FEATURES_VERSION
     metadata.update(source_sha256 = source_hash, dataset_sha256 = fingerprint(output_path),
                     first_signal = rows[0]['signal_epoch'], last_expiry = rows[-1]['expiry_epoch'],
                     n_rows = len(rows), labeling = 'offline proxy; official contract prices must be reconciled live')

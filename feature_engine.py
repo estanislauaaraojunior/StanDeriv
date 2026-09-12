@@ -149,3 +149,33 @@ def extract_feature_vector(prices: list, feature_order: list, candles: list = No
     if fm is None:
         return None
     return [fm.get(f, 0.0) for f in feature_order]
+
+
+EXPERIMENTAL_FEATURES_VERSION = 'horizon_context_v1'
+EXPERIMENTAL_FEATURES = ['return_15m', 'return_30m', 'return_60m', 'volatility_30m',
+                         'distance_ema9', 'distance_ema21', 'hour_sin', 'hour_cos']
+
+
+def compute_experimental_features(prices, signal_epoch, timeframe_sec):
+    """Experimento causal; não modifica as 27 entradas do bundle operacional v2."""
+    from datetime import datetime, timezone
+    prices = list(prices[-FEATURE_WINDOW:])
+    steps = {minutes: math.ceil(minutes*60/timeframe_sec) for minutes in (15, 30, 60)}
+    if len(prices) <= max(steps.values()):
+        return None
+    if any(not math.isfinite(p) or p <= 0 for p in prices):
+        return None
+    result = {f'return_{minutes}m': prices[-1]/prices[-1-count]-1 for minutes, count in steps.items()}
+    tail = prices[-steps[30]-1:]
+    returns = [b/a-1 for a, b in zip(tail, tail[1:])]
+    mean = sum(returns)/len(returns)
+    result['volatility_30m'] = math.sqrt(sum((r-mean)**2 for r in returns)/len(returns))
+    for name, period in [('ema9', EMA_FAST), ('ema21', EMA_SLOW)]:
+        ema = ind.ema(prices, period)
+        if ema is None:
+            return None
+        result['distance_'+name] = prices[-1]/ema-1
+    dt = datetime.fromtimestamp(signal_epoch, timezone.utc)
+    hour = dt.hour + dt.minute/60
+    result.update(hour_sin=math.sin(2*math.pi*hour/24), hour_cos=math.cos(2*math.pi*hour/24))
+    return result
