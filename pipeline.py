@@ -186,11 +186,12 @@ _shutdown = threading.Event()
 # ─────────────────────────────────────────────────────────────────
 
 def _count_ticks():
-    """Conta apenas ticks identificados do ativo; closes históricos não antecipam treino."""
+    """Contagem operacional do ativo: ticks identificados e candles fechados."""
     if not os.path.exists(TICKS_CSV):
         return 0
     with open(TICKS_CSV,newline='') as f:
-        return sum(row.get('kind')=='tick' and row.get('symbol')==SYMBOL for row in csv.DictReader(f))
+        return sum(row.get('symbol')==SYMBOL and row.get('kind') in ('tick','candle')
+                   for row in csv.DictReader(f))
 
 
 def _ensure_ticks_header():
@@ -901,6 +902,7 @@ def _banner(
     history_count: int,
     min_ticks: int,
     demo: bool,
+    symbol: Optional[str] = None,
 ) -> None:
     mode = (
         "DEMO"
@@ -920,7 +922,7 @@ def _banner(
     )
     print(
         f"  Símbolo           : "
-        f"{_symbol_display(SYMBOL)}"
+        f"{_symbol_display(symbol or SYMBOL)}"
     )
     print(
         f"  Candles históricos : "
@@ -1280,11 +1282,13 @@ def _print_bearer_migration_hint() -> None:
 class _CollectorThread(threading.Thread):
     """Thread de coleta de ticks com reconexão automática."""
 
-    def __init__(self) -> None:
+    def __init__(self, symbol: str) -> None:
         super().__init__(
             daemon=True,
             name="Collector",
         )
+
+        self._symbol = symbol
 
         self._ws: Optional[
             websocket.WebSocketApp
@@ -1316,7 +1320,7 @@ class _CollectorThread(threading.Thread):
             ) as f:
                 for row in csv.DictReader(f):
                     try:
-                        if row.get("symbol") != SYMBOL or row.get("kind") != "tick":
+                        if row.get("symbol") != self._symbol or row.get("kind") != "tick":
                             continue
                         epoch = int(
                             row["epoch"]
@@ -1389,7 +1393,7 @@ class _CollectorThread(threading.Thread):
         ws.send(
             json.dumps(
                 {
-                    "ticks": SYMBOL,
+                    "ticks": self._symbol,
                     "subscribe": 1,
                 }
             )
@@ -1448,7 +1452,7 @@ class _CollectorThread(threading.Thread):
         if epoch <= self._last_epoch:
             return
 
-        if tick.get("symbol") != SYMBOL or not math.isfinite(price) or price<=0:
+        if tick.get("symbol") != self._symbol or not math.isfinite(price) or price<=0:
             return
 
         # Filtro anti-spike.
@@ -1483,7 +1487,7 @@ class _CollectorThread(threading.Thread):
 
         self._local_count += 1
 
-        append_record(TICKS_CSV,epoch,SYMBOL,price)
+        append_record(TICKS_CSV,epoch,self._symbol,price)
 
         print(
             f"\r[COLETOR] Ticks: "
@@ -1611,14 +1615,20 @@ def _trim_ticks(
 
 
 def _load_latest_final_metrics():
+    """Métricas do bundle ativo; None quando o bundle não existe ou não é utilizável."""
     try:
         import joblib
+        if not os.path.exists(AI_MODEL_PATH):
+            return None
         payload=joblib.load(AI_MODEL_PATH)
-        metadata=payload.get('metadata',{})
+        metadata=payload.get('metadata') or {}
         if usable(metadata,SYMBOL):
             return metadata.get('metrics')
-    except Exception:
-        pass
+        print(f"[PIPELINE] Bundle existente inutilizável: symbol={metadata.get('symbol')} "
+              f"approved={metadata.get('approved')} "
+              f"deps={metadata.get('dependencies')}")
+    except Exception as exc:
+        print(f"[PIPELINE] Falha ao carregar modelo existente: {exc}")
     return None
 
 
@@ -2270,6 +2280,14 @@ def main() -> None:
     detected=(pending.get('symbol') if pending else None) or _detect_trending_symbol(no_scan=args.no_scan)
 
     if detected != _cfg.SYMBOL:
+        _banner(
+            args.history_count,
+            args.min_ticks,
+            is_demo,
+            symbol=detected,
+        )
+
+    if detected != _cfg.SYMBOL:
         print(
             f"[TENDÊNCIA] Símbolo alterado: "
             f"{_cfg.SYMBOL} → {detected}"
@@ -2369,7 +2387,7 @@ def main() -> None:
     ] = None
 
     if not args.skip_collect:
-        collector = _CollectorThread()
+        collector = _CollectorThread(detected)
         collector.start()
 
         print(
@@ -2414,30 +2432,90 @@ def main() -> None:
         )
 
     else:
-        _wait_for_ticks(
-            args.min_ticks
-        )
+        # O treino exige ticks contínuos do ativo ativo (gaps <= MAX_TICK_GAP_SEC);
+        # histórico legado não qualifica. Tenta a cada ciclo até um treino elegível.
+        success, _metrics = False, None
 
-        success, _metrics = (
-            _run_training(model_path=AI_MODEL_PATH+".new")
-        )
+        while not _shutdown.is_set() and not success:
+            _wait_for_ticks(
+                args.min_ticks
+            )
 
-        promote, reason = _should_promote_model(_load_latest_final_metrics(), _metrics)
+            print(
+                "[PIPELINE] Tentativa de treino inicial "
+                "com os ticks contínuos disponíveis..."
+            )
+
+            success, _metrics = (
+                _run_training(model_path=AI_MODEL_PATH+".new")
+            )
+
+            if not success and not _shutdown.is_set():
+                print(
+                    "[PIPELINE] Ainda sem dados contínuos suficientes "
+                    "(ticks ao vivo identificados são necessários). "
+                    "Nova tentativa após mais coleta."
+                )
+
+                if _shutdown.wait(300):
+                    return
+
+        if not success:
+            return
+
+        champion_metrics = _load_latest_final_metrics()
+
+        if success and _metrics and not _metrics.get('champion_metrics'):
+            # Reavalia o champion no mesmo período do candidato para comparação justa.
+            try:
+                import joblib as _jl
+                import train_model as _tm
+
+                _champion_bundle = _jl.load(AI_MODEL_PATH)
+                _cm = _champion_bundle.get('metadata', {})
+
+                if usable(_cm, SYMBOL):
+                    _champ_model = _champion_bundle['model']
+
+                    import pandas as _pd
+                    _df = _pd.read_csv(DATASET_CSV)
+
+                    _eval = _df[
+                        (_df['entry_epoch'] >= _metrics.get('evaluation_start', 0))
+                        & (_df['entry_epoch'] <= _metrics.get('evaluation_end', 1 << 40))
+                    ]
+
+                    if len(_eval) >= 30:
+                        _metrics['champion_metrics'] = _tm._metrics(_champ_model, _eval)
+            except Exception:
+                pass
+
+        promote, reason = _should_promote_model(champion_metrics, _metrics)
         if not success or not promote:
             print(
                 "\n[PIPELINE] Treino inicial "
-                "falhou. Encerrando."
+                "produziu modelo não elegível. "
+                "Aguardando mais dados para nova tentativa."
             )
 
-            _shutdown.set()
+            _retrain_state["last_epoch"] = time.time()
+            _retrain_state["last_tick_count"] = _count_ticks()
+            model_exists = False
 
-            sys.exit(1)
+            retrain_thread = threading.Thread(
+                target=_retrain_loop,
+                daemon=True,
+                name="Retrain",
+            )
 
-        os.replace(AI_MODEL_PATH+'.new',AI_MODEL_PATH)
-        if os.path.exists(AI_MODEL_PATH+'.new.metadata.json'):
-            os.replace(AI_MODEL_PATH+'.new.metadata.json',AI_MODEL_PATH+'.metadata.json')
-        model_exists=True
-        _reset_ai_predictor()
+            retrain_thread.start()
+            print('[PIPELINE] Re-treino adaptativo assumirá a promoção do primeiro bundle elegível')
+        else:
+            os.replace(AI_MODEL_PATH+'.new',AI_MODEL_PATH)
+            if os.path.exists(AI_MODEL_PATH+'.new.metadata.json'):
+                os.replace(AI_MODEL_PATH+'.new.metadata.json',AI_MODEL_PATH+'.metadata.json')
+            model_exists=True
+            _reset_ai_predictor()
 
     # ── FASE 5: Re-treino ─────────────────────────────────────
 
