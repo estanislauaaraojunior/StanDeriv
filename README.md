@@ -50,6 +50,11 @@ se a ferramenta não oferecer suporte a essa convenção.
 ticks_v2.csv ──▶ backtest.py ──▶ backtest_reports/ (JSON + CSV)
 ```
 
+Para detalhes técnicos complementares da organização do sistema, veja
+[ARCHITECTURE.md](ARCHITECTURE.md). Em caso de divergência, o contrato v2
+descrito neste README, nos testes e em `docs/CORRECOES_CONTRATOS_2026-09-08.md`
+prevalece sobre descrições históricas.
+
 ## Requisitos
 
 - Python 3.11+
