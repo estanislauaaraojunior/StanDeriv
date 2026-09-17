@@ -4,7 +4,7 @@ Estas instruções aplicam-se a todo o repositório. Atue como engenheiro de sof
 
 ## Leitura obrigatória e sob demanda
 
-- No início de cada tarefa, leia [docs/PROMPT_STANDERIV.md](docs/PROMPT_STANDERIV.md) e consulte o estado do Git antes de editar.
+- No início de cada tarefa, leia [docs/PROMPT_STANDERIV_AUTONOMO.md](docs/PROMPT_STANDERIV_AUTONOMO.md), consulte [docs/PROMPT_STANDERIV.md](docs/PROMPT_STANDERIV.md) quando precisar do contexto histórico completo e verifique o estado do Git antes de editar.
 - Leia as seções de arquitetura e módulos do [README.md](README.md) ao precisar de contexto do projeto.
 - Antes de alterar uma área, consulte a linha correspondente do mapa em [docs/GUIA_TECNICO.md](docs/GUIA_TECNICO.md), leia suas regras e examine o código e os testes indicados. Tarefas que cruzam áreas exigem as leituras de todas elas.
 - Para alterações apenas documentais, confira os arquivos e comandos citados; não execute o bot ou treine modelos para validar texto.

@@ -114,7 +114,7 @@
     <div class="chart-section">
       <div class="chart-card" style="flex:1.5">
         <div class="chart-title">Curva de Equity</div>
-        <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+        <div class="chart-wrap chart-tall"><canvas id="equityChart"></canvas></div>
       </div>
       <div class="chart-card" style="flex:1">
         <div class="chart-title">Últimas Operações</div>
@@ -564,7 +564,7 @@
       </div>
       <div class="hist-actions">
         <input type="number" id="histCount" value="50" min="10" max="500" style="width:60px" />
-        <button class="btn btn-outline" onclick="loadHistory()">Carregar</button>
+        <button class="btn btn-outline" onclick="loadHistory(true)">Carregar</button>
         <button class="btn btn-outline" onclick="exportCsv()">↓ CSV</button>
       </div>
     </div>
@@ -574,20 +574,18 @@
         <thead>
           <tr>
             <th>Data/Hora</th>
+            <th>Contrato</th>
+            <th>Ativo</th>
             <th>Dir.</th>
-            <th>Stake</th>
+            <th>Compra</th>
+            <th>Venda</th>
             <th>Dur.</th>
             <th>Resultado</th>
             <th>Profit</th>
-            <th>Saldo</th>
-            <th>RSI</th>
-            <th>ADX</th>
-            <th>AI Conf.</th>
-            <th>Mercado</th>
           </tr>
         </thead>
         <tbody id="histBody">
-          <tr><td colspan="11" class="empty-msg">Carregando...</td></tr>
+          <tr><td colspan="8" class="empty-msg">Carregando...</td></tr>
         </tbody>
       </table>
     </div>

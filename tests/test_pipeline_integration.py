@@ -207,10 +207,11 @@ class TestRecommendedConfig:
         )
 
     def test_ai_confidence_min_is_selective(self):
-        """Confiança mínima maior reduz operações de AUC ~0.5 (ruído)."""
+        """Confiança mínima segue a política aprovada; payout ainda filtra EV."""
         import config
-        assert config.AI_CONFIDENCE_MIN >= 0.55, (
-            f"Estratégia recomenda AI_CONFIDENCE_MIN >= 0.55, atual: {config.AI_CONFIDENCE_MIN}"
+        assert config.AI_CONFIDENCE_MIN >= config.MIN_APPROVAL_WIN_RATE, (
+            "AI_CONFIDENCE_MIN não pode ficar abaixo do piso de aprovação, "
+            f"atual: {config.AI_CONFIDENCE_MIN}"
         )
 
     def test_min_candles_warmup_adequate(self):

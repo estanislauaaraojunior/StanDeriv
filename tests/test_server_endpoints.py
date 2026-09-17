@@ -36,6 +36,7 @@ def client():
         empty_ticks = tmp / "ticks.csv"
         empty_risk = tmp / "risk_state.json"
         empty_state = tmp / "state.json"
+        bot_status = tmp / "bot_status.json"
         empty_metrics = tmp / "model_metrics.json"
         backtest_root = tmp / "backtest_reports"
         backtest_state = backtest_root / "state.json"
@@ -44,12 +45,14 @@ def client():
         empty_ticks.write_text("")
         empty_risk.write_text("{}")
         empty_state.write_text("{}")
+        bot_status.write_text("{}")
         empty_metrics.write_text("[]")
 
         with patch.object(srv, "OPERATIONS_CSV", empty_ops), \
              patch.object(srv, "TICKS_CSV", empty_ticks), \
              patch.object(srv, "RISK_STATE_JSON", empty_risk), \
              patch.object(srv, "STATE_JSON", empty_state), \
+             patch.object(srv, "BOT_STATUS_JSON", bot_status), \
              patch.object(srv, "MODEL_METRICS_JSON", empty_metrics), \
              patch.object(srv, "BACKTEST_ROOT", backtest_root), \
              patch.object(srv, "BACKTEST_STATE_JSON", backtest_state):
@@ -110,6 +113,85 @@ def test_summary_empty_data_returns_zeros(client):
     assert data["is_paused"] is False
 
 
+def test_summary_uses_risk_state_when_operations_are_empty(tmp_path):
+    import dashboard.server as srv
+
+    empty_ops = tmp_path / "operacoes_v2.csv"
+    risk_state = tmp_path / "risk_state.json"
+    empty_ops.write_text("")
+    risk_state.write_text(json.dumps({
+        "balance": 7645.24,
+        "daily_start_balance": 7578.09,
+        "daily_pnl": 67.15,
+        "daily_pnl_pct": 0.886,
+        "recent_results": [1],
+        "win_rate_recent": 100.0,
+        "consec_losses": 0,
+        "is_paused": False,
+        "drawdown_pct": 0.0,
+    }))
+
+    with patch.object(srv, "OPERATIONS_CSV", empty_ops), \
+         patch.object(srv, "RISK_STATE_JSON", risk_state):
+        srv.app.config["TESTING"] = True
+        with srv.app.test_client() as c:
+            data = c.get("/api/summary").get_json()
+
+    assert data["balance"] == 7645.24
+    assert data["balance_initial"] == 7578.09
+    assert data["pnl_today"] == 67.15
+    assert data["total_trades"] == 1
+    assert data["win_rate"] == 100.0
+
+
+def test_summary_uses_deriv_contract_report_instead_of_local_operations(tmp_path, monkeypatch):
+    import dashboard.server as srv
+
+    empty_ops = tmp_path / "operacoes_v2.csv"
+    risk_state = tmp_path / "risk_state.json"
+    empty_ops.write_text("")
+    risk_state.write_text(json.dumps({
+        "balance": 1015.0,
+        "daily_start_balance": 1000.0,
+        "consec_losses": 0,
+    }))
+    now = int(__import__("time").time())
+    monkeypatch.setattr(srv, "_deriv_contract_cache", {"ts": 0.0, "records": [], "error": ""})
+    monkeypatch.setattr(srv, "_request_deriv_profit_table", lambda limit=100: [
+        {
+            "transaction_id": 1,
+            "contract_type": "CALL",
+            "underlying_symbol": "R_100",
+            "buy_price": 10.0,
+            "sell_price": 18.5,
+            "purchase_time": now,
+            "sell_time": now + 60,
+        },
+        {
+            "transaction_id": 2,
+            "contract_type": "PUT",
+            "underlying_symbol": "R_75",
+            "buy_price": 10.0,
+            "sell_price": 0.0,
+            "purchase_time": now,
+            "sell_time": now + 60,
+        },
+    ])
+
+    with patch.object(srv, "OPERATIONS_CSV", empty_ops), \
+         patch.object(srv, "RISK_STATE_JSON", risk_state):
+        srv.app.config["TESTING"] = True
+        with srv.app.test_client() as c:
+            data = c.get("/api/summary").get_json()
+
+    assert data["source"] == "deriv_profit_table"
+    assert data["balance"] == 1015.0
+    assert data["pnl_today"] == -1.5
+    assert data["total_trades"] == 2
+    assert data["wins"] == 1
+    assert data["losses"] == 1
+
+
 # ─── /api/ticks ───────────────────────────────────────────────────────────────
 
 def test_ticks_returns_200(client):
@@ -137,7 +219,53 @@ def test_trades_returns_200(client):
 
 def test_trades_returns_list(client):
     data = json.loads(client.get("/api/trades?n=5").data)
-    assert isinstance(data, list)
+    assert isinstance(data, dict)
+    assert isinstance(data["trades"], list)
+    assert data["source"] == "deriv_profit_table"
+
+
+def test_trades_returns_deriv_contract_report(monkeypatch):
+    import dashboard.server as srv
+
+    monkeypatch.setattr(srv, "_deriv_contract_cache", {"ts": 0.0, "records": [], "error": ""})
+    monkeypatch.setattr(srv, "_request_deriv_profit_table", lambda limit=100: [{
+        "transaction_id": 42,
+        "contract_type": "CALL",
+        "underlying_symbol": "R_100",
+        "buy_price": 10.0,
+        "sell_price": 18.5,
+        "purchase_time": 1700000000,
+        "sell_time": 1700000060,
+    }])
+
+    srv.app.config["TESTING"] = True
+    with srv.app.test_client() as c:
+        data = c.get("/api/trades?n=5").get_json()
+
+    assert data["source"] == "deriv_profit_table"
+    assert data["error"] == ""
+    assert data["trades"][0]["contract_id"] == "42"
+    assert data["trades"][0]["symbol"] == "R_100"
+    assert data["trades"][0]["sell_price"] == 18.5
+    assert data["trades"][0]["profit"] == 8.5
+
+
+def test_trades_reports_deriv_error(monkeypatch):
+    import dashboard.server as srv
+
+    monkeypatch.setattr(srv, "_deriv_contract_cache", {"ts": 0.0, "records": [], "error": ""})
+
+    def fail(limit=100):
+        raise RuntimeError("Deriv indisponível")
+
+    monkeypatch.setattr(srv, "_request_deriv_profit_table", fail)
+
+    srv.app.config["TESTING"] = True
+    with srv.app.test_client() as c:
+        data = c.get("/api/trades?n=5&force=1").get_json()
+
+    assert data["trades"] == []
+    assert "Deriv indisponível" in data["error"]
 
 
 # ─── /api/indicators ─────────────────────────────────────────────────────────
@@ -184,6 +312,66 @@ def test_bot_status_not_running_without_pid(client):
     with patch.object(srv, "_bot_running", return_value=(False, None)):
         data = json.loads(client.get("/api/bot/status").data)
     assert data["running"] is False
+
+
+def test_bot_running_removes_stale_pid(client):
+    import dashboard.server as srv
+    srv.PID_FILE.write_text("999999")
+    assert srv._bot_running() == (False, None)
+    assert not srv.PID_FILE.exists()
+
+
+def test_bot_status_marks_missing_running_process_as_crashed(client):
+    import dashboard.server as srv
+    srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "running", "running": True, "pid": 999999}))
+    with patch.object(srv, "_bot_running", return_value=(False, None)):
+        data = client.get("/api/bot/status").get_json()
+    assert data["status"] == "crashed"
+    assert data["last_error"]
+
+
+def test_bot_status_includes_last_decision_diagnostics(client):
+    import dashboard.server as srv
+    srv.BOT_STATUS_JSON.write_text(json.dumps({
+        "status": "running",
+        "running": True,
+        "pid": 123,
+        "last_decision": {"reason": "candle_conflict", "signal": None},
+        "decision_counts": {"candle_conflict": 2},
+        "no_entry_for_sec": 1800,
+    }))
+    with patch.object(srv, "_bot_running", return_value=(True, 123)):
+        data = client.get("/api/bot/status").get_json()
+    assert data["last_decision"]["reason"] == "candle_conflict"
+    assert data["decision_counts"]["candle_conflict"] == 2
+    assert data["no_entry_for_sec"] == 1800
+
+
+def test_state_includes_bot_crash_status(client):
+    import dashboard.server as srv
+    srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "running", "running": True, "pid": 999999}))
+    with patch.object(srv, "_bot_running", return_value=(False, None)), \
+         patch.object(srv, "_deriv_contract_report", return_value=[]):
+        data = client.get("/api/state").get_json()
+    assert data["bot"]["status"] == "crashed"
+
+
+def test_state_includes_decision_diagnostics(client):
+    import dashboard.server as srv
+    srv.BOT_STATUS_JSON.write_text(json.dumps({
+        "status": "running",
+        "running": True,
+        "pid": 123,
+        "last_decision": {"reason": "ai_disagreement_or_low_confidence"},
+        "decision_counts": {"no_technical_signal": 4},
+        "no_entry_for_sec": 600,
+    }))
+    with patch.object(srv, "_bot_running", return_value=(True, 123)), \
+         patch.object(srv, "_deriv_contract_report", return_value=[]):
+        data = client.get("/api/state").get_json()
+    assert data["bot"]["last_decision"]["reason"] == "ai_disagreement_or_low_confidence"
+    assert data["bot"]["decision_counts"]["no_technical_signal"] == 4
+    assert data["bot"]["no_entry_for_sec"] == 600
 
 
 # ─── /api/bot/start — autenticação ───────────────────────────────────────────
@@ -299,6 +487,46 @@ def test_state_summary_section_structure(client):
     assert "win_rate" in summary
 
 
+def test_state_summary_falls_back_to_risk_state_when_session_has_no_operations(tmp_path):
+    import dashboard.server as srv
+
+    ops = tmp_path / "operacoes_v2.csv"
+    risk_state = tmp_path / "risk_state.json"
+    state = tmp_path / "state.json"
+    ticks = tmp_path / "ticks_v2.csv"
+    dataset = tmp_path / "dataset_v2.csv"
+
+    ops.write_text(
+        "timestamp,result,profit,balance_before,balance_after,consec_losses,drawdown_pct,win_rate_recent\n"
+        "2026-09-16T18:45:02,WIN,64.84,7372.72,7437.56,0,0,100\n"
+    )
+    risk_state.write_text(json.dumps({
+        "balance": 7645.24,
+        "daily_start_balance": 7578.09,
+        "daily_pnl": 67.15,
+        "daily_pnl_pct": 0.886,
+        "recent_results": [1],
+        "win_rate_recent": 100.0,
+    }))
+    state.write_text(json.dumps({"session_start": "2026-09-16T19:10:04", "symbol": "R_75"}))
+    ticks.write_text("")
+    dataset.write_text("")
+
+    with patch.object(srv, "OPERATIONS_CSV", ops), \
+         patch.object(srv, "RISK_STATE_JSON", risk_state), \
+         patch.object(srv, "STATE_JSON", state), \
+         patch.object(srv, "TICKS_CSV", ticks), \
+         patch.object(srv, "DATASET_CSV", dataset):
+        srv.app.config["TESTING"] = True
+        with srv.app.test_client() as c:
+            summary = c.get("/api/state").get_json()["summary"]
+
+    assert summary["balance"] == 7645.24
+    assert summary["pnl_today"] == 67.15
+    assert summary["total_trades"] == 1
+    assert summary["win_rate"] == 100.0
+
+
 def test_state_model_section_has_metrics(client):
     data = json.loads(client.get("/api/state").data)
     model = data["model"]
@@ -358,6 +586,32 @@ def test_contract_active_returns_200(client):
 def test_contract_active_no_bot_returns_false(client):
     data = json.loads(client.get("/api/contract-active").data)
     assert data.get("has_active") is False
+
+
+def test_contract_active_uses_buy_timestamp_as_entry_epoch_fallback(tmp_path):
+    import dashboard.server as srv
+
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "active_contract": {
+            "has_active": True,
+            "contract_id": "12345",
+            "symbol": "R_75",
+            "direction": "BUY",
+            "duration": 15,
+            "buy_timestamp": 1700000000.9,
+            "entry_epoch": 0,
+            "entry_price": 0.0,
+        }
+    }))
+
+    with patch.object(srv, "STATE_JSON", state):
+        srv.app.config["TESTING"] = True
+        with srv.app.test_client() as c:
+            data = c.get("/api/contract-active").get_json()
+
+    assert data["has_active"] is True
+    assert data["entry_epoch"] == 1700000000
 
 
 # ─── /api/stats ──────────────────────────────────────────────────────────────
@@ -515,7 +769,7 @@ def test_start_does_not_reset_risk_or_pending_contract(client):
     srv.STATE_JSON.write_text(json.dumps({'active_contract':active}))
     proc=MagicMock()
     proc.pid=99999999
-    with patch.object(srv,'_bot_running',return_value=(False,None)),patch.object(srv,'_backtest_running',return_value=(False,None)),patch.object(srv.subprocess,'Popen',return_value=proc),patch.object(srv,'PID_FILE',srv.STATE_JSON.parent/'bot.pid'),patch.object(srv,'PIPELINE_LOG_TXT',srv.STATE_JSON.parent/'pipeline.log'):
+    with patch.object(srv,'_bot_running',return_value=(False,None)),patch.object(srv,'_backtest_running',return_value=(False,None)),patch.object(srv.subprocess,'Popen',return_value=proc),patch.object(srv,'PID_FILE',srv.STATE_JSON.parent/'bot.pid'),patch.object(srv,'PIPELINE_LOG_TXT',srv.STATE_JSON.parent/'pipeline.log'),patch.object(srv,'BOT_STATUS_JSON',srv.STATE_JSON.parent/'bot_status.json'),patch.object(srv.threading,'Thread'):
         response=client.post('/api/bot/start',json={'mode':'demo','balance':1000})
     assert response.status_code==200
     assert json.loads(srv.RISK_STATE_JSON.read_text())==risk
@@ -526,7 +780,7 @@ def test_start_uses_minimum_history_candles_by_default(client):
     import dashboard.server as srv
     proc=MagicMock()
     proc.pid=99999999
-    with patch.object(srv,'_bot_running',return_value=(False,None)),patch.object(srv,'_backtest_running',return_value=(False,None)),patch.object(srv.subprocess,'Popen',return_value=proc) as popen,patch.object(srv,'PID_FILE',srv.STATE_JSON.parent/'bot.pid'),patch.object(srv,'PIPELINE_LOG_TXT',srv.STATE_JSON.parent/'pipeline.log'):
+    with patch.object(srv,'_bot_running',return_value=(False,None)),patch.object(srv,'_backtest_running',return_value=(False,None)),patch.object(srv.subprocess,'Popen',return_value=proc) as popen,patch.object(srv,'PID_FILE',srv.STATE_JSON.parent/'bot.pid'),patch.object(srv,'PIPELINE_LOG_TXT',srv.STATE_JSON.parent/'pipeline.log'),patch.object(srv,'BOT_STATUS_JSON',srv.STATE_JSON.parent/'bot_status.json'),patch.object(srv.threading,'Thread'):
         response=client.post('/api/bot/start',json={'mode':'demo','balance':1000})
     assert response.status_code==200
     cmd = popen.call_args.args[0]

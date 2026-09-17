@@ -22,8 +22,9 @@ def test_ai_weights_sum_to_one():
 
 
 def test_ai_confidence_min_range():
-    assert 0.50 <= config.AI_CONFIDENCE_MIN <= 0.70, (
-        f"AI_CONFIDENCE_MIN fora da faixa segura [0.50, 0.70]: {config.AI_CONFIDENCE_MIN}"
+    assert config.MIN_APPROVAL_WIN_RATE <= config.AI_CONFIDENCE_MIN <= 0.70, (
+        "AI_CONFIDENCE_MIN deve respeitar o piso aprovado e permanecer controlado: "
+        f"{config.AI_CONFIDENCE_MIN}"
     )
 
 

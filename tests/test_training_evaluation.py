@@ -199,8 +199,8 @@ def test_payout_telemetry_failure_does_not_discard_live_tick(tmp_path, monkeypat
     assert not rejected and len(rows) == 1 and rows[0]['price'] == 100
 
 
-@pytest.mark.parametrize('total,wins,expected', [(5,3,True),(30,18,True),(100,60,True),(200,120,True),(100,59,False),(0,0,False)])
-def test_fixed_sixty_percent_gate_for_any_sample(monkeypatch,total,wins,expected):
+@pytest.mark.parametrize('total,wins,expected', [(5,3,True),(30,14,True),(100,45,True),(200,90,True),(100,44,False),(0,0,False)])
+def test_fixed_forty_five_percent_gate_for_any_sample(monkeypatch,total,wins,expected):
     import training_evaluation as evaluation
     df = frame(10)
     df['target'] = [0,1]*5
@@ -212,6 +212,26 @@ def test_fixed_sixty_percent_gate_for_any_sample(monkeypatch,total,wins,expected
                   win_rate_lower95=.1,break_even=.625)
     monkeypatch.setattr(evaluation,'simulate',lambda *a,**kw:dict(result))
     assert evaluation.evaluate(RankedModel(),df,.60)['eligible'] is expected
+
+
+def test_low_auc_is_warning_not_approval_blocker(monkeypatch):
+    import training_evaluation as evaluation
+    df = frame(10)
+    df['target'] = [0, 1] * 5
+
+    class InvertedModel:
+        classes_ = np.array([0, 1])
+
+        def predict_proba(self, X):
+            return np.array([[.1, .9], [.9, .1]] * 5)
+
+    result = dict(trades=100, wins=45, win_rate=.45,
+                  win_rate_lower95=.1, break_even=.625)
+    monkeypatch.setattr(evaluation, 'simulate', lambda *a, **kw: dict(result))
+    evaluated = evaluation.evaluate(InvertedModel(), df, .60)
+    assert evaluated['eligible'] is True
+    assert evaluated['rejection_reasons'] == []
+    assert any('AUC' in warning for warning in evaluated['warnings'])
 
 
 @pytest.mark.parametrize('ratio,blocked',[(.5999,True),(.60,False),(.85,False)])

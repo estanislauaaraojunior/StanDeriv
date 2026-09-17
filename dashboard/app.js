@@ -399,8 +399,13 @@ function _setRtContractStatus(contract, entryTick, lastTick) {
 function updateRtContractChart(ticks, contract) {
   const chart = state.charts.rtContract;
   if (!chart) return;
+  const validTicks = Array.isArray(ticks)
+    ? ticks
+        .map(t => ({ epoch: Number(t.epoch), price: Number(t.price) }))
+        .filter(t => Number.isFinite(t.epoch) && Number.isFinite(t.price))
+    : [];
 
-  if (!contract && (!Array.isArray(ticks) || !ticks.length)) {
+  if (!contract && !validTicks.length) {
     chart.data.datasets[0].data = [];
     chart.data.datasets[1].data = [];
     chart.update('none');
@@ -408,18 +413,18 @@ function updateRtContractChart(ticks, contract) {
     return;
   }
 
-  const series = ticks.map(t => ({ x: Number(t.epoch), y: Number(t.price) }));
+  const series = validTicks.map(t => ({ x: t.epoch, y: t.price }));
   chart.data.datasets[0].data = series;
 
   let entryTick = null;
   if (contract && contract.entry_epoch) {
-    entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
-    if (!entryTick && ticks.length) entryTick = ticks[0];
+    entryTick = validTicks.find(t => t.epoch >= Number(contract.entry_epoch));
+    if (!entryTick && validTicks.length) entryTick = validTicks[0];
   }
-  chart.data.datasets[1].data = entryTick ? [{ x: Number(entryTick.epoch), y: Number(entryTick.price) }] : [];
+  chart.data.datasets[1].data = entryTick ? [{ x: entryTick.epoch, y: entryTick.price }] : [];
 
   chart.update('active');
-  if (contract) _setRtContractStatus(contract, entryTick, ticks[ticks.length - 1]);
+  if (contract) _setRtContractStatus(contract, entryTick, validTicks[validTicks.length - 1]);
 }
 
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
@@ -956,10 +961,14 @@ async function pollContractRealtime() {
       state.activeContract = null;
       const activeSymbol = el('activeSymbol')?.textContent?.trim();
       const params = new URLSearchParams({ n: '150' });
-      if (activeSymbol) params.set('symbol', activeSymbol);
+      if (activeSymbol && activeSymbol !== '—') params.set('symbol', activeSymbol);
       try {
         const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
-        const ticks = await rTicks.json();
+        let ticks = await rTicks.json();
+        if ((!Array.isArray(ticks) || !ticks.length) && params.has('symbol')) {
+          const fallbackTicks = await fetch(API_BASE_URL + '/api/ticks?n=150', { cache: 'no-store' });
+          ticks = await fallbackTicks.json();
+        }
         if (Array.isArray(ticks) && ticks.length) {
           updateRtContractChart(ticks, null);
           // Exibe mensagem de monitor mas não limpa o gráfico
@@ -1099,13 +1108,27 @@ async function pollModel() {
 
 // ─── Histórico de trades ──────────────────────────────────────────────────────
 
-async function loadHistory() {
+async function loadHistory(force = false) {
   const n = el('histCount')?.value || 50;
   try {
-    const r = await fetch(`${API_BASE_URL}/api/trades?n=${n}`);
-    state.allTrades = await r.json();
+    const url = `${API_BASE_URL}/api/trades?n=${n}${force ? '&force=1' : ''}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    const payload = await r.json();
+    if (Array.isArray(payload)) {
+      state.allTrades = payload;
+      state.historySource = 'deriv_profit_table';
+      state.historyError = '';
+    } else {
+      state.allTrades = Array.isArray(payload.trades) ? payload.trades : [];
+      state.historySource = payload.source || 'deriv_profit_table';
+      state.historyError = payload.error || '';
+    }
     renderHistory();
-  } catch (_) {}
+  } catch (e) {
+    state.historyError = e?.message || 'Falha ao consultar contratos na Deriv.';
+    state.allTrades = [];
+    renderHistory();
+  }
 }
 
 function renderHistory() {
@@ -1119,8 +1142,11 @@ function renderHistory() {
 
   const tbody = el('histBody');
   if (!trades.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty-msg">Nenhuma operação encontrada.</td></tr>';
-    el('histSummary').textContent = '';
+    const msg = state.historyError
+      ? `Não foi possível consultar o relatório de contratos da Deriv: ${escapeHtml(state.historyError)}`
+      : 'Nenhum contrato encontrado na Deriv.';
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-msg">${msg}</td></tr>`;
+    el('histSummary').textContent = state.historyError ? 'Fonte: Deriv profit_table' : '';
     return;
   }
 
@@ -1131,21 +1157,19 @@ function renderHistory() {
   tbody.innerHTML = trades.map(t => `
     <tr>
       <td class="td-mono">${t.timestamp?.slice(0, 19) || '—'}</td>
+      <td class="td-mono">${escapeHtml(t.contract_id || '—')}</td>
+      <td class="td-mono">${escapeHtml(t.symbol || '—')}</td>
       <td><span class="badge badge-${t.direction?.toLowerCase()}">${t.direction || '—'}</span></td>
       <td class="td-mono">${fmtUsd(t.stake)}</td>
+      <td class="td-mono">${fmtUsd(t.sell_price)}</td>
       <td class="td-mono">${t.duration ?? '—'}t</td>
       <td><span class="badge badge-${t.result?.toLowerCase()}">${t.result || '—'}</span></td>
       <td class="td-mono ${t.profit >= 0 ? 'positive' : 'negative'}">${(t.profit >= 0 ? '+' : '') + fmtUsd(t.profit)}</td>
-      <td class="td-mono">${fmtUsd(t.balance_after)}</td>
-      <td class="td-mono">${fmt(t.rsi, 1)}</td>
-      <td class="td-mono">${fmt(t.adx, 1)}</td>
-      <td class="td-mono">${fmtPct(t.ai_confidence * 100)}</td>
-      <td>${t.market_condition || '—'}</td>
     </tr>
   `).join('');
 
   el('histSummary').textContent =
-    `${trades.length} operações | Win Rate: ${wr}% | Lucro total: ${(totalProfit >= 0 ? '+' : '') + fmtUsd(totalProfit)}`;
+    `Fonte: Deriv profit_table | ${trades.length} contratos | Win Rate: ${wr}% | Lucro total: ${(totalProfit >= 0 ? '+' : '') + fmtUsd(totalProfit)}`;
 
   // Recent dots no overview
   updateRecentDots('recentTradesDots');

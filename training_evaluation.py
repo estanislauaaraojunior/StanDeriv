@@ -166,13 +166,15 @@ def evaluate(model, df, payout=.85, *, features=None, quotes=None):
         reasons.append('nenhum contrato no teste')
     elif result['win_rate'] < config.MIN_APPROVAL_WIN_RATE:
         reasons.append(f"taxa de acerto {result['win_rate']:.1%} abaixo do mínimo {config.MIN_APPROVAL_WIN_RATE:.1%}")
+    warnings = []
     if auc <= .5:
-        reasons.append(f'AUC {auc:.4f} não supera 0.5')
+        warnings.append(f'AUC {auc:.4f} não supera 0.5; probabilidade fraca, mas não bloqueia aprovação')
     result.update(auc=auc, accuracy=float(accuracy_score(targets, classes[prob.argmax(axis=1)])),
                   f1=float(f1_score(targets, classes[prob.argmax(axis=1)], average='macro', zero_division=0)),
                   n_test=len(df), reference_net_payout=payout, evaluation_start=int(df.entry_epoch.iloc[0]),
                   evaluation_end=int(df.expiry_epoch.iloc[-1]), evaluation_kind='deployed_strategy_reference_payout',
-                  eligible=not reasons, rejection_reasons=reasons, components=components, calibration=calibration)
+                  eligible=not reasons, rejection_reasons=reasons, warnings=warnings,
+                  components=components, calibration=calibration)
     result['evaluation_risk_timezone'] = EVALUATION_RISK_TIMEZONE
     return result
 

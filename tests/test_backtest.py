@@ -426,7 +426,8 @@ def test_cli_help_without_credentials_or_dotenv(tmp_path):
 @pytest.mark.parametrize('probability,payout,accepted', [
     (.56, .70, False), (.56, .85, True),
     (.625, .60, True), (.6249, .60, False),
-    (.55, 1.0, False), (.550001, 1.0, True),
+    (.45, 1.0, False), (.450001, 1.0, False),
+    (.500001, 1.0, True),
     (None, .85, False), (float('nan'), .85, False),
 ])
 def test_ai_backtest_shares_executor_economic_gate(monkeypatch, probability, payout, accepted):

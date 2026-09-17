@@ -1283,170 +1283,196 @@ def _validate_deriv_token(
             timeout_sec=timeout_sec,
         )
 
-    done = threading.Event()
-
-    result = {
-        "ok": False,
-        "message": "",
-        "code": "",
-        "loginid": "",
-        "currency": "",
-    }
-
-    def _on_open(ws) -> None:
-        ws.send(
-            json.dumps(
-                {
-                    "authorize": TOKEN
-                }
-            )
-        )
-
-    def _on_message(
-        ws,
-        message,
-    ) -> None:
-        try:
-            data = json.loads(message)
-        except (
-            TypeError,
-            json.JSONDecodeError,
-        ):
-            return
-
-        if "error" in data:
-            error = data.get(
-                "error",
-                {},
-            )
-
-            result["message"] = error.get(
-                "message",
-                "Erro de autenticação desconhecido.",
-            )
-
-            result["code"] = error.get(
-                "code",
-                "",
-            )
-
-            ws.close()
-            return
-
-        if data.get(
-            "msg_type"
-        ) == "authorize":
-            auth = data.get(
-                "authorize",
-                {},
-            )
-
-            if auth.get('is_virtual') not in (0, 1) or bool(auth['is_virtual']) != demo:
-                result['message'] = 'Tipo de conta autenticada não corresponde ao modo solicitado.'
-                ws.close()
-                return
-            result["ok"] = True
-            result["loginid"] = str(
-                auth.get(
-                    "loginid",
-                    "",
-                )
-            )
-            result["currency"] = str(
-                auth.get(
-                    "currency",
-                    "",
-                )
-            )
-
-            ws.close()
-
-    def _on_error(ws, err) -> None:
-        result["message"] = str(err)
-        ws.close()
-
-    def _on_close(
-        ws,
-        *_args,
-    ) -> None:
-        done.set()
-
     print(
         "\n[AUTH] Validando token Deriv..."
     )
 
-    ws = websocket.WebSocketApp(
-        _WS_URL,
-        on_open=_on_open,
-        on_message=_on_message,
-        on_error=_on_error,
-        on_close=_on_close,
-    )
+    max_attempts = 3
 
-    thread = threading.Thread(
-        target=ws.run_forever,
-        daemon=True,
-    )
+    for attempt in range(1, max_attempts + 1):
+        done = threading.Event()
 
-    thread.start()
+        result = {
+            "ok": False,
+            "message": "",
+            "code": "",
+            "loginid": "",
+            "currency": "",
+        }
 
-    done.wait(
-        timeout=timeout_sec
-    )
+        def _on_open(ws) -> None:
+            ws.send(
+                json.dumps(
+                    {
+                        "authorize": TOKEN
+                    }
+                )
+            )
 
-    if not done.is_set():
-        try:
+        def _on_message(
+            ws,
+            message,
+        ) -> None:
+            try:
+                data = json.loads(message)
+            except (
+                TypeError,
+                json.JSONDecodeError,
+            ):
+                return
+
+            if "error" in data:
+                error = data.get(
+                    "error",
+                    {},
+                )
+
+                result["message"] = error.get(
+                    "message",
+                    "Erro de autenticação desconhecido.",
+                )
+
+                result["code"] = error.get(
+                    "code",
+                    "",
+                )
+
+                ws.close()
+                return
+
+            if data.get(
+                "msg_type"
+            ) == "authorize":
+                auth = data.get(
+                    "authorize",
+                    {},
+                )
+
+                if auth.get('is_virtual') not in (0, 1) or bool(auth['is_virtual']) != demo:
+                    result['message'] = 'Tipo de conta autenticada não corresponde ao modo solicitado.'
+                    ws.close()
+                    return
+                result["ok"] = True
+                result["loginid"] = str(
+                    auth.get(
+                        "loginid",
+                        "",
+                    )
+                )
+                result["currency"] = str(
+                    auth.get(
+                        "currency",
+                        "",
+                    )
+                )
+
+                ws.close()
+
+        def _on_error(ws, err) -> None:
+            result["message"] = str(err)
             ws.close()
-        except Exception:
-            pass
+
+        def _on_close(
+            ws,
+            *_args,
+        ) -> None:
+            done.set()
+
+        ws = websocket.WebSocketApp(
+            _WS_URL,
+            on_open=_on_open,
+            on_message=_on_message,
+            on_error=_on_error,
+            on_close=_on_close,
+        )
+
+        thread = threading.Thread(
+            target=ws.run_forever,
+            daemon=True,
+        )
+
+        thread.start()
+
+        done.wait(
+            timeout=timeout_sec
+        )
+
+        if not done.is_set():
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+            result["message"] = (
+                f"Timeout após {timeout_sec}s ao validar o token."
+            )
+
+        if result["ok"]:
+            account = (
+                result["loginid"]
+                or "desconhecida"
+            )
+
+            currency = (
+                result["currency"]
+                or "sem moeda"
+            )
+
+            print(
+                f"[AUTH] Token validado | "
+                f"Conta: {account} | "
+                f"Moeda: {currency}"
+            )
+
+            return True
+
+        message = (
+            result["message"]
+            or "A Deriv recusou a autenticação."
+        )
+
+        code = (
+            f" ({result['code']})"
+            if result["code"]
+            else ""
+        )
+
+        transient = (
+            not result["code"]
+            and any(
+                marker in message.lower()
+                for marker in (
+                    "temporary failure in name resolution",
+                    "name or service not known",
+                    "network is unreachable",
+                    "connection timed out",
+                    "timed out",
+                )
+            )
+        )
+
+        if transient and attempt < max_attempts:
+            wait_sec = min(10, 2 * attempt)
+            print(
+                f"[AUTH] Falha transitória de rede/DNS: "
+                f"{message}. Nova tentativa em {wait_sec}s "
+                f"({attempt}/{max_attempts})."
+            )
+            time.sleep(wait_sec)
+            continue
 
         print(
-            f"[AUTH] Timeout após "
-            f"{timeout_sec}s ao validar o token."
+            f"[AUTH] Falha na autenticação: "
+            f"{message}{code}"
         )
+
+        if "disabled" in message.lower():
+            print(
+                "[AUTH] A conta vinculada "
+                "ao token está desativada."
+            )
 
         return False
-
-    if result["ok"]:
-        account = (
-            result["loginid"]
-            or "desconhecida"
-        )
-
-        currency = (
-            result["currency"]
-            or "sem moeda"
-        )
-
-        print(
-            f"[AUTH] Token validado | "
-            f"Conta: {account} | "
-            f"Moeda: {currency}"
-        )
-
-        return True
-
-    message = (
-        result["message"]
-        or "A Deriv recusou a autenticação."
-    )
-
-    code = (
-        f" ({result['code']})"
-        if result["code"]
-        else ""
-    )
-
-    print(
-        f"[AUTH] Falha na autenticação: "
-        f"{message}{code}"
-    )
-
-    if "disabled" in message.lower():
-        print(
-            "[AUTH] A conta vinculada "
-            "ao token está desativada."
-        )
 
     return False
 

@@ -72,6 +72,29 @@ def test_startup_verifies_actual_demo_account(monkeypatch, virtual, expected):
     assert pipeline._validate_deriv_token(demo=True, timeout_sec=1) is expected
 
 
+def test_startup_retries_transient_dns_auth_error(monkeypatch):
+    monkeypatch.setattr(pipeline.deriv_session, 'is_bearer_token', lambda *args: False)
+    monkeypatch.setattr(pipeline.time, 'sleep', lambda _seconds: None)
+    attempts = {'count': 0}
+
+    class Socket:
+        def __init__(self, url, **callbacks):
+            self.callbacks = callbacks
+        def run_forever(self):
+            attempts['count'] += 1
+            if attempts['count'] == 1:
+                self.callbacks['on_error'](self, OSError(-3, 'Temporary failure in name resolution'))
+                return
+            self.callbacks['on_message'](self, json.dumps({'msg_type': 'authorize',
+                'authorize': {'is_virtual': 1, 'loginid': 'offline', 'currency': 'USD'}}))
+        def close(self):
+            self.callbacks['on_close'](self)
+
+    monkeypatch.setattr(pipeline.websocket, 'WebSocketApp', Socket)
+    assert pipeline._validate_deriv_token(demo=True, timeout_sec=1) is True
+    assert attempts['count'] == 2
+
+
 def test_fixed_symbol_synchronizes_training_and_execution(monkeypatch):
     import executor, strategy, dataset_builder, train_model
     for module in (config, executor, strategy, dataset_builder, train_model, pipeline):

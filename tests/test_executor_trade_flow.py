@@ -124,14 +124,14 @@ def test_buy_requires_nonnegative_expected_return(bot, probability, payout, acce
     assert ws.send.call_count == int(accepted)
 
 
-@pytest.mark.parametrize('probability,accepted', [(.55, False), (.550001, True)])
-def test_confidence_must_be_strictly_above_fifty_five(bot, probability, accepted):
+@pytest.mark.parametrize('probability,proposal_sent,economic', [(.45, False, False), (.450001, True, False), (.500001, True, True)])
+def test_confidence_must_be_strictly_above_approval_floor(bot, probability, proposal_sent, economic):
     from model_contract import profitable_proposal
     ws = MagicMock()
     bot._send_proposal(ws, 'BUY', {'win_probability': probability,
                                  'ai_confidence': probability, 'model_id': 'offline'})
-    assert ws.send.call_count == int(accepted)
-    assert profitable_proposal(10, 20, probability) is accepted
+    assert ws.send.call_count == int(proposal_sent)
+    assert profitable_proposal(10, 20, probability) is economic
 
 
 def test_delayed_buy_response_reconciles_only_matching_request(bot):
@@ -144,6 +144,23 @@ def test_delayed_buy_response_reconciles_only_matching_request(bot):
     bot._handle_buy(ws, {'contract_id': 12345}, req_id = bot._buy_req_id)
     assert bot._open_contract_id == '12345'
     assert bot._entry_price == 0  # não inventa preço de entrada a partir do tick local
+
+
+def test_open_contract_update_persists_entry_point(bot):
+    ws = MagicMock()
+    buy(bot, ws)
+    bot._handle_contract_update({
+        'contract_id': 12345,
+        'is_sold': 0,
+        'entry_spot': '100.25',
+        'entry_tick_time': 1700000000,
+    })
+
+    state = json.loads(executor._STATE_JSON.read_text())
+    active = state['active_contract']
+    assert active['entry_price'] == 100.25
+    assert active['entry_epoch'] == 1700000000
+    assert bot._in_trade
 
 
 @pytest.mark.parametrize('profit,result', [(2.5, 'WIN'), (-10, 'LOSS'), (0, 'VOID')])
@@ -230,6 +247,40 @@ def test_buy_error_does_not_authorize_retry(bot):
     bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
     bot._on_message(ws, json.dumps({'error': {'code': 'InternalError'}, 'req_id': bot._buy_req_id}))
     assert bot._in_trade and bot._phase == 'reconciling'
+
+
+def test_proposal_error_releases_bot_for_next_signal(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws, 'SELL')
+    bot._on_message(ws, json.dumps({
+        'error': {
+            'code': 'ContractBuyValidationError',
+            'message': 'Price moved too much',
+        },
+        'req_id': rid,
+    }))
+    assert not bot._in_trade
+    assert bot._phase == 'idle'
+    assert bot._open_contract_id is None
+    assert bot._decision_history[-1]['reason'] == 'proposal_rejected_by_api'
+
+
+def test_market_unavailable_proposal_error_requests_fallback(bot):
+    ws = MagicMock()
+    callback = MagicMock()
+    bot.on_market_unavailable = callback
+    bot.symbol = 'frxEURGBP'
+    rid = proposal(bot, ws, 'BUY')
+    bot._on_message(ws, json.dumps({
+        'error': {
+            'code': 'MarketIsClosed',
+            'message': 'Market is closed',
+        },
+        'req_id': rid,
+    }))
+    callback.assert_called_once_with('frxEURGBP')
+    assert not bot._in_trade
+    assert bot._phase == 'idle'
 
 
 def test_reconnection_refetches_bearer_account_balance(bot, monkeypatch):

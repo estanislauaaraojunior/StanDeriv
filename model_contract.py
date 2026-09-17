@@ -54,7 +54,8 @@ def specification(symbol):
             'max_tick_gap_sec': MAX_TICK_GAP_SEC,
             'approval_policy': {'version': 2, 'min_net_payout': config.MIN_NET_PAYOUT,
                                 'min_win_rate': config.MIN_APPROVAL_WIN_RATE,
-                                'min_trades': 1, 'wilson_gate': False},
+                                'min_trades': 1, 'wilson_gate': False,
+                                'auc_gate': False},
             'strategy_parameters': {key:getattr(config,key) for key in (
                 'USE_WEIGHTED_SIGNAL','SIGNAL_SCORE_MIN','AI_CONFIDENCE_MIN','AI_SCORE_MIN',
                 'AI_TECH_WEIGHT','AI_MODEL_WEIGHT','ADX_MIN','ADX_ADAPTIVE','ADX_ADAPTIVE_PERCENTILE',

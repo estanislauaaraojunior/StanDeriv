@@ -7,9 +7,11 @@ A manutenção de contratos v2 alterou o esquema dos dados e a validação dos m
 ## Instruções para assistentes de IA
 
 O ponto de entrada é [AGENTS.md](AGENTS.md), que orienta a leitura do
-[prompt de engenharia do StanDeriv](docs/PROMPT_STANDERIV.md) e a consulta por
-área do [guia técnico](docs/GUIA_TECNICO.md). O prompt também pode ser copiado
-integralmente para um assistente com acesso ao repositório, sem campos a preencher.
+[prompt mestre autônomo do StanDeriv](docs/PROMPT_STANDERIV_AUTONOMO.md), do
+[prompt de engenharia histórico](docs/PROMPT_STANDERIV.md) quando necessário e
+da consulta por área do [guia técnico](docs/GUIA_TECNICO.md). O prompt autônomo
+pode ser copiado integralmente para um assistente com acesso ao repositório, sem
+campos a preencher.
 
 O Codex descobre `AGENTS.md` ao iniciar o trabalho no projeto, conforme a
 [documentação oficial](https://developers.openai.com/codex/guides/agents-md).
@@ -297,7 +299,12 @@ A origem não é alterada. Registros sem identificação de tick/candle recebem 
 
 ### Score técnico e IA
 
-`SIGNAL_SCORE_MIN=0.05` controla a seleção técnica. `AI_CONFIDENCE_MIN=0.55` e concordância explícita são obrigatórios quando a IA é usada. A combinação usa `AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45` e `AI_SCORE_MIN=0.30`. Desligar a IA permite análise/backtest técnico, mas não fornece a probabilidade exigida para comprar contratos ao vivo.
+`SIGNAL_SCORE_MIN=0.05` controla a seleção técnica. `AI_CONFIDENCE_MIN` segue
+o piso de aprovação (`MIN_APPROVAL_WIN_RATE=0.45`) e a concordância explícita
+entre IA e sinal técnico continua obrigatória quando a IA é usada. A combinação
+usa `AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45` e `AI_SCORE_MIN=0.30`.
+Desligar a IA permite análise/backtest técnico, mas não fornece a probabilidade
+exigida para comprar contratos ao vivo.
 
 ### Candles Baseados em Tempo
 `CANDLE_TIMEFRAME_SEC = 60` define a duração de cada vela em segundos (substituindo o modelo de ticks fixos). Recomendado: 60s (1min) para mais entradas, 300s (5min) para mais seletividade.
@@ -309,7 +316,7 @@ A origem não é alterada. Registros sem identificação de tick/candle recebem 
 `ENTRY_CANDLE_INTERVAL = 1` controla o intervalo mínimo entre entradas em velas fechadas (1 = avalia a cada nova vela).
 
 ### Promoção de Modelo (Champion-Challenger)
-Além de pelo menos um contrato de teste, taxa de acerto observada mínima de 60% (independente da quantidade de contratos) e AUC acima de 0,50, o challenger precisa ser comparado com o champion no mesmo período fora da amostra:
+Além de pelo menos um contrato de teste e taxa de acerto observada mínima de 45% na estratégia completa, o challenger precisa ser comparado com o champion no mesmo período fora da amostra. AUC abaixo de 0,50 é registrada como alerta de probabilidade fraca, mas não bloqueia sozinha a aprovação:
 - `MODEL_PROMOTION_MIN_AUC_DELTA = 0.001` — AUC do novo modelo deve ser ≥ AUC atual + delta
 - `MODEL_PROMOTION_MAX_ACC_DROP = 0.02` — queda máxima tolerada de acurácia
 - `MODEL_PROMOTION_MAX_F1_DROP = 0.05` — queda máxima tolerada de F1
@@ -386,11 +393,11 @@ Os itens abaixo registram versões passadas; o comportamento atual está descrit
 
 O payout líquido mínimo é `MIN_NET_PAYOUT=0.60`: retorno total de pelo menos
 1,60 por unidade de stake. O filtro vale no backtest, na avaliação de treino e
-nas compras em contas demo e reais. `MIN_APPROVAL_WIN_RATE=0.60` substitui o
-antigo bloqueio por amostra de 30 contratos e limite de Wilson; Wilson continua
-como diagnóstico. Acurácia de classificação e taxa de acerto dos contratos são
-métricas distintas. Os filtros de retorno esperado, risco e comparação entre
-modelos permanecem. Bundles anteriores exigem reavaliação sob a nova política.
+nas compras em contas demo e reais. `MIN_APPROVAL_WIN_RATE=0.45` é o piso de
+aprovação da estratégia completa; Wilson e AUC continuam como diagnóstico.
+Acurácia de classificação e taxa de acerto dos contratos são métricas distintas.
+Os filtros de retorno esperado, risco e comparação entre modelos permanecem.
+Bundles anteriores exigem reavaliação sob a nova política.
 
 ### Regra de entrada: confiança e payout
 
@@ -400,7 +407,7 @@ substituindo a margem anterior de 2%. O payout líquido mínimo de 60%, os filtr
 técnicos e os controles de risco continuam ativos. Isso representa retorno
 esperado não negativo segundo o modelo; não garante ausência de perdas.
 A confiança de uma previsão difere da taxa histórica de acerto: a aprovação
-do treino continua exigindo pelo menos 60% de acertos e AUC acima de 0,50.
+do treino exige pelo menos 45% de acertos na estratégia completa.
 Mudanças no código não reiniciam o executor nem promovem modelos existentes.
 
 O backtest com IA aplica a mesma função `profitable_proposal` do executor,

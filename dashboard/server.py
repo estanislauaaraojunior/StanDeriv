@@ -29,6 +29,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 import pandas as pd
+import websocket
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from model_contract import FEATURE_WINDOW, minimum_history_candles
@@ -78,6 +79,7 @@ RISK_STATE_JSON = _ROOT / "risk_state.json"
 STATE_JSON      = _ROOT / "state.json"
 MODEL_METRICS_JSON = _ROOT / "model_metrics.json"
 PIPELINE_LOG_TXT = _ROOT / "pipeline.log"
+BOT_STATUS_JSON = _ROOT / "bot_status.json"
 BACKTEST_ROOT = _ROOT / "backtest_reports" / "dashboard"
 BACKTEST_STATE_JSON = BACKTEST_ROOT / "state.json"
 MIN_HISTORY_CANDLES = minimum_history_candles()
@@ -118,6 +120,9 @@ app.json = _SafeJSONProvider(app)
 _bot_log_buffer: collections.deque = collections.deque(maxlen=200)
 _bot_process: subprocess.Popen | None = None
 _bot_log_lock = threading.Lock()
+_bot_status_lock = threading.RLock()
+_deriv_contract_cache: dict = {"ts": 0.0, "records": [], "error": ""}
+_DERIV_CONTRACT_CACHE_TTL = 15.0
 
 # Backtests rodam em subprocesso para não bloquear o servidor Flask nem
 # compartilhar estado dos modelos com o processo do bot.
@@ -132,6 +137,7 @@ def _read_bot_output(proc: subprocess.Popen) -> None:
     stdout = proc.stdout
     if stdout is None:
         return
+    returncode = None
     try:
         with PIPELINE_LOG_TXT.open("a", encoding="utf-8") as log_file:
             for line in stdout:
@@ -145,6 +151,17 @@ def _read_bot_output(proc: subprocess.Popen) -> None:
         stdout.close()
     except Exception:
         pass
+    finally:
+        try:
+            returncode = proc.wait(timeout=0)
+        except subprocess.TimeoutExpired:
+            returncode = proc.poll()
+        except Exception:
+            returncode = None
+        if not isinstance(returncode, int):
+            returncode = None
+        if returncode is not None:
+            _mark_bot_stopped(returncode, requested=_get_bot_status().get("status") == "stopping")
 
 
 def _read_recent_pipeline_logs(max_lines: int = 500) -> list[str]:
@@ -191,6 +208,143 @@ def _read_csv_safe(path, **kwargs):
         return pd.DataFrame()
 
 
+def _deriv_credentials_available() -> bool:
+    try:
+        from config import TOKEN
+        token = str(TOKEN or "").strip()
+    except Exception:
+        return False
+    if not token:
+        return False
+    lowered = token.lower()
+    return not (
+        lowered.startswith("test_")
+        or lowered.startswith("offline_")
+        or lowered in {"test_token", "test_token_placeholder", "offline_test_token"}
+    )
+
+
+def _request_deriv_profit_table(limit: int = 100) -> list[dict]:
+    """Busca o relatório oficial de contratos na Deriv sem persistir no repo."""
+    if not _deriv_credentials_available():
+        return []
+
+    from config import APP_ID, DEMO_MODE, DERIV_AUTH_MODE, TOKEN
+    from deriv_session import is_bearer_token, setup_bearer_options_session
+
+    token = str(TOKEN).strip()
+    app_id = str(APP_ID).strip() or "1089"
+    ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
+    needs_authorize = True
+
+    if is_bearer_token(token, DERIV_AUTH_MODE):
+        session = setup_bearer_options_session(
+            app_id=app_id,
+            token=token,
+            demo=bool(DEMO_MODE),
+            timeout_sec=15,
+        )
+        ws_url = str(session["ws_url"])
+        needs_authorize = False
+
+    ws = websocket.create_connection(ws_url, timeout=15)
+    try:
+        if needs_authorize:
+            ws.send(json.dumps({"authorize": token}))
+            auth = json.loads(ws.recv())
+            if auth.get("error"):
+                raise RuntimeError(str(auth["error"].get("message", "Falha ao autenticar na Deriv")))
+
+        ws.send(json.dumps({
+            "profit_table": 1,
+            "description": 1,
+            "limit": max(1, min(int(limit), 500)),
+            "sort": "DESC",
+        }))
+        response = json.loads(ws.recv())
+        if response.get("error"):
+            raise RuntimeError(str(response["error"].get("message", "Falha ao consultar profit_table")))
+        table = response.get("profit_table") or {}
+        transactions = table.get("transactions") or []
+        return [item for item in transactions if isinstance(item, dict)]
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def _contract_direction(transaction: dict) -> str:
+    contract_type = str(transaction.get("contract_type", "")).upper()
+    if contract_type in {"CALL", "MULTUP", "ASIANU", "DIGITOVER"}:
+        return "BUY"
+    if contract_type in {"PUT", "MULTDOWN", "ASIAND", "DIGITUNDER"}:
+        return "SELL"
+    longcode = str(transaction.get("longcode") or transaction.get("description") or "").lower()
+    if "higher" in longcode or "rise" in longcode or "call" in longcode:
+        return "BUY"
+    if "lower" in longcode or "fall" in longcode or "put" in longcode:
+        return "SELL"
+    return contract_type or "—"
+
+
+def _normalize_deriv_contract(transaction: dict) -> dict:
+    buy_price = float(transaction.get("buy_price", 0.0) or 0.0)
+    sell_price = float(transaction.get("sell_price", 0.0) or 0.0)
+    profit = float(transaction.get("profit", sell_price - buy_price) or 0.0)
+    purchase_time = int(float(transaction.get("purchase_time", transaction.get("date_start", 0)) or 0))
+    sell_time = int(float(transaction.get("sell_time", transaction.get("date_expiry", purchase_time)) or purchase_time))
+    duration_sec = max(0, sell_time - purchase_time)
+    duration_min = int(round(duration_sec / 60)) if duration_sec else 0
+    result = "WIN" if profit > 0 else "LOSS" if profit < 0 else "DRAW"
+    contract_id = str(transaction.get("contract_id") or transaction.get("transaction_id") or "")
+
+    return {
+        "timestamp": dt.datetime.fromtimestamp(purchase_time).isoformat() if purchase_time else "",
+        "symbol": str(transaction.get("underlying_symbol") or transaction.get("symbol") or ""),
+        "direction": _contract_direction(transaction),
+        "stake": buy_price,
+        "sell_price": sell_price,
+        "duration": duration_min,
+        "result": result,
+        "profit": round(profit, 2),
+        "balance_after": None,
+        "ema9": 0.0,
+        "ema21": 0.0,
+        "rsi": 0.0,
+        "adx": 0.0,
+        "macd_hist": 0.0,
+        "ai_confidence": 0.0,
+        "ai_score": 0.0,
+        "market_condition": "",
+        "contract_id": contract_id,
+        "payout": float(transaction.get("payout", 0.0) or 0.0),
+    }
+
+
+def _deriv_contract_report(limit: int = 100, *, force: bool = False) -> list[dict]:
+    global _deriv_contract_cache
+    now = time.time()
+    if (
+        not force
+        and now - float(_deriv_contract_cache.get("ts", 0.0) or 0.0) < _DERIV_CONTRACT_CACHE_TTL
+    ):
+        return list(_deriv_contract_cache.get("records", []))
+
+    try:
+        transactions = _request_deriv_profit_table(limit=limit)
+        records = [_normalize_deriv_contract(item) for item in transactions]
+        _deriv_contract_cache = {"ts": now, "records": records, "error": ""}
+        return records
+    except Exception as exc:
+        _deriv_contract_cache = {"ts": now, "records": [], "error": str(exc)}
+        return []
+
+
+def _contracts_frame(limit: int = 500) -> pd.DataFrame:
+    return pd.DataFrame(_deriv_contract_report(limit=limit))
+
+
 def _bot_pid() -> int | None:
     """Retorna PID salvo em bot.pid ou None."""
     try:
@@ -202,6 +356,31 @@ def _bot_pid() -> int | None:
     return None
 
 
+def _clear_stale_bot_pid(pid: int | None = None) -> None:
+    try:
+        if PID_FILE.exists():
+            current = int(PID_FILE.read_text().strip())
+            if pid is None or current == int(pid):
+                PID_FILE.unlink()
+    except Exception:
+        pass
+
+
+def _is_pipeline_process(proc) -> bool:
+    try:
+        if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+        cmdline = " ".join(proc.cmdline()).replace("\\", "/")
+        cwd = ""
+        try:
+            cwd = str(proc.cwd())
+        except Exception:
+            pass
+        return "pipeline.py" in cmdline and (not cwd or Path(cwd).resolve() == _ROOT.resolve())
+    except Exception:
+        return False
+
+
 def _bot_running() -> tuple[bool, int | None]:
     """(is_running, pid) — verifica se o processo pipeline.py existe."""
     pid = _bot_pid()
@@ -210,16 +389,124 @@ def _bot_running() -> tuple[bool, int | None]:
     if _PSUTIL:
         try:
             proc = psutil.Process(pid)
-            return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE, pid
+            if _is_pipeline_process(proc):
+                return True, pid
+            _clear_stale_bot_pid(pid)
+            return False, None
         except psutil.NoSuchProcess:
+            _clear_stale_bot_pid(pid)
             return False, None
     else:
-        # Fallback sem psutil: verifica via kill -0
+        # Fallback sem psutil: valida /proc quando disponível; não confia em PID
+        # reutilizado por outro processo.
+        cmdline_path = Path("/proc") / str(pid) / "cmdline"
+        try:
+            if cmdline_path.exists():
+                cmdline = cmdline_path.read_text(errors="replace").replace("\x00", " ")
+                if "pipeline.py" in cmdline:
+                    return True, pid
+                _clear_stale_bot_pid(pid)
+                return False, None
+        except Exception:
+            pass
         try:
             os.kill(pid, 0)
-            return True, pid
-        except (ProcessLookupError, PermissionError):
+            _clear_stale_bot_pid(pid)
             return False, None
+        except (ProcessLookupError, PermissionError):
+            _clear_stale_bot_pid(pid)
+            return False, None
+
+
+def _utc_now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def _append_bot_log(message: str) -> None:
+    try:
+        with PIPELINE_LOG_TXT.open("a", encoding="utf-8") as log_file:
+            log_file.write(message + "\n")
+    except Exception:
+        pass
+    with _bot_log_lock:
+        _bot_log_buffer.append(message)
+
+
+def _persist_bot_status(status: dict) -> None:
+    with _bot_status_lock:
+        temp_path = BOT_STATUS_JSON.with_name(
+            f".{BOT_STATUS_JSON.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            temp_path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+            os.replace(temp_path, BOT_STATUS_JSON)
+        finally:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
+
+
+def _get_bot_status() -> dict:
+    with _bot_status_lock:
+        data = _read_json_safe(BOT_STATUS_JSON)
+    return data if isinstance(data, dict) else {}
+
+
+def _set_bot_status(**updates) -> dict:
+    state = _get_bot_status()
+    state.update(updates)
+    _persist_bot_status(state)
+    return state
+
+
+def _mark_bot_stopped(returncode: int | None = None, *, requested: bool = False) -> dict:
+    global _bot_process
+    now = _utc_now_iso()
+    if not isinstance(returncode, int):
+        returncode = None
+    status = "stopped" if requested or returncode == 0 else "crashed"
+    reason = "parada solicitada" if requested else (
+        f"processo encerrado com returncode {returncode}" if returncode is not None else "processo ausente"
+    )
+    state = _set_bot_status(
+        status=status,
+        running=False,
+        stopped_at=now,
+        finished_at=now,
+        returncode=returncode,
+        last_error="" if status == "stopped" else reason,
+    )
+    _bot_process = None
+    if status == "crashed":
+        _append_bot_log(f"[BOT] Processo encerrado inesperadamente: {reason}")
+    else:
+        _append_bot_log(f"[BOT] Processo encerrado: {reason}")
+    return state
+
+
+def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> dict:
+    if running is None:
+        running, pid = _bot_running()
+    state = _get_bot_status()
+    status = str(state.get("status", "idle"))
+    known_pid = state.get("pid")
+    try:
+        known_pid_int = int(known_pid or 0)
+    except (TypeError, ValueError):
+        known_pid_int = 0
+    should_mark_crashed = (
+        status in {"starting", "running"}
+        and not running
+        and known_pid_int
+        and (pid is None or known_pid_int != int(pid or 0))
+    )
+    if should_mark_crashed:
+        return _mark_bot_stopped(state.get("returncode"), requested=False)
+    if running:
+        return _set_bot_status(status="running", running=True, pid=pid, last_seen_at=_utc_now_iso())
+    return state
 
 
 def _persist_backtest_state(state: dict) -> None:
@@ -370,68 +657,13 @@ def app_js():
 
 @app.route("/api/summary")
 def api_summary():
-    df = _read_csv_safe(OPERATIONS_CSV)
-
-    if df.empty:
-        return jsonify({
-            "balance": 0.0,
-            "balance_initial": 0.0,
-            "pnl_today": 0.0,
-            "pnl_pct": 0.0,
-            "win_rate": 0.0,
-            "win_rate_recent": 0.0,
-            "total_trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "consec_losses": 0,
-            "is_paused": False,
-            "drawdown_pct": 0.0,
-            "risk_state": _read_json_safe(RISK_STATE_JSON),
-        })
-
-    # Última linha disponível
-    last = df.iloc[-1]
-
-    total = len(df)
-    wins  = int((df["result"] == "WIN").sum()) if "result" in df.columns else 0
-    losses = total - wins
-    win_rate = round(wins / total * 100, 1) if total > 0 else 0.0
-
-    balance       = float(last.get("balance_after", 0))
-    balance_init  = float(df.iloc[0].get("balance_before", balance))
-    pnl_today     = float(last.get("profit", 0)) if "profit" in df.columns else 0.0
-
-    # Soma os profits do dia atual
-    if "timestamp" in df.columns:
-        try:
-            df["_ts"] = pd.to_datetime(df["timestamp"], errors="coerce")
-            today = pd.Timestamp.now().normalize()
-            today_df = df[df["_ts"] >= today]
-            pnl_today = float(today_df["profit"].sum()) if "profit" in today_df.columns else 0.0
-        except Exception:
-            pass
-
-    pnl_pct      = round((pnl_today / balance_init * 100), 2) if balance_init != 0 else 0.0
-    consec_losses = int(last.get("consec_losses", 0))
-    drawdown_pct  = float(last.get("drawdown_pct", 0.0))
-    win_rate_rec  = float(last.get("win_rate_recent", 0.0))
-    risk_state    = _read_json_safe(RISK_STATE_JSON)
-
-    return jsonify({
-        "balance":          round(balance, 2),
-        "balance_initial":  round(balance_init, 2),
-        "pnl_today":        round(pnl_today, 2),
-        "pnl_pct":          pnl_pct,
-        "win_rate":         win_rate,
-        "win_rate_recent":  round(win_rate_rec, 1),
-        "total_trades":     total,
-        "wins":             wins,
-        "losses":           losses,
-        "consec_losses":    consec_losses,
-        "is_paused":        consec_losses >= 3,
-        "drawdown_pct":     round(drawdown_pct, 2),
-        "risk_state":       risk_state,
-    })
+    risk_state = _read_json_safe(RISK_STATE_JSON)
+    summary = _summary_from_contract_report(_deriv_contract_report(limit=500), risk_state)
+    summary["risk_state"] = risk_state
+    summary["source"] = "deriv_profit_table"
+    if _deriv_contract_cache.get("error"):
+        summary["source_error"] = _deriv_contract_cache["error"]
+    return jsonify(summary)
 
 
 # ─── API: Ticks ───────────────────────────────────────────────────────────────
@@ -481,33 +713,13 @@ def api_ticks():
 @app.route("/api/trades")
 def api_trades():
     n = min(int(request.args.get("n", 50)), 500)
-    df = _read_csv_safe(OPERATIONS_CSV)
-
-    if df.empty:
-        return jsonify([])
-
-    tail = df.tail(n).iloc[::-1]  # mais recente primeiro
-    records = []
-    for _, row in tail.iterrows():
-        records.append({
-            "timestamp":     str(row.get("timestamp", "")),
-            "symbol":        str(row.get("symbol", "")),
-            "direction":     str(row.get("direction", "")),
-            "stake":         float(row.get("stake", 0)),
-            "duration":      int(row.get("duration", 0)),
-            "result":        str(row.get("result", "")),
-            "profit":        float(row.get("profit", 0)),
-            "balance_after": float(row.get("balance_after", 0)),
-            "ema9":          float(row.get("ema9", 0)),
-            "ema21":         float(row.get("ema21", 0)),
-            "rsi":           float(row.get("rsi", 0)),
-            "adx":           float(row.get("adx", 0)),
-            "macd_hist":     float(row.get("macd_hist", 0)),
-            "ai_confidence": float(row.get("ai_confidence", 0)),
-            "ai_score":      float(row.get("ai_score", 0)),
-            "market_condition": str(row.get("market_condition", "")),
-        })
-    return jsonify(records)
+    force = str(request.args.get("force", "")).lower() in {"1", "true", "yes"}
+    records = _deriv_contract_report(limit=n, force=force)[:n]
+    return jsonify({
+        "source": "deriv_profit_table",
+        "error": str(_deriv_contract_cache.get("error", "")),
+        "trades": records,
+    })
 
 
 # ─── API: Indicadores (última operação) ───────────────────────────────────────
@@ -566,6 +778,7 @@ def api_model():
 @app.route("/api/bot/status")
 def api_bot_status():
     running, pid = _bot_running()
+    status = _refresh_bot_status(running, pid)
 
     uptime_sec = None
     mode = "unknown"
@@ -582,6 +795,16 @@ def api_bot_status():
         "pid":        pid,
         "uptime_sec": uptime_sec,
         "mode":       "demo",  # lido em tempo real do config.py se disponível
+        "status":     status.get("status", "running" if running else "idle"),
+        "started_at": status.get("started_at"),
+        "stopped_at": status.get("stopped_at"),
+        "last_tick_at": status.get("last_tick_at"),
+        "last_loop_at": status.get("last_loop_at"),
+        "last_error": status.get("last_error", ""),
+        "returncode": status.get("returncode"),
+        "last_decision": status.get("last_decision", {}),
+        "decision_counts": status.get("decision_counts", {}),
+        "no_entry_for_sec": status.get("no_entry_for_sec", 0),
     })
 
 
@@ -660,6 +883,18 @@ def api_bot_start():
             PIPELINE_LOG_TXT.write_text("", encoding="utf-8")
         except Exception:
             pass
+        _set_bot_status(
+            status="starting",
+            running=True,
+            pid=proc.pid,
+            mode=mode,
+            started_at=_utc_now_iso(),
+            stopped_at=None,
+            finished_at=None,
+            returncode=None,
+            last_error="",
+            command=cmd,
+        )
         threading.Thread(target=_read_bot_output, args=(proc,), daemon=True).start()
         PID_FILE.write_text(str(proc.pid))
         return jsonify({"ok": True, "pid": proc.pid, "mode": mode})
@@ -689,6 +924,14 @@ def api_bot_stop():
         # Remove PID file
         if PID_FILE.exists():
             PID_FILE.unlink()
+
+        _set_bot_status(
+            status="stopping",
+            running=False,
+            pid=pid,
+            stopped_at=_utc_now_iso(),
+            last_error="",
+        )
 
         # O encerramento do processo não liquida o contrato na corretora.
         return jsonify({"ok": True, "pid": pid})
@@ -1002,16 +1245,20 @@ def api_backtest_result():
 
 @app.route("/api/equity")
 def api_equity():
-    df = _read_csv_safe(OPERATIONS_CSV)
-    if df.empty:
+    records = list(reversed(_deriv_contract_report(limit=500)))
+    if not records:
         return jsonify([])
-
+    risk_state = _read_json_safe(RISK_STATE_JSON)
+    current_balance = float(risk_state.get("balance", 0.0) or 0.0)
+    total_profit = sum(float(record.get("profit", 0.0) or 0.0) for record in records)
+    running_balance = current_balance - total_profit if current_balance else 0.0
     result = []
-    for _, row in df.iterrows():
+    for record in records:
+        running_balance += float(record.get("profit", 0.0) or 0.0)
         result.append({
-            "timestamp":     str(row.get("timestamp", "")),
-            "balance_after": float(row.get("balance_after", 0)),
-            "result":        str(row.get("result", "")),
+            "timestamp": str(record.get("timestamp", "")),
+            "balance_after": round(running_balance, 2),
+            "result": str(record.get("result", "")),
         })
     return jsonify(result)
 
@@ -1113,16 +1360,82 @@ _candle_patterns_cache: dict = {"ts": 0.0, "data": []}
 _CANDLE_CACHE_TTL = 5.0  # segundos
 
 
+def _summary_from_risk_state(risk_state: dict) -> dict:
+    """Monta resumo operacional quando ainda não há operações na sessão filtrada."""
+    recent_results = risk_state.get("recent_results", [])
+    if not isinstance(recent_results, list):
+        recent_results = []
+    total = len(recent_results)
+    wins = sum(1 for result in recent_results if int(result or 0) == 1)
+    daily_start = float(risk_state.get("daily_start_balance", risk_state.get("initial_balance", 0.0)) or 0.0)
+    balance = float(risk_state.get("balance", daily_start) or 0.0)
+    daily_pnl = float(risk_state.get("daily_pnl", 0.0) or 0.0)
+    daily_pnl_pct = float(risk_state.get("daily_pnl_pct", 0.0) or 0.0)
+    consec_losses = int(risk_state.get("consec_losses", 0) or 0)
+    pause_remaining = int(risk_state.get("pause_remaining_sec", 0) or 0)
+
+    return {
+        "balance": round(balance, 2),
+        "balance_initial": round(daily_start, 2),
+        "pnl_today": round(daily_pnl, 2),
+        "pnl_pct": round(daily_pnl_pct, 2),
+        "win_rate": round(wins / total * 100, 1) if total else 0.0,
+        "win_rate_recent": round(float(risk_state.get("win_rate_recent", 0.0) or 0.0), 1),
+        "total_trades": total,
+        "wins": wins,
+        "losses": total - wins,
+        "consec_losses": consec_losses,
+        "is_paused": bool(risk_state.get("is_paused", False)) or pause_remaining > 0 or consec_losses >= 3,
+        "drawdown_pct": round(float(risk_state.get("drawdown_pct", 0.0) or 0.0), 2),
+    }
+
+
+def _summary_from_contract_report(records: list[dict], risk_state: dict) -> dict:
+    balance = float(risk_state.get("balance", 0.0) or 0.0)
+    daily_start = float(risk_state.get("daily_start_balance", risk_state.get("initial_balance", balance)) or 0.0)
+    today = dt.datetime.now().date()
+    today_records = []
+    for record in records:
+        try:
+            if dt.datetime.fromisoformat(str(record.get("timestamp", ""))).date() == today:
+                today_records.append(record)
+        except Exception:
+            pass
+    scoped = today_records or records
+    total = len(scoped)
+    wins = sum(1 for record in scoped if record.get("result") == "WIN")
+    pnl_today = sum(float(record.get("profit", 0.0) or 0.0) for record in today_records)
+    if not records:
+        return _summary_from_risk_state(risk_state)
+    return {
+        "balance": round(balance, 2),
+        "balance_initial": round(daily_start, 2),
+        "pnl_today": round(pnl_today, 2),
+        "pnl_pct": round((pnl_today / daily_start * 100), 2) if daily_start else 0.0,
+        "win_rate": round(wins / total * 100, 1) if total else 0.0,
+        "win_rate_recent": round(wins / total * 100, 1) if total else 0.0,
+        "total_trades": total,
+        "wins": wins,
+        "losses": sum(1 for record in scoped if record.get("result") == "LOSS"),
+        "consec_losses": int(risk_state.get("consec_losses", 0) or 0),
+        "is_paused": bool(risk_state.get("is_paused", False)) or int(risk_state.get("pause_remaining_sec", 0) or 0) > 0,
+        "drawdown_pct": round(float(risk_state.get("drawdown_pct", 0.0) or 0.0), 2),
+    }
+
+
 # ─── API: Estado consolidado (/api/state) ─────────────────────────────────────
 
 @app.route("/api/state")
 def api_state():
     """Endpoint único que retorna todos os dados do dashboard em um só JSON."""
     running, pid = _bot_running()
+    bot_status = _refresh_bot_status(running, pid)
 
-    # — Resumo de operações (filtrado pela sessão atual) —
-    df_ops_all = _read_csv_safe(OPERATIONS_CSV)
+    # — Resumo de operações vindo do relatório oficial de contratos da Deriv —
+    contract_records = _deriv_contract_report(limit=500)
+    df_ops_all = pd.DataFrame(contract_records)
     active_state_pre = _read_json_safe(STATE_JSON)
+    risk_state = _read_json_safe(RISK_STATE_JSON)
     session_start_str = active_state_pre.get("session_start", "")
 
     df_ops = df_ops_all.copy()
@@ -1133,41 +1446,10 @@ def api_state():
             df_ops = df_ops[df_ops["_ts"] >= _ss].reset_index(drop=True)
         except Exception:
             pass
-    summary = {
-        "balance": 0.0, "balance_initial": 0.0, "pnl_today": 0.0, "pnl_pct": 0.0,
-        "win_rate": 0.0, "win_rate_recent": 0.0, "total_trades": 0,
-        "wins": 0, "losses": 0, "consec_losses": 0, "is_paused": False, "drawdown_pct": 0.0,
-    }
+    summary = _summary_from_contract_report(df_ops.to_dict("records"), risk_state)
     last_trade_indicators = {}
     if not df_ops.empty:
         last = df_ops.iloc[-1]
-        total = len(df_ops)
-        wins  = int((df_ops["result"] == "WIN").sum()) if "result" in df_ops.columns else 0
-        balance      = float(last.get("balance_after", 0))
-        balance_init = float(df_ops.iloc[0].get("balance_before", balance))
-        pnl_today    = 0.0
-        if "timestamp" in df_ops.columns:
-            try:
-                df_ops["_ts"] = pd.to_datetime(df_ops["timestamp"], errors="coerce")
-                today = pd.Timestamp.now().normalize()
-                today_df = df_ops[df_ops["_ts"] >= today]
-                pnl_today = float(today_df["profit"].sum()) if "profit" in today_df.columns else 0.0
-            except Exception:
-                pass
-        summary = {
-            "balance":         round(balance, 2),
-            "balance_initial": round(balance_init, 2),
-            "pnl_today":       round(pnl_today, 2),
-            "pnl_pct":         round((pnl_today / balance_init * 100), 2) if balance_init != 0 else 0.0,
-            "win_rate":        round(wins / total * 100, 1) if total > 0 else 0.0,
-            "win_rate_recent": float(last.get("win_rate_recent", 0.0)),
-            "total_trades":    total,
-            "wins":            wins,
-            "losses":          total - wins,
-            "consec_losses":   int(last.get("consec_losses", 0)),
-            "is_paused":       int(last.get("consec_losses", 0)) >= 3,
-            "drawdown_pct":    round(float(last.get("drawdown_pct", 0.0)), 2),
-        }
         last_trade_indicators = {
             "ema9": float(last.get("ema9", 0)), "ema21": float(last.get("ema21", 0)),
             "rsi": float(last.get("rsi", 0)), "adx": float(last.get("adx", 0)),
@@ -1247,7 +1529,6 @@ def api_state():
     except Exception:
         model_info.update(ready=False,last_metrics={},blocked_reason='Modelo não validado')
 
-    risk_state = _read_json_safe(RISK_STATE_JSON)
     active_state = active_state_pre  # já lido acima para session_start
     active_contract = active_state.get("active_contract")
     if not isinstance(active_contract, dict):
@@ -1262,7 +1543,21 @@ def api_state():
             pass
 
     return jsonify({
-        "bot": {"running": running, "pid": pid, "uptime_sec": uptime_sec},
+        "bot": {
+            "running": running,
+            "pid": pid,
+            "uptime_sec": uptime_sec,
+            "status": bot_status.get("status", "running" if running else "idle"),
+            "started_at": bot_status.get("started_at"),
+            "stopped_at": bot_status.get("stopped_at"),
+            "last_tick_at": bot_status.get("last_tick_at"),
+            "last_loop_at": bot_status.get("last_loop_at"),
+            "last_error": bot_status.get("last_error", ""),
+            "returncode": bot_status.get("returncode"),
+            "last_decision": bot_status.get("last_decision", {}),
+            "decision_counts": bot_status.get("decision_counts", {}),
+            "no_entry_for_sec": bot_status.get("no_entry_for_sec", 0),
+        },
         "summary": summary,
         "indicators": live_indicators,
         "model": model_info,
@@ -1281,14 +1576,19 @@ def api_contract_active():
     if not isinstance(ac, dict) or not ac.get("has_active"):
         return jsonify({"has_active": False})
 
+    buy_timestamp = float(ac.get("buy_timestamp", 0.0) or 0.0)
+    entry_epoch = int(ac.get("entry_epoch", 0) or 0)
+    if entry_epoch <= 0 and buy_timestamp > 0:
+        entry_epoch = int(buy_timestamp)
+
     payload = {
         "has_active": True,
         "contract_id": str(ac.get("contract_id", "")),
         "symbol": str(ac.get("symbol", state.get("symbol", ""))),
         "direction": str(ac.get("direction", "")),
         "duration": int(ac.get("duration", 0) or 0),
-        "buy_timestamp": float(ac.get("buy_timestamp", 0.0) or 0.0),
-        "entry_epoch": int(ac.get("entry_epoch", 0) or 0),
+        "buy_timestamp": buy_timestamp,
+        "entry_epoch": entry_epoch,
         "entry_price": float(ac.get("entry_price", 0.0) or 0.0),
     }
     return jsonify(payload)
@@ -1431,7 +1731,7 @@ def api_system():
 
 @app.route("/api/stats")
 def api_stats():
-    df = _read_csv_safe(OPERATIONS_CSV)
+    df = _contracts_frame(limit=500)
     if df.empty:
         return jsonify({})
 

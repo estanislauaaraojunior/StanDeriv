@@ -19,7 +19,7 @@ DEMO_MODE = True
 
 # Limites comuns à simulação, conta demo e conta real.
 MIN_NET_PAYOUT = 0.60
-MIN_APPROVAL_WIN_RATE = 0.60
+MIN_APPROVAL_WIN_RATE = 0.45
 
 
 # ----- Conexão -----
@@ -322,7 +322,7 @@ USE_AI_MODEL = True
 
 AI_MODEL_PATH = "model.pkl"
 
-AI_CONFIDENCE_MIN = 0.55
+AI_CONFIDENCE_MIN = MIN_APPROVAL_WIN_RATE
 
 
 # ----- Ponderação IA vs técnico -----

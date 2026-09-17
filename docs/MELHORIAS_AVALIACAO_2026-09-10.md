@@ -114,3 +114,16 @@ resposta válida e a seleção causal dessas cotações foram verificadas nos te
 - Validação: 341 testes passaram em cópia isolada, compilação dos módulos e
   `git diff --check`. Reinício em conta demo autenticada, sem contrato pendente,
   com reutilização dos dados e símbolo inicial `1HZ25V`.
+
+## Atualização de política — 2026-09-16
+
+- Por solicitação operacional posterior, `MIN_APPROVAL_WIN_RATE` passou para
+  `0.45`: a estratégia completa precisa ter pelo menos um contrato e taxa de
+  acerto observada de 45% ou mais para ser elegível.
+- AUC abaixo de 0,50 deixou de bloquear sozinha a aprovação; passa a ser
+  registrada como alerta diagnóstico de probabilidade fraca. Os filtros de
+  payout líquido mínimo, confiança, retorno esperado não negativo, risco,
+  modo demo/real e comparação com champion permanecem separados.
+- `AI_CONFIDENCE_MIN` foi alinhado ao piso de aprovação de 45% para não bloquear
+  candidatos aprovados antes da consulta econômica da proposta. A compra ainda
+  exige payout mínimo e retorno esperado não negativo pela cotação recebida.

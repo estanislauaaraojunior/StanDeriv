@@ -16,6 +16,7 @@ Fluxo de uma operação:
 """
 
 import json
+import os
 import threading
 import time
 from collections import deque
@@ -60,6 +61,7 @@ import indicators as ind
 
 
 _STATE_JSON = Path(__file__).resolve().parent / "state.json"
+_BOT_STATUS_JSON = Path(__file__).resolve().parent / "bot_status.json"
 
 
 class DerivBot:
@@ -88,6 +90,7 @@ class DerivBot:
         self.auth_mode = auth_mode
         self.account_id = account_id
         self._next_ws_url = initial_ws_url
+        self._last_status_write: float = 0.0
 
         self._ws_url = (
             f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
@@ -135,6 +138,8 @@ class DerivBot:
 
         self._last_tick_price: float = 0.0
         self._last_tick_epoch: int = 0
+        self._last_contract_attempt_epoch: int = 0
+        self._decision_history: deque = deque(maxlen=120)
 
         # P1: Timestamp da última proposal enviada.
         self._pending_timestamp: float = 0.0
@@ -228,6 +233,172 @@ class DerivBot:
             buy_req_id=self._buy_req_id, account_key=self.risk_manager._account_key)
         write_json_atomic(_STATE_JSON,state)
 
+    def _write_runtime_status(self, *, tick_epoch: int = 0, force: bool = False, **updates) -> None:
+        now = time.time()
+        if not force and now - self._last_status_write < 5:
+            return
+        self._last_status_write = now
+        try:
+            status = json.loads(_BOT_STATUS_JSON.read_text()) if _BOT_STATUS_JSON.exists() else {}
+        except Exception:
+            status = {}
+        status.update(
+            status="running",
+            running=True,
+            pid=os.getpid(),
+            symbol=self.symbol,
+            last_loop_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.gmtime(now)),
+        )
+        if tick_epoch:
+            status["last_tick_epoch"] = int(tick_epoch)
+            status["last_tick_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.gmtime(int(tick_epoch)))
+        status.update(updates)
+        try:
+            write_json_atomic(_BOT_STATUS_JSON, status)
+        except Exception:
+            pass
+
+    def _decision_counts(self) -> dict:
+        counts: dict[str, int] = {}
+        for item in self._decision_history:
+            reason = str(item.get("reason", "unknown") or "unknown")
+            counts[reason] = counts.get(reason, 0) + 1
+        return counts
+
+    def _record_decision(
+        self,
+        *,
+        reason: str,
+        signal: Optional[str] = None,
+        indicators: Optional[dict] = None,
+        tick_epoch: int = 0,
+        force: bool = True,
+    ) -> None:
+        event = {
+            "epoch": int(tick_epoch or self._last_tick_epoch or time.time()),
+            "symbol": self.symbol,
+            "reason": reason,
+            "signal": signal,
+        }
+        if indicators:
+            event["indicators"] = {
+                key: indicators.get(key)
+                for key in (
+                    "ema9",
+                    "ema21",
+                    "rsi",
+                    "adx",
+                    "macd_hist",
+                    "ai_direction",
+                    "ai_confidence",
+                    "ai_score",
+                    "win_probability",
+                    "tech_score",
+                    "model_id",
+                    "candle_pattern_block",
+                    "ai_block",
+                )
+                if key in indicators
+            }
+        self._decision_history.append(event)
+        no_entry_for = 0
+        if self._last_contract_attempt_epoch:
+            no_entry_for = max(0, event["epoch"] - self._last_contract_attempt_epoch)
+        elif self._entry_epoch:
+            no_entry_for = max(0, event["epoch"] - self._entry_epoch)
+        self._write_runtime_status(
+            tick_epoch=event["epoch"],
+            force=force,
+            event="decision",
+            last_decision=event,
+            decision_counts=self._decision_counts(),
+            no_entry_for_sec=no_entry_for,
+        )
+
+    def _record_api_error(
+        self,
+        *,
+        error: dict,
+        phase: str,
+        req_id=None,
+    ) -> None:
+        code = str(error.get("code") or "UnknownError")
+        message = str(error.get("message") or "Erro desconhecido")
+        details = {
+            "code": code,
+            "message": message,
+            "phase": phase,
+            "req_id": req_id,
+            "symbol": self.symbol,
+            "direction": self._pending_direction,
+            "duration": self._pending_duration,
+            "duration_unit": config.DURATION_UNIT,
+        }
+        print(
+            "[BOT] Requisição rejeitada pela API "
+            f"(fase={phase}, req_id={req_id}, code={code}): {message}"
+        )
+        self._write_runtime_status(
+            tick_epoch=self._last_tick_epoch,
+            force=True,
+            event="api_error",
+            last_api_error=details,
+        )
+
+    def _handle_api_error(self, data: dict) -> None:
+        error = data.get("error") or {}
+        req_id = data.get("req_id")
+        phase = self._phase
+        self._record_api_error(error=error, phase=phase, req_id=req_id)
+
+        if phase == "proposal" and req_id == self._proposal_req_id:
+            from payout_quotes import market_unavailable
+
+            if market_unavailable(error):
+                callback = getattr(self, "on_market_unavailable", None)
+                if callback:
+                    callback(self.symbol)
+            self._record_decision(
+                reason="proposal_rejected_by_api",
+                signal=self._pending_direction or None,
+                indicators=self._pending_indicators,
+                tick_epoch=self._last_tick_epoch,
+            )
+            self._clear_pending()
+            return
+
+        if phase == "buy" and req_id == self._buy_req_id:
+            # Resultado financeiro incerto: não repetir a compra automaticamente.
+            self._phase = "reconciling"
+            self._set_active_contract_state()
+            self._record_decision(
+                reason="buy_rejected_or_uncertain",
+                signal=self._pending_direction or None,
+                indicators=self._pending_indicators,
+                tick_epoch=self._last_tick_epoch,
+            )
+            return
+
+        self._record_decision(
+            reason="api_error_unmatched",
+            tick_epoch=self._last_tick_epoch,
+        )
+
+    def _decision_reason(self, signal: Optional[str], indicators: dict) -> str:
+        if signal in ("BUY", "SELL"):
+            return "signal_ready"
+        if indicators.get("candle_pattern_block"):
+            return "candle_conflict"
+        if indicators.get("ai_block"):
+            return "ai_disagreement_or_low_confidence"
+        if indicators.get("adx_falling"):
+            return "adx_falling"
+        if indicators:
+            if indicators.get("ai_confidence") is None and indicators.get("model_id"):
+                return "missing_ai_confidence"
+            return "no_technical_signal"
+        return "insufficient_indicator_data"
+
     def _clear_pending(self):
         self._in_trade=False
         self._phase='idle'
@@ -265,8 +436,10 @@ class DerivBot:
             f"(1% do saldo)"
         )
         print(f"{'=' * 55}\n")
+        self._write_runtime_status(force=True, event="started")
 
         while not self._market_switch_ready():
+            self._write_runtime_status(event="loop")
             try:
                 ws = websocket.WebSocketApp(
                     self._get_ws_url(),
@@ -337,6 +510,7 @@ class DerivBot:
 
     def _on_open(self, ws) -> None:
         print("[BOT] Conectado à Deriv WebSocket API")
+        self._write_runtime_status(force=True, event="ws_open")
 
         if self._uses_bearer_auth():
             accounts=deriv_session.get_options_accounts(app_id=APP_ID,token=TOKEN)
@@ -366,19 +540,7 @@ class DerivBot:
             return
 
         if "error" in data:
-            req_id=data.get('req_id')
-            if self._phase=='proposal' and req_id==self._proposal_req_id:
-                from payout_quotes import market_unavailable
-                if market_unavailable(data['error']):
-                    callback = getattr(self, 'on_market_unavailable', None)
-                    if callback:
-                        callback(self.symbol)
-                self._clear_pending()
-            elif self._phase=='buy' and req_id==self._buy_req_id:
-                # Resultado financeiro incerto: não repetir a compra automaticamente.
-                self._phase='reconciling'
-                self._set_active_contract_state()
-            print('[BOT] Requisição rejeitada pela API; estado correlacionado preservado')
+            self._handle_api_error(data)
             return
 
         msg_type = data.get("msg_type", "")
@@ -548,6 +710,7 @@ class DerivBot:
 
         # P9: reiniciar watchdog a cada tick.
         self._reset_watchdog()
+        self._write_runtime_status(tick_epoch=epoch, event="tick")
 
         if self._phase=='proposal' and time.time()-self._pending_timestamp>PROPOSAL_TIMEOUT_SEC:
             self._clear_pending()
@@ -631,9 +794,19 @@ class DerivBot:
 
         # Não abrir nova ordem se há contrato ativo.
         if self._in_trade:
+            if self._new_candle_closed:
+                self._record_decision(
+                    reason="active_contract",
+                    tick_epoch=self._last_tick_epoch,
+                )
             return
 
         if not self.risk_manager.can_trade():
+            if self._new_candle_closed:
+                self._record_decision(
+                    reason="risk_block",
+                    tick_epoch=self._last_tick_epoch,
+                )
             return
 
         # Cadência: só avaliar sinal quando nova vela fecha.
@@ -673,6 +846,10 @@ class DerivBot:
                     flush=True,
                 )
             else:
+                self._record_decision(
+                    reason="cadence",
+                    tick_epoch=self._last_tick_epoch,
+                )
                 print(
                     f"\r[BOT] {price:.4f} | "
                     f"Próxima entrada em {remain} vela(s)   ",
@@ -706,31 +883,44 @@ class DerivBot:
             signal,
         )
 
+        self._record_decision(
+            reason=self._decision_reason(signal, indicators),
+            signal=signal,
+            indicators=indicators,
+            tick_epoch=self._last_tick_epoch,
+        )
+
         if signal in ("BUY", "SELL"):
-            self._send_proposal(
+            sent = self._send_proposal(
                 ws,
                 signal,
                 indicators,
             )
-
-            self._candles_since_last_entry = 0
+            if sent:
+                self._candles_since_last_entry = 0
 
     def _send_proposal(self,ws,direction,indicators):
         if self._market_switch_pending() or self._in_trade or not self._auth_verified or not self.risk_manager.can_trade():
-            return
+            self._record_decision(reason="proposal_precheck_block", signal=direction, indicators=indicators)
+            return False
         if direction not in ('BUY','SELL'):
-            return
+            self._record_decision(reason="invalid_direction", signal=direction, indicators=indicators)
+            return False
         if time.time()-self._last_tick_epoch>MAX_TICK_GAP_SEC:
-            return
+            self._record_decision(reason="stale_tick", signal=direction, indicators=indicators)
+            return False
         duration=ai_predictor.predict_duration(list(self._candle_closes))
         if duration!=config.DURATION or DURATION_UNIT!=config.DURATION_UNIT:
-            return
+            self._record_decision(reason="duration_mismatch", signal=direction, indicators=indicators)
+            return False
         if not indicators.get('model_id'):
-            return
+            self._record_decision(reason="missing_model_id", signal=direction, indicators=indicators)
+            return False
         probability=indicators.get('win_probability')
         # Sem probabilidade calibrada não existe justificativa de compra pelo payout.
         if probability is None or not math.isfinite(probability) or not config.AI_CONFIDENCE_MIN<probability<=1:
-            return
+            self._record_decision(reason="invalid_win_probability", signal=direction, indicators=indicators)
+            return False
         self._pending_payout=self._pending_buy_price=None
         self._pending_direction=direction
         self._pending_stake=self.risk_manager.get_stake()
@@ -747,6 +937,9 @@ class DerivBot:
                       currency=CURRENCY,duration=duration,duration_unit=DURATION_UNIT,req_id=self._proposal_req_id)
         proposal['underlying_symbol' if self._uses_bearer_auth() else 'symbol']=self.symbol
         ws.send(json.dumps(proposal))
+        self._last_contract_attempt_epoch = self._last_tick_epoch
+        self._record_decision(reason="proposal_sent", signal=direction, indicators=indicators)
+        return True
 
     def _handle_proposal(self,ws,proposal,req_id=None):
         if self._phase!='proposal' or req_id is None or req_id!=self._proposal_req_id:
@@ -799,10 +992,16 @@ class DerivBot:
         with self._state_lock:
             if str(contract.get('contract_id',''))!=self._open_contract_id:
                 return
-            for key,attr,cast in [('entry_spot','_entry_price',float),('date_start','_entry_epoch',int)]:
+            for key,attr,cast in [
+                ('entry_spot','_entry_price',float),
+                ('entry_tick','_entry_price',float),
+                ('date_start','_entry_epoch',int),
+                ('entry_tick_time','_entry_epoch',int),
+            ]:
                 if contract.get(key) is not None:
                     setattr(self,attr,cast(contract[key]))
             if contract.get('is_sold') not in (1, True, '1'):
+                self._set_active_contract_state()
                 return
             try:
                 profit=float(contract['profit'])
