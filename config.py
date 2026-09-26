@@ -303,6 +303,20 @@ ENTRY_TICK_INTERVAL = 100
 ENTRY_CANDLE_INTERVAL = 1
 
 
+# ----- Troca de ativo por falta de oportunidade -----
+# Se > 0, troca o ativo após N avaliações fechadas sem condição de entrada.
+# 0 desativa a troca automática para evitar reiniciar coleta/treino cedo demais.
+UNFAVORABLE_SYMBOL_SWITCH_DECISIONS = 5
+
+UNFAVORABLE_SYMBOL_SWITCH_REASONS = {
+    "no_technical_signal",
+    "ai_disagreement_or_low_confidence",
+    "candle_conflict",
+    "adx_falling",
+    "missing_ai_confidence",
+}
+
+
 # ----- Timeout de operações -----
 PROPOSAL_TIMEOUT_SEC = 10
 

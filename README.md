@@ -347,6 +347,7 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `AI_MODEL_WEIGHT` | 0.45 | Peso do sinal da IA no score final |
 | `AI_SCORE_MIN` | 0.30 | Score mínimo ponderado (IA + técnico) para abrir operação |
 | `SIGNAL_SCORE_MIN` | 0.05 | Limiar mínimo do score técnico ponderado |
+| `UNFAVORABLE_SYMBOL_SWITCH_DECISIONS` | 5 | Quantidade de avaliações desfavoráveis antes de trocar ativo; `0` desativa a troca automática |
 | `CANDLE_TIMEFRAME_SEC` | 60 | Duração de cada vela de tempo em segundos |
 | `PRICE_BUFFER_SIZE` | 500 | Ticks mantidos em memória para indicadores |
 | `ENTRY_CANDLE_INTERVAL` | 1 | Intervalo mínimo entre entradas (em velas) |
