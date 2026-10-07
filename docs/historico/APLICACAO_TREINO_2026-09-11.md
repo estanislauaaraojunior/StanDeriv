@@ -49,9 +49,9 @@ Comando executado na cópia atual do código:
 ```
 
 O destino desse comando já existe; uma nova execução precisa de outro diretório.
-Relatório: [comparison.json](../training_reports/recommendations-2026-09-11/comparison.json).
-Os artefatos de experimento são ignorados pelo Git, mas permanecem disponíveis
-localmente nesse diretório.
+O comando grava `comparison.json` em `training_reports/recommendations-2026-09-11/`.
+Esse diretório de saída não faz parte dos documentos versionados; os resultados
+permanecem descritos neste registro e nas evidências arquivadas da pesquisa.
 
 Dataset SHA-256:
 `42d5f5ab49c57440a5c09729b89d599358f7aa023bf5dad7f883fe5663863fc2`.

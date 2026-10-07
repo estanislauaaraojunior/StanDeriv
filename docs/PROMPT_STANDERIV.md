@@ -1,6 +1,12 @@
 # STANDERIV — PROMPT MESTRE DE DESENVOLVIMENTO v4.0
 ### (Consolidação das versões: prompt base, v3.0 e revisão autônoma)
 
+> **Registro histórico:** este prompt descreve decisões e componentes de uma
+> etapa anterior do projeto. `transformer_model.py`, TFT operacional, Stacking
+> e modelos de duração não fazem parte do fluxo v2 atual. Para implementação e
+> responsabilidades vigentes, priorize `README.md`, `ARCHITECTURE.md`,
+> `docs/GUIA_TECNICO.md`, o código e os testes.
+
 ---
 
 ## 1. IDIOMA
@@ -135,7 +141,7 @@ collector.py → ticks.csv → candles temporais
  ↓
 indicators.py → feature_engine.py → dataset_builder.py
  ↓
-train_model.py (modelos clássicos + TFT + duration model)
+train_model.py (candidatos clássicos, calibração e avaliação temporal)
  ↓
 ai_predictor.py → strategy.py → risk_manager.py → executor.py → Deriv
  ↓
@@ -168,15 +174,14 @@ necessidade comprovada.
 
 | Módulo | Responsabilidade |
 |---|---|
-| `config.py` | Configuração central: mercado, símbolo, timeframe, duração, risco, thresholds, IA, TFT, champion-challenger, retreinamento. Credenciais via `.env`. `DEMO_MODE=True` é o comportamento seguro padrão. |
+| `config.py` | Configuração central: mercado, símbolo, timeframe, duração, risco, thresholds, IA, champion-challenger e retreinamento. Credenciais via `.env`. `DEMO_MODE=True` é o comportamento seguro padrão. |
 | `collector.py` | Conexão com feed, coleta de ticks, validação, anti-spike, persistência em `ticks.csv`, recuperação de conexão. |
 | `deriv_session.py` | Camada de autenticação e sessão Deriv. Preserva os dois mecanismos de auth existentes. |
 | `indicators.py` | Indicadores técnicos, transformação de ticks em candles, Price Action, padrões de vela. Evitar duplicar esses cálculos em outros módulos. |
 | `feature_engine.py` | **Fonte canônica única** das 27 features (16 técnicas + 11 de Price Action). Treino e inferência devem usar exatamente a mesma definição. |
 | `dataset_builder.py` | Leitura de ticks, filtragem por símbolo, construção temporal de candles, geração de features e target. Zero `data leakage`: dados futuros nunca podem influenciar features do passado. |
-| `train_model.py` | Treino de RandomForest, XGBoost, Stacking; validação temporal; duração dinâmica; promoção champion-challenger; persistência de métricas. |
-| `transformer_model.py` | Modelo temporal (TFT) em PyTorch, componente opcional do ensemble. Não aumentar complexidade sem benefício demonstrado em validação temporal e backtesting. |
-| `ai_predictor.py` | Inferência em tempo real combinando modelo clássico, TFT, confiança e duração dinâmica. Mesma ordem/semântica de features do treino. |
+| `train_model.py` | Treino de candidatos clássicos; calibração e validação temporal; promoção champion-challenger; persistência de métricas. |
+| `ai_predictor.py` | Inferência do bundle clássico aprovado para ativo, janela OHLC e vencimento, usando a mesma ordem/semântica de features do treino. |
 | `strategy.py` | Geração de sinais BUY/SELL/nenhum, filtros técnicos, ADX adaptativo, Price Action, integração com IA. |
 | `risk_manager.py` | Stake, stop diário, take profit, perdas consecutivas, pausas, persistência de estado, detecção de drift. Nunca tornar defaults mais agressivos automaticamente. |
 | `executor.py` | Execução via WebSocket: proposals, compra de contrato, acompanhamento, resultado, duração, saldo, reconexão, heartbeat. **Alterações aqui são de alto impacto.** |

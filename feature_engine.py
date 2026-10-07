@@ -5,10 +5,9 @@ Consolida a lógica de _extract_features / _compute_feature_map que estava
 duplicada em dataset_builder.py e ai_predictor.py.
 
 Uso:
-    from feature_engine import compute_feature_map, extract_feature_vector
+    from feature_engine import compute_feature_map
 
-    fm = compute_feature_map(prices)           # -> dict | None
-    vec = extract_feature_vector(prices, FEATURES)  # -> list[float] | None
+    feature_map = compute_feature_map(prices)  # -> dict | None
 """
 
 from typing import Optional

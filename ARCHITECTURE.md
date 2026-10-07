@@ -1,12 +1,73 @@
-# StanDeriv — Arquitetura Completa
+# StanDeriv: Arquitetura Atual
 
-> **Nota de manutenção:** este documento veio da integração de documentação
-> remota e contém partes históricas da arquitetura pré-contratos v2. Para o
-> comportamento operacional atual, priorize o `README.md`,
-> `docs/CORRECOES_CONTRATOS_2026-09-08.md`, `docs/GUIA_TECNICO.md`, o código
-> e os testes. Modelos legados, `ticks.csv`/`dataset.csv`, Stacking/TFT
-> operacional e métricas esperadas descritas abaixo não devem ser tratados como
-> autorização para operar ou promover modelos sem validação v2.
+## Visão geral
+
+O repositório mantém módulos Python executáveis na raiz. Essa organização
+preserva os entrypoints CLI, os imports usados pelos scripts e os caminhos de
+persistência derivados de `__file__`. `dashboard/` contém o servidor Flask e a
+interface; `tests/` contém a suíte; `docs/historico/` guarda relatórios datados,
+evidências e documentação arquitetural anterior.
+
+```text
+Deriv WebSocket
+      |
+collector.py -> ticks_v2.csv -> dataset_builder.py
+                                  |
+                         indicators.py + feature_engine.py
+                                  |
+                    train_model.py + model_contract.py
+                                  |
+pipeline.py -> strategy.py <- ai_predictor.py
+                    |             |
+                executor.py <- risk_manager.py
+                    |
+               operacoes_v2.csv
+
+dashboard/server.py -> dashboard/app.js + index.html + style.css
+```
+
+O diagrama representa responsabilidades, não uma ordem estrita de chamadas.
+`pipeline.py` coordena coleta, avaliação/treino e o início condicionado da
+execução. `bot.py` é um entrypoint alternativo para execução; `collector.py`
+também pode ser executado separadamente.
+
+## Responsabilidades
+
+| Área | Módulos e responsabilidade |
+|---|---|
+| Configuração e sessão | `config.py` concentra parâmetros; `deriv_session.py` gerencia autenticação Deriv legada e Bearer/PAT. |
+| Dados e features | `collector.py` coleta; `market_data.py` valida e persiste; `indicators.py` calcula indicadores e Price Action; `feature_engine.py` calcula o mapa canônico de 27 features; `dataset_builder.py` constrói datasets temporais. |
+| Modelos | `train_model.py`, `training_evaluation.py` e `training_experiments.py` treinam/avaliam candidatos; `model_contract.py` valida compatibilidade e persistência de bundles. |
+| Decisão e execução | `ai_predictor.py` faz inferência; `strategy.py` combina sinais; `risk_manager.py` controla limites persistentes; `executor.py` acompanha proposals e contratos; `pipeline.py` orquestra o fluxo. |
+| Simulação e interface | `backtest.py` executa simulações offline; `dashboard/server.py` serve API e frontend para monitoramento e ações autorizadas. |
+| Verificação | `tests/` cobre contratos, estratégia, risco, pipeline, execução, treino e endpoints do dashboard. |
+
+## Dados e limites
+
+Os contratos atuais usam arquivos v2, como `ticks_v2.csv`, `dataset_v2.csv` e
+`operacoes_v2.csv`, além de metadados e estado operacional. Caminhos de estado
+permanecem junto aos entrypoints conforme o código atual; movê-los requer uma
+mudança explícita de compatibilidade e validação, não apenas reorganização de
+pastas.
+
+`transformer_model.py` não faz parte da implementação atual. Menções a esse
+módulo, TFT ou Stacking foram preservadas somente em
+[documentação arquitetural antiga](docs/historico/ARQUITETURA_ANTIGA.md). Modelos
+legados não autorizam promoção nem operação. Backtests são offline e não
+substituem validação operacional.
+
+Para instruções de manutenção, consulte [AGENTS.md](AGENTS.md), o
+[guia técnico](docs/GUIA_TECNICO.md) e o [README](README.md). Mudanças em
+autenticação, risco, execução ou persistência exigem cobertura direcionada e
+preservação dos arquivos operacionais.# StanDeriv — Arquitetura Completa
+
+> **Documento histórico:** este arquivo preserva uma arquitetura anterior e
+> contém componentes, artefatos e fluxos que já não correspondem ao código atual.
+> Não use as descrições de TFT/Stacking, modelos, métricas ou dados abaixo como
+> contrato operacional. Para o estado vigente, consulte `README.md`,
+> `docs/CORRECOES_CONTRATOS_2026-09-08.md`, `docs/GUIA_TECNICO.md`, o código e
+> os testes. O módulo `transformer_model.py` foi removido; referências a ele
+> neste registro são exclusivamente históricas.
 
 ## Visão Geral do Sistema
 

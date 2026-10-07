@@ -2,7 +2,7 @@
 
 Bot de contratos CALL/PUT para a Deriv, com análise técnica, Price Action, modelos calibrados e execução com controle persistente de risco.
 
-A manutenção de contratos v2 alterou o esquema dos dados e a validação dos modelos. Leia [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md) antes de iniciar. Modelos legados não autorizam novas entradas; sem modelo compatível, o pipeline mantém somente a coleta. [Auditoria das perdas](docs/ANALISE_LOSSES_2026-09-08.md).
+A manutenção de contratos v2 alterou o esquema dos dados e a validação dos modelos. Leia [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md) antes de iniciar. Modelos legados não autorizam novas entradas; sem modelo compatível, o pipeline mantém somente a coleta. A [auditoria das perdas](docs/historico/ANALISE_LOSSES_2026-09-08.md) é um registro histórico.
 
 ## Instruções para assistentes de IA
 
@@ -56,6 +56,15 @@ Para detalhes técnicos complementares da organização do sistema, veja
 [ARCHITECTURE.md](ARCHITECTURE.md). Em caso de divergência, o contrato v2
 descrito neste README, nos testes e em `docs/CORRECOES_CONTRATOS_2026-09-08.md`
 prevalece sobre descrições históricas.
+
+## Estrutura do repositório
+
+Os módulos Python executáveis permanecem na raiz para preservar os comandos CLI,
+os imports legados e os caminhos de dados calculados a partir de `__file__`.
+`dashboard/` reúne a interface e o servidor Flask; `tests/` contém a suíte; e
+`docs/historico/` reúne relatórios datados e evidências de pesquisa. Os guias e
+instruções vigentes permanecem diretamente em `docs/`. Arquivos de dados,
+modelos e estado operacional não foram movidos.
 
 ## Requisitos
 
@@ -181,7 +190,7 @@ bot ao vivo estiver parado. Os relatórios ficam isolados por execução em
 | `indicators.py` | Indicadores técnicos puros (EMA, RSI, MACD, ADX, Bollinger, Momentum) + Price Action (estrutura de mercado, S/R, supply/demand, FVG) + detecção de 6 padrões de vela |
 | `market_data.py` | Leitura explícita, recuperação não destrutiva, conflitos e proveniência |
 | `model_contract.py` | Contrato temporal, compatibilidade de modelo, payout e persistência atômica |
-| `feature_engine.py` | Fonte única de features: consolida `compute_feature_map` e `extract_feature_vector` (usados por `dataset_builder`, `executor` e `ai_predictor`) |
+| `feature_engine.py` | Fonte única para calcular o mapa das 27 features usado pelo treino e pela inferência |
 | `dataset_builder.py` | Extrai features de ticks_v2.csv e gera dataset_v2.csv para treino |
 | `train_model.py` | Treina candidatos RF/XGB com calibração e avaliação temporal separadas |
 | `ai_predictor.py` | Inferência de bundle aprovado para ativo, OHLC e vencimento |
@@ -189,7 +198,6 @@ bot ao vivo estiver parado. Os relatórios ficam isolados por execução em
 | `executor.py` | Cliente WebSocket da Deriv, execução de ordens, notificações de velas |
 | `risk_manager.py` | Gestão de risco: sizing, stop loss/take profit diário, pausa escalável por losses, detecção de drift |
 | `pipeline.py` | Orquestrador: coleta, trend scanning, treino automático, execução e re-treino periódico |
-| `transformer_model.py` | Implementação legada do TFT, fora do bundle v2 operacional |
 | `collector.py` | Coleta contínua de ticks via WebSocket com filtro anti-spike |
 | `backtest.py` | Simulação offline de sinais, duração, payout, custos, risco e drawdown, com relatórios JSON/CSV |
 | `dashboard/` | Interface web com Flask (server.py), autenticação por token e frontend (HTML/JS/CSS) |
@@ -242,7 +250,7 @@ O conjunto operacional continua com 27 features. O experimento de contexto tempo
   --output /tmp/feature-comparison.json --symbol frxUSDCAD
 ```
 
-O dataset deve ser reconstruído com `dataset_builder.py` para conter as novas colunas. Relatórios de treino ficam em `training_reports/`. Veja [a implementação e a avaliação de 10/09](docs/MELHORIAS_AVALIACAO_2026-09-10.md).
+O dataset deve ser reconstruído com `dataset_builder.py` para conter as novas colunas. Relatórios de treino ficam em `training_reports/`. Veja [a implementação e a avaliação de 10/09](docs/historico/MELHORIAS_AVALIACAO_2026-09-10.md).
 
 O treinador também compara regressão logística, versão balanceada e frequência de classes, além das árvores
 RandomForest/ExtraTrees/HistGradientBoosting/XGBoost. Cada estimador é avaliado com calibração multinomial e
@@ -269,7 +277,7 @@ confiança, AUC por direção, ganho sobre frequência de classes e curvas de pr
 cobertura e retorno para payouts fixos de 60%, 70% e 85%. Essas curvas não ajustam
 limiares no teste. O fuso da avaliação é registrado separadamente como
 `evaluation_risk_timezone=UTC`; `risk_timezone` continua descrevendo o calendário
-local da operação. Veja [a aplicação e seus resultados](docs/APLICACAO_TREINO_2026-09-11.md).
+local da operação. Veja [a aplicação e seus resultados](docs/historico/APLICACAO_TREINO_2026-09-11.md).
 
 Para medir se as 27 features ajudam ou se alguma família atrapalha, use a
 ablação offline. Ela compara baseline, remoção de Price Action, Price Action
@@ -402,7 +410,7 @@ Os itens abaixo registram versões passadas; o comportamento atual está descrit
 - Filtro PA na estratégia (bloqueia sinais contra estrutura)
 - Filtro ADX rising (bloqueia quando tendência enfraquece)
 - Cadência adaptativa (aumenta intervalo após losses)
-- Discordância TFT/Clássico → não opera (sem penalidade)
+- Modelo incompatível, dados insuficientes ou sinal divergente → não opera
 - Target com threshold de ruído (elimina variações insignificantes)
 - Duração por heurística de volatilidade (sem lookahead bias)
 - Log em modo append (preserva histórico entre reinícios)
