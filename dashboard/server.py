@@ -32,7 +32,7 @@ import pandas as pd
 import websocket
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from model_contract import FEATURE_WINDOW, minimum_history_candles
+from model_contract import minimum_history_candles
 
 try:
     import psutil

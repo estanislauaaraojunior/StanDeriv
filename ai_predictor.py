@@ -1,7 +1,6 @@
 """Inferência de bundle validado para o ativo, OHLC e vencimento configurados."""
 import threading
 import math
-import numpy as np
 import config
 from feature_engine import FEATURES as _FEATURES, compute_feature_map
 from model_contract import FEATURE_WINDOW, load_validated_bundle
@@ -64,19 +63,6 @@ def _compute_feature_map(prices, candles = None):
 def _extract_features(prices, candles = None):
     fm = compute_feature_map(prices, candles)
     return None if fm is None else [fm[f] for f in _FEATURES]
-
-
-def _extract_features_sequence(prices, seq_len, candles = None):
-    """Janelas terminam na última vela; cada ponto usa exatamente FEATURE_WINDOW."""
-    if candles is None or len(prices) < FEATURE_WINDOW + seq_len - 1:
-        return None
-    seq = []
-    for end in range(len(prices) - seq_len + 1, len(prices) + 1):
-        values = _extract_features(prices[end - FEATURE_WINDOW: end], candles[end - FEATURE_WINDOW: end])
-        if values is None:
-            return None
-        seq.append(values)
-    return np.asarray([seq], dtype = np.float32)
 
 
 def predict(prices, candles = None):

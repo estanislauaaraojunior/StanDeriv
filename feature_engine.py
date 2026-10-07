@@ -139,18 +139,6 @@ def compute_feature_map(prices: list, candles: list = None) -> Optional[dict]:
     }
 
 
-def extract_feature_vector(prices: list, feature_order: list, candles: list = None) -> Optional[list]:
-    """
-    Extrai features de uma lista de preços como vetor ordenado.
-
-    Retorna list[float] na ordem de feature_order, ou None se dados insuficientes.
-    """
-    fm = compute_feature_map(prices, candles)
-    if fm is None:
-        return None
-    return [fm.get(f, 0.0) for f in feature_order]
-
-
 EXPERIMENTAL_FEATURES_VERSION = 'horizon_context_v1'
 EXPERIMENTAL_FEATURES = ['return_15m', 'return_30m', 'return_60m', 'volatility_30m',
                          'distance_ema9', 'distance_ema21', 'hour_sin', 'hour_cos']

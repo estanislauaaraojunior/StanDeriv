@@ -73,18 +73,15 @@ from config import (
     DURATION_MODEL_PATH,
     DURATION,
     DURATION_UNIT,
-    TARGET_LOOKFORWARD,
     MODEL_PROMOTION_MIN_AUC_DELTA,
     MODEL_PROMOTION_MAX_ACC_DROP,
     MODEL_PROMOTION_MAX_F1_DROP,
     DEMO_MODE,
     CANDLE_TIMEFRAME_SEC,
-    MIN_CANDLES,
     TICK_SPIKE_THRESHOLD,
     RETRAIN_EVAL_WINDOW,
     RETRAIN_WIN_RATE_TRIGGER,
     RETRAIN_CONFIDENCE_TRIGGER,
-    RETRAIN_NEW_TICKS_TRIGGER,
     RETRAIN_NEW_LABELS_TRIGGER,
     RETRAIN_MIN_INTERVAL_SEC,
     RETRAIN_MAX_INTERVAL_SEC,
@@ -97,8 +94,8 @@ from config import (
 
 from executor import DerivBot
 from risk_manager import RiskManager
-from market_data import ensure_header, append_record, read_records, canonicalize
-from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, compatible, usable,
+from market_data import ensure_header, append_record, read_records
+from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, usable,
                             load_validated_bundle, write_json_atomic,
                             acquire_execution_lock, minimum_history_candles,
                             minimum_training_rows)
@@ -757,21 +754,6 @@ def _scan_group(candidates: list) -> dict:
 
     return results
 
-
-def _best_from(results: dict) -> tuple:
-    """Retorna (melhor_símbolo, score)."""
-    if not results:
-        return "", 0.0
-
-    best = max(
-        results,
-        key=results.__getitem__,
-    )
-
-    return (
-        best,
-        results[best],
-    )
 
 
 def _scan_candidates() -> list:
@@ -2260,52 +2242,6 @@ def _count_labelable_contracts_for_training() -> int:
 # ─────────────────────────────────────────────────────────────────
 # FASES 3 e 4 — Dataset + treino
 # ─────────────────────────────────────────────────────────────────
-
-def _trim_ticks(
-    ticks_path: str,
-    max_ticks: int = 50000,
-) -> None:
-    """Limita o arquivo aos últimos max_ticks."""
-    import pandas as pd
-
-    if (
-        not os.path.exists(ticks_path)
-        or os.path.getsize(ticks_path) == 0
-    ):
-        return
-
-    try:
-        df = pd.read_csv(
-            ticks_path
-        )
-
-        if len(df) > max_ticks:
-            trimmed = (
-                len(df)
-                - max_ticks
-            )
-
-            df = df.sort_values('epoch').tail(
-                max_ticks
-            )
-
-            df.to_csv(
-                ticks_path,
-                index=False,
-            )
-
-            print(
-                f"[PIPELINE] Ticks trimados: "
-                f"{trimmed:,} removidos, "
-                f"{max_ticks:,} mantidos."
-            )
-
-    except Exception as exc:
-        print(
-            "[PIPELINE] Aviso: não foi possível "
-            f"trimar ticks: {exc}"
-        )
-
 
 def _load_latest_final_metrics():
     """Métricas do bundle ativo; None quando o bundle não existe ou não é utilizável."""

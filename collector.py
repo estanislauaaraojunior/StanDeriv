@@ -16,9 +16,7 @@ Pressione Ctrl+C para encerrar. A reconexão é automática (intervalo 5s).
 """
 
 import collections
-import csv
 import json
-import os
 import signal
 import sys
 import websocket

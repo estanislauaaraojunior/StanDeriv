@@ -234,7 +234,3 @@ def setup_bearer_options_session(
     )
     return {"account": account, "account_id": account_id, "ws_url": ws_url}
 
-
-def setup_pat_options_session(**kwargs) -> dict:
-    """Compatibilidade com chamadas antigas; use setup_bearer_options_session."""
-    return setup_bearer_options_session(**kwargs)

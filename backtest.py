@@ -17,7 +17,6 @@ import bisect
 import csv
 import hashlib
 import json
-import math
 from collections import Counter, deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -267,30 +266,6 @@ class HistoricalRiskManager:
             self.consecutive_losses = 0
 
         return balance_before, self.balance
-
-
-def _parse_tick_row(row: list[str]) -> Optional[Tick]:
-    if not row:
-        return None
-    first = row[0].strip().lower()
-    if first in {"epoch", "timestamp", "time"}:
-        return None
-    try:
-        if len(row) >= 4:
-            epoch = int(float(row[0]))
-            symbol = row[2].strip()
-            price = float(row[3])
-        elif len(row) >= 2:
-            epoch = int(float(row[0]))
-            symbol = ""
-            price = float(row[1])
-        else:
-            return None
-    except (TypeError, ValueError):
-        return None
-    if epoch <= 0 or not math.isfinite(price) or price <= 0:
-        return None
-    return Tick(epoch=epoch, price=price, symbol=symbol)
 
 
 def load_ticks(
