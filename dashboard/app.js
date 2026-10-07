@@ -51,19 +51,29 @@ const ENABLE_CANDLESTICK = false;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/** Formata número com `dec` casas decimais; retorna '—' para null/undefined. */
 function fmt(v, dec = 2)   { return v == null ? '—' : Number(v).toFixed(dec); }
+/** Formata valor como percentual com 2 casas (ex.: '12.34%'). */
 function fmtPct(v)          { return v == null ? '—' : fmt(v, 2) + '%'; }
+/** Formata valor em dólares com 2 casas (ex.: '$10.00'). */
 function fmtUsd(v)          { return v == null ? '—' : '$' + fmt(v, 2); }
+/** Converte segundos em texto 'Xh Ym Zs'; retorna '—' se vazio. */
 function fmtUptime(sec)     {
   if (!sec) return '—';
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
   return `${h}h ${m}m ${s}s`;
 }
+/** Atalho para document.getElementById. */
 function el(id)             { return document.getElementById(id); }
+/**
+ * Adiciona ou remove a classe `cls` do elemento conforme `flag`.
+ * @param {Element|string} elem Elemento ou id do elemento.
+ */
 function setClass(elem, cls, flag) {
   if (typeof elem === 'string') elem = el(elem);
   elem?.classList[flag ? 'add' : 'remove'](cls);
 }
+/** Escapa caracteres especiais de HTML para inserção segura em innerHTML. */
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -75,6 +85,10 @@ function escapeHtml(value) {
 
 // ─── Toast ──────────────────────────────────────────────────────────────────
 
+/**
+ * Exibe o toast com a mensagem por 3,5 s.
+ * @param {string} type Classe CSS adicional (ex.: 'ok', 'err').
+ */
 function showToast(msg, type = '') {
   const t = el('toast');
   t.textContent = msg;
@@ -148,6 +162,7 @@ const baseChartOptions = {
 
 // ─── Equity Chart ───────────────────────────────────────────────────────────
 
+/** Cria o gráfico de linha da curva de saldo em state.charts.equity. */
 function initEquityChart() {
   const ctx = el('equityChart').getContext('2d');
   state.charts.equity = new Chart(ctx, {
@@ -176,6 +191,7 @@ function initEquityChart() {
   });
 }
 
+/** Atualiza a curva de saldo com os pontos (timestamp, balance_after, result) recebidos. */
 function updateEquityChart(data) {
   const chart = state.charts.equity;
   if (!chart) return;
@@ -187,6 +203,7 @@ function updateEquityChart(data) {
 
 // ─── Price Chart ────────────────────────────────────────────────────────────
 
+/** Cria o gráfico de preço (candlestick se habilitado e disponível, senão linha) com datasets de EMA 9 e 21. */
 function initPriceChart() {
   const ctx = el('priceChart').getContext('2d');
   // Usa candlestick apenas se habilitado e com plugin disponível.
@@ -253,6 +270,7 @@ function initPriceChart() {
 }
 
 // Polling periódico de candles (para gráfico candlestick)
+/** Busca /api/candles e atualiza OHLC e EMAs do gráfico de preço (apenas no modo candlestick). */
 async function pollCandles() {
   try {
     const r = await fetch(API_BASE_URL + '/api/candles?n=100');
@@ -272,6 +290,7 @@ async function pollCandles() {
   } catch (_) {}
 }
 
+/** Atualiza o gráfico de preço em modo linha com os ticks (epoch, price) e suas EMAs 9/21. */
 function updatePriceChart(ticks) {
   const chart = state.charts.price;
   if (!chart || !ticks.length) return;
@@ -284,6 +303,7 @@ function updatePriceChart(ticks) {
   chart.update('none');
 }
 
+/** Cria o gráfico em tempo real do contrato (série de preço e marcador de entrada). */
 function initRtContractChart() {
   const canvas = el('rtContractChart');
   if (!canvas) return;
@@ -342,6 +362,10 @@ function initRtContractChart() {
 
 let _rtContractTimerInterval = null;
 
+/**
+ * Atualiza textos, direção, barra de progresso e cronômetro do contrato (reinicia o setInterval de 1 s).
+ * Sem `contract`, mostra o estado ocioso.
+ */
 function _setRtContractStatus(contract, entryTick, lastTick) {
   const statusEl = el('rtContractStatus');
   const metaEl   = el('rtContractMeta');
@@ -377,6 +401,7 @@ function _setRtContractStatus(contract, entryTick, lastTick) {
   const startEpoch  = Number(contract.buy_timestamp) || Number(contract.entry_epoch) || 0;
   const endEpoch    = Number(contract.exit_epoch) || 0;
 
+  /** Recalcula tempo decorrido/restante e redesenha timer, progresso e meta. */
   function _tick() {
     const now       = isClosed && endEpoch > 0 ? endEpoch : Date.now() / 1000;
     const elapsed   = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
@@ -405,6 +430,7 @@ function _setRtContractStatus(contract, entryTick, lastTick) {
   _rtContractTimerInterval = setInterval(_tick, 1000);
 }
 
+/** Plota ticks válidos e o tick de entrada do contrato; sem contrato nem ticks, limpa o gráfico. */
 function updateRtContractChart(ticks, contract) {
   const chart = state.charts.rtContract;
   if (!chart) return;
@@ -438,6 +464,7 @@ function updateRtContractChart(ticks, contract) {
 
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
 
+/** Cria o gráfico de RSI (escala 0–100, linhas destacadas em 30 e 70). */
 function initRsiChart() {
   const ctx = el('rsiChart').getContext('2d');
   state.charts.rsi = new Chart(ctx, {
@@ -473,6 +500,7 @@ function initRsiChart() {
 
 // ─── MACD Chart ────────────────────────────────────────────────────────────────────────────
 
+/** Cria o gráfico de barras do histograma MACD (verde positivo, vermelho negativo). */
 function initMacdChart() {
   const ctx = el('macdChart').getContext('2d');
   state.charts.macd = new Chart(ctx, {
@@ -506,6 +534,10 @@ function initMacdChart() {
 }
 
 // ─── Indicador EMA local (para gráfico de preço) ──────────────────────────────────────────────────
+/**
+ * Calcula a EMA de `prices`; valores antes do período completo ficam null.
+ * @returns {Array<number|null>} Série com o mesmo tamanho da entrada.
+ */
 function calcEma(prices, period) {
   if (prices.length < period) return new Array(prices.length).fill(null);
   const k = 2 / (period + 1);
@@ -524,6 +556,7 @@ function calcEma(prices, period) {
 
 let _pollFailures = 0;
 
+/** Consulta /api/state e atualiza status do bot, cards, risco, modelo e métricas; mostra banner após 3 falhas seguidas. */
 async function pollState() {
   try {
     const r = await fetch(API_BASE_URL + '/api/state', { cache: 'no-store' });
@@ -710,6 +743,7 @@ async function pollState() {
 
 
 // ─── Limpar dados (operacoes + estados) ─────────────────────────────────────
+/** Após confirmação, pede ao servidor para apagar dados de operações/estado e recarrega estado, histórico e gráfico de saldo. */
 async function clearData() {
   try {
     const confirmMsg = 'Confirma limpar TODOS os dados de operações?\n\nSerão apagados: operacoes_log.csv, risk_state.json e state.json. Esta ação é irreversível.';
@@ -746,10 +780,12 @@ async function clearData() {
 
 const _notifState = { paused: false, stopLoss: false, drift: false };
 
+/** Dispara notificação/toast uma vez por ocorrência de pausa, stop diário e drift. */
 function _checkCriticalEvents(summary, riskState) {
   if (!('Notification' in window)) return;
   const hasPerm = Notification.permission === 'granted';
 
+  /** Mostra Notification (se permitido) e toast. */
   function _notify(title, body) {
     if (hasPerm) new Notification(title, { body });
     showToast(`🔔 ${title}: ${body}`, 'err');
@@ -782,6 +818,7 @@ function _checkCriticalEvents(summary, riskState) {
 
 // ─── Mobile sidebar toggle ──────────────────────────────────────────────────
 
+/** Fecha a sidebar mobile, o overlay e o estado do botão hambúrguer. */
 function _closeMobileSidebar() {
   const sidebar = el('sidebar');
   const overlay = el('sidebarOverlay');
@@ -791,6 +828,7 @@ function _closeMobileSidebar() {
   if (btn) btn.classList.remove('open');
 }
 
+/** Alterna a abertura da sidebar mobile, do overlay e do botão hambúrguer. */
 function _toggleMobileSidebar() {
   const sidebar = el('sidebar');
   const overlay = el('sidebarOverlay');
@@ -814,6 +852,7 @@ window.addEventListener('resize', () => {
 
 // ─── Banner de conexão perdida ────────────────────────────────────────────────
 
+/** Exibe ou oculta o banner de conexão perdida, criando-o na topbar se necessário. */
 function _updateConnectionBanner(show) {
   let banner = el('connectionBanner');
   if (!banner) {
@@ -828,6 +867,7 @@ function _updateConnectionBanner(show) {
 
 // ─── Função compartilhada para aplicar indicadores aos elementos ─────────────
 
+/** Aplica indicadores (EMA, RSI, ADX, MACD, condição de mercado, confiança e score da IA) aos elementos da DOM. */
 function _applyIndicators(d) {
     el('indEma9').textContent  = fmt(d.ema9, 4);
     el('indEma21').textContent = fmt(d.ema21, 4);
@@ -860,6 +900,7 @@ function _applyIndicators(d) {
     // RSI/MACD chart são atualizados exclusivamente por pollIndicators()
 }
 
+/** Consulta /api/bot/status e atualiza LED, botões e card de status do bot. */
 async function pollBotStatus() {
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/status');
@@ -899,6 +940,7 @@ async function pollBotStatus() {
 
 // ─── Polling: Summary ─────────────────────────────────────────────────────────
 
+/** Consulta /api/summary e atualiza saldo, P&L, win rate, drawdown, losses consecutivos e alerta de drift. */
 async function pollSummary() {
   try {
     const r = await fetch(API_BASE_URL + '/api/summary');
@@ -951,6 +993,7 @@ async function pollSummary() {
 
 // ─── Polling: Ticks ──────────────────────────────────────────────────────────
 
+/** Busca os últimos 300 ticks e atualiza o gráfico de preço. */
 async function pollTicks() {
   try {
     const r = await fetch(API_BASE_URL + '/api/ticks?n=300');
@@ -960,6 +1003,7 @@ async function pollTicks() {
   } catch (_) {}
 }
 
+/** Busca o contrato ativo (ou o último) e seus ticks, atualizando o gráfico em tempo real; sem contrato, opera como monitor de preço. */
 async function pollContractRealtime() {
   try {
     const resp = await fetch(API_BASE_URL + '/api/contract-active', { cache: 'no-store' });
@@ -1021,6 +1065,7 @@ async function pollContractRealtime() {
 
 // ─── Polling: Equity ─────────────────────────────────────────────────────────
 
+/** Busca /api/equity e atualiza a curva de saldo. */
 async function pollEquity() {
   try {
     const r = await fetch(API_BASE_URL + '/api/equity');
@@ -1031,6 +1076,7 @@ async function pollEquity() {
 
 // ─── Polling: Indicadores ────────────────────────────────────────────────────
 
+/** Busca /api/indicators, atualiza painel de indicadores e anexa RSI/MACD às séries (máx. 60 pontos) dos gráficos. */
 async function pollIndicators() {
   try {
     const r = await fetch(API_BASE_URL + '/api/indicators');
@@ -1106,6 +1152,7 @@ async function pollIndicators() {
 
 // ─── Polling: Model info ──────────────────────────────────────────────────────
 
+/** Consulta /api/model e atualiza informações de ticks, dataset e arquivos do modelo. */
 async function pollModel() {
   try {
     const r = await fetch(API_BASE_URL + '/api/model');
@@ -1128,6 +1175,9 @@ async function pollModel() {
 
 // ─── Histórico de trades ──────────────────────────────────────────────────────
 
+/**
+ * Carrega os trades de /api/trades (`force` ignora cache do servidor) em state.allTrades e redesenha a tabela.
+ */
 async function loadHistory(force = false) {
   const n = el('histCount')?.value || 50;
   try {
@@ -1151,6 +1201,7 @@ async function loadHistory(force = false) {
   }
 }
 
+/** Renderiza a tabela de histórico aplicando o filtro atual e o resumo (contratos, win rate, lucro). */
 function renderHistory() {
   const filter = state.histFilter;
   let trades = state.allTrades;
@@ -1195,6 +1246,7 @@ function renderHistory() {
   updateRecentDots('recentTradesDots');
 }
 
+/** Desenha os pontos WIN/LOSS dos 20 trades mais recentes no contêiner; em 'recentTradesDots' também atualiza as contagens. */
 function updateRecentDots(containerId) {
   const container = el(containerId);
   if (!container) return;
@@ -1225,6 +1277,7 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
 
 // ─── Exportar CSV ─────────────────────────────────────────────────────────────
 
+/** Exporta os trades carregados como arquivo CSV baixado pelo navegador. */
 function exportCsv() {
   const trades = state.allTrades;
   if (!trades.length) { showToast('Sem dados para exportar.', 'err'); return; }
@@ -1246,18 +1299,22 @@ function exportCsv() {
 
 // ─── Controle do bot ──────────────────────────────────────────────────────────
 
+/** Abre o modal de configuração de início do bot. */
 function botStart() {
   el('startModal').style.display = 'flex';
 }
 
+/** Fecha o modal de início do bot. */
 function closeStartModal() {
   el('startModal').style.display = 'none';
 }
+/** Fecha o painel de inicialização e interrompe seu polling de logs. */
 function closeStartupPanel() {
   el('startupPanel').style.display = 'none';
   stopStartupPolling();
 }
 
+/** Lê os checkboxes de módulos de decisão e devolve o objeto `use_*` enviado ao /api/bot/start. */
 function getExecutionSignalSelection() {
   const trained = el('useTrainedModel') ? el('useTrainedModel').checked : true;
   const weighted = el('useWeightedSignal') ? el('useWeightedSignal').checked : true;
@@ -1271,6 +1328,7 @@ function getExecutionSignalSelection() {
   };
 }
 
+/** Descreve os módulos ativos da seleção, separados por ' + ', ou 'Nenhum módulo ativo'. */
 function executionSignalLabel(selection = getExecutionSignalSelection()) {
   const active = [];
   if (selection.use_trained_model) {
@@ -1282,6 +1340,7 @@ function executionSignalLabel(selection = getExecutionSignalSelection()) {
   return active.length ? active.join(' + ') : 'Nenhum módulo ativo';
 }
 
+/** Indica se a seleção tem ao menos um módulo de decisão ativo. */
 function hasExecutionDecisionModule(selection = getExecutionSignalSelection()) {
   return Boolean(
     selection.use_trained_model ||
@@ -1291,6 +1350,7 @@ function hasExecutionDecisionModule(selection = getExecutionSignalSelection()) {
   );
 }
 
+/** Atualiza o texto de modo de execução e marca como inválido quando nenhum módulo está ativo. */
 function updateExecutionModeStatus() {
   const status = el('executionModeStatus');
   if (!status) return;
@@ -1321,6 +1381,7 @@ const PHASE_ORDER = ['phase-scan', 'phase-collect', 'phase-build', 'phase-train'
 let _startupPollingId = null;
 let _currentActivePhase = null;
 
+/** Retorna o id da última fase do pipeline cujas palavras-chave aparecem nas linhas de log (ou null). */
 function _detectPhaseFromLines(lines) {
   let lastActive = null;
   for (const line of lines) {
@@ -1331,6 +1392,7 @@ function _detectPhaseFromLines(lines) {
   return lastActive;
 }
 
+/** Marca as fases anteriores como concluídas, a ativa em andamento e as demais pendentes. */
 function _updatePhaseUI(activePhaseId) {
   if (activePhaseId === _currentActivePhase) return;
   _currentActivePhase = activePhaseId;
@@ -1353,6 +1415,7 @@ function _updatePhaseUI(activePhaseId) {
   });
 }
 
+/** Busca logs do bot, mostra as 10 últimas linhas, atualiza a fase e fecha o painel quando o bot já está rodando. */
 async function pollStartupLogs() {
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/logs');
@@ -1383,6 +1446,7 @@ async function pollStartupLogs() {
   } catch (_) {}
 }
 
+/** Abre o painel de inicialização, reseta as fases e inicia o polling de logs a cada 1,2 s. */
 function startStartupPolling() {
   // Mostra overlay e reseta estado visual
   el('startupPanel').style.display = 'flex';
@@ -1404,11 +1468,16 @@ function startStartupPolling() {
   setTimeout(pollStartupLogs, 500);
 }
 
+/** Cancela o polling de logs do painel de inicialização. */
 function stopStartupPolling() {
   if (_startupPollingId) { clearInterval(_startupPollingId); _startupPollingId = null; }
 }
 
 // Quick Start: inicia no modo demo com valores padr\u00e3o, sem precisar da modal
+/**
+ * Monta cabeçalhos JSON com o token X-Auth-Token (dos campos da página ou do localStorage, que é atualizado).
+ * @param {Object} extra Cabeçalhos adicionais.
+ */
 function _authHeaders(extra = {}) {
   const token = (el('backtestAuthToken') ? el('backtestAuthToken').value.trim() : '') ||
                 (el('authToken') ? el('authToken').value.trim() : '') ||
@@ -1417,6 +1486,7 @@ function _authHeaders(extra = {}) {
   return { 'Content-Type': 'application/json', ...(token ? { 'X-Auth-Token': token } : {}), ...extra };
 }
 
+/** Inicia o bot em modo demo (saldo 1000) com os módulos selecionados, sem usar o modal. */
 async function quickStart() {
   closeStartModal();
   const executionSelection = getExecutionSignalSelection();
@@ -1447,6 +1517,7 @@ async function quickStart() {
     showToast('Falha: ' + e.message, 'err');
   }
 }
+/** Inicia o bot com os parâmetros do modal (confirma antes no modo real) e abre o painel de inicialização. */
 async function confirmStart() {
   closeStartModal();
   const mode            = el('modeSelect').value;
@@ -1489,6 +1560,7 @@ async function confirmStart() {
   }
 }
 
+/** Após confirmação, solicita a parada do bot em /api/bot/stop. */
 async function botStop() {
   if (!confirm('Parar o bot?')) return;
   try {
@@ -1508,6 +1580,7 @@ async function botStop() {
 
 let _allLogLines = [];
 
+/** Busca os logs do bot, guarda em _allLogLines e atualiza terminal e contadores. */
 async function pollLogs() {
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/logs');
@@ -1521,6 +1594,7 @@ async function pollLogs() {
   } catch (_) {}
 }
 
+/** Renderiza no terminal as linhas de log (filtradas pelo campo de filtro) com classe por tipo e rolagem automática opcional. */
 function renderLogs() {
   const terminal = el('logTerminal');
   if (!terminal) return;
@@ -1540,6 +1614,7 @@ function renderLogs() {
   if (el('logAutoScroll')?.checked) terminal.scrollTop = terminal.scrollHeight;
 }
 
+/** Retorna a classe CSS de uma linha de log conforme padrões de texto ('' se nenhum). */
 function _logLineClass(line) {
   if (/erro|error|falha|fail|exception|traceback/i.test(line)) return 'log-err';
   if (/warn|aviso/i.test(line))                                 return 'log-warn';
@@ -1551,6 +1626,7 @@ function _logLineClass(line) {
   return '';
 }
 
+/** Limpa as linhas de log exibidas (apenas no cliente). */
 function clearLogs() {
   _allLogLines = [];
   renderLogs();
@@ -1560,6 +1636,7 @@ function clearLogs() {
 
 // ─── Polling: Estatísticas avançadas ─────────────────────────────────────────
 
+/** Carrega /api/indicator-series e preenche as séries e gráficos de RSI e MACD. */
 async function _loadIndicatorSeries() {
   try {
     const r = await fetch(API_BASE_URL + '/api/indicator-series?n=60', { cache: 'no-store' });
@@ -1580,6 +1657,7 @@ async function _loadIndicatorSeries() {
 
 let _profitDistChart = null;
 
+/** Cria o gráfico de barras da distribuição de lucro por operação. */
 function _initProfitDistChart() {
   const ctx = el('profitDistChart');
   if (!ctx) return;
@@ -1607,6 +1685,7 @@ function _initProfitDistChart() {
   });
 }
 
+/** Consulta /api/stats e atualiza profit factor, expectativa, médias, distribuição de lucro e estatísticas por direção. */
 async function pollStats() {
   try {
     const r = await fetch(API_BASE_URL + '/api/stats', { cache: 'no-store' });
@@ -1658,6 +1737,7 @@ async function pollStats() {
 
 // ─── Polling: Métricas do modelo ─────────────────────────────────────────────
 
+/** Consulta /api/model-metrics e atualiza métricas do melhor modelo e o comparativo de ROC-AUC. */
 async function pollModelMetrics() {
   try {
     const r = await fetch(API_BASE_URL + '/api/model-metrics', { cache: 'no-store' });
@@ -1703,11 +1783,13 @@ async function pollModelMetrics() {
 
 // ─── Polling: CPU/RAM do sistema ─────────────────────────────────────────────
 
+/** Consulta /api/system e atualiza as barras de CPU, RAM, disco e consumo do bot. */
 async function pollSystem() {
   try {
     const r = await fetch(API_BASE_URL + '/api/system');
     const d = await r.json();
 
+    /** Preenche barra e valor (cor por limiar); ignora se faltar elemento ou pct. */
     function _setBar(barId, valId, pct, suffix, isBot = false) {
       const bar = el(barId);
       const val = el(valId);
@@ -1734,6 +1816,7 @@ async function pollSystem() {
 
 // ─── Backtest offline ───────────────────────────────────────────────────────
 
+/** Cria o gráfico de linha temporal do saldo simulado do backtest. */
 function initBacktestChart() {
   const canvas = el('backtestEquityChart');
   if (!canvas) return;
@@ -1766,6 +1849,7 @@ function initBacktestChart() {
   });
 }
 
+/** Atualiza badge, detalhe e estado dos botões de iniciar/cancelar do backtest conforme `status`. */
 function _setBacktestStatus(status, detail = '') {
   const badge = el('backtestStatus');
   const allowed = ['idle', 'running', 'completed', 'failed', 'stopped', 'stopping'];
@@ -1795,6 +1879,7 @@ function _setBacktestStatus(status, detail = '') {
   }
 }
 
+/** Valida o formulário e inicia um backtest offline via /api/backtest/start (bloqueado com o bot rodando). */
 async function startBacktest() {
   if (state.botRunning) {
     showToast('Pare o bot antes de executar o backtest.', 'err');
@@ -1856,6 +1941,7 @@ async function startBacktest() {
   }
 }
 
+/** Após confirmação, solicita o cancelamento do backtest em /api/backtest/stop. */
 async function stopBacktest() {
   if (!confirm('Cancelar o backtest em execução?')) return;
   try {
@@ -1875,6 +1961,7 @@ async function stopBacktest() {
   }
 }
 
+/** Consulta /api/backtest/status, atualiza status e logs e carrega o resultado quando concluído e ainda não exibido. */
 async function pollBacktestStatus() {
   try {
     const response = await fetch(API_BASE_URL + '/api/backtest/status', { cache: 'no-store' });
@@ -1900,6 +1987,7 @@ async function pollBacktestStatus() {
   } catch (_) {}
 }
 
+/** Busca o relatório em /api/backtest/result e o renderiza, registrando `runId` como já exibido. */
 async function loadBacktestResult(runId = state.backtestRunId) {
   try {
     const response = await fetch(API_BASE_URL + '/api/backtest/result?n=200', { cache: 'no-store' });
@@ -1910,6 +1998,7 @@ async function loadBacktestResult(runId = state.backtestRunId) {
   } catch (_) {}
 }
 
+/** Preenche cards de métricas, curva de saldo e tabela de operações simuladas a partir do relatório do backtest. */
 function renderBacktestResult(report) {
   const metrics = report?.metrics || {};
   const settings = report?.settings || {};
@@ -1968,6 +2057,7 @@ function renderBacktestResult(report) {
 
 // ─── Inicialização ────────────────────────────────────────────────────────────
 
+/** Inicializa o dashboard: restaura token, cria gráficos, faz a primeira carga e agenda os polls periódicos. */
 function init() {
   // Restore saved auth token into field if present
   const savedToken = localStorage.getItem('dashboardToken');
@@ -2023,6 +2113,7 @@ function init() {
 
 // ─── Candle Patterns ───────────────────────────────────────────
 
+/** Busca /api/candle-patterns e lista os padrões de vela (ícone, força, contexto) nos painéis correspondentes. */
 async function pollCandlePatterns() {
   try {
     const res = await fetch(API_BASE_URL + '/api/candle-patterns');
