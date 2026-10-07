@@ -239,6 +239,49 @@ O target representa alta, queda ou empate entre o primeiro tick após o sinal e 
 
 Abstenção, divergência, falta de dados e modelo incompatível bloqueiam entradas. A força técnica real participa do score; o score não representa probabilidade de vitória. Antes da compra, a probabilidade calibrada da direção é confrontada com preço e payout da proposta.
 
+## Decisão de abertura de contrato
+
+A abertura de contrato passa por camadas sucessivas. Nenhum módulo compra
+sozinho: `executor.py` só envia proposta quando a conta está autenticada, o tick
+é recente e válido, há pelo menos `MIN_CANDLES` velas, não existe contrato ativo
+ou pendente, a duração prevista coincide com `DURATION`/`DURATION_UNIT` e os
+gates de cadência e risco configurados permitem nova tentativa.
+
+`strategy.py` então consolida os módulos de decisão ativos. Com
+`USE_AI_MODEL=True`, o módulo `trained_model` exige um bundle v2 compatível com
+o símbolo, 100 candles OHLC contínuos, features calculáveis, direção `BUY` ou
+`SELL`, `model_id` válido e confiança estritamente maior que
+`AI_CONFIDENCE_MIN`. Sem modelo compatível, com direção ausente, confiança
+inválida ou abstenção, o sinal é bloqueado. A direção `BUY` vira contrato `CALL`;
+`SELL` vira `PUT`.
+
+Com `USE_WEIGHTED_SIGNAL=True`, o módulo `weighted_score` calcula `tech_score`
+com EMA9 versus EMA21, histograma MACD, preço versus EMA9, momentum, RSI e ADX.
+Score maior ou igual a `SIGNAL_SCORE_MIN` gera `BUY`; score menor ou igual ao
+negativo desse limiar gera `SELL`. Em `ENTRY_MODE="opportunity"`, o limiar usado
+é `OPPORTUNITY_SIGNAL_SCORE_MIN` e ADX fraco reduz a confiança sem zerar o score
+abaixo de `OPPORTUNITY_ADX_WEIGHT_FLOOR`. Quando `weighted_score` e
+`trained_model` estão ativos ao mesmo tempo, ambos precisam emitir sinal e
+concordar na direção; abstenção ou divergência bloqueia a entrada.
+
+`PRICE_ACTION_FILTER` e `CANDLE_PATTERN_FILTER` são filtros auxiliares quando
+ligados. Price Action usa estrutura de mercado, consistência da tendência,
+break of structure, suporte/resistência, zonas de oferta/demanda e FVG; pode
+bloquear `BUY` contra resistência sem rompimento ou `SELL` contra suporte sem
+rompimento. Padrões de vela consideram apenas alertas recentes, com força mínima
+`CANDLE_PATTERN_MIN_STRENGTH` e idade máxima `CANDLE_PATTERN_MAX_AGE_SEC`; padrão
+bearish forte contra `BUY`, ou bullish forte contra `SELL`, bloqueia. Quando
+atuam como fallback, sinais divergentes entre Price Action e padrões também
+bloqueiam.
+
+Depois do sinal, `executor.py` ainda pede uma proposta à Deriv. A compra só é
+enviada se a proposta tiver preço e payout finitos, `0 < preço < payout`, payout
+líquido mínimo `MIN_NET_PAYOUT` e preço dentro da stake. Quando o sinal veio do
+modelo, `win_probability` precisa ser válida e a função
+`profitable_proposal()` exige retorno esperado não negativo:
+`probabilidade * payout_total / preço - 1 >= 0`. Rejeições nessa etapa não abrem
+contrato e limpam a pendência local.
+
 Os artefatos antigos de TFT, stacking e duração foram preservados, mas não participam do novo caminho operacional. A flag legada `USE_TRANSFORMER` não promove automaticamente um ensemble não validado.
 
 O relatório separa IA, sinais técnicos e estratégia completa, com bloqueios, resultados por direção/horário/confiança e calibração. O retreino exige 120 novos contratos rotulados (`RETRAIN_NEW_LABELS_TRIGGER`), além do intervalo mínimo. O coletor consulta CALL/PUT a cada cinco minutos, sem compra, e registra `payout_quotes.csv`. Avaliações com cotações observadas usam somente dados anteriores à entrada, com até 900 segundos de idade, sem preencher lacunas. Os cenários fixos de payout líquido de 85% e 70% continuam explicitamente identificados como hipóteses; os critérios anteriores de promoção são preservados.
@@ -429,17 +472,21 @@ Bundles anteriores exigem reavaliação sob a nova política.
 
 ### Regra de entrada: confiança e payout
 
-A confiança estimada para cada entrada deve ser **estritamente maior que 55%**.
-A proposta só permite compra quando `probabilidade × payout_total / preço − 1 >= 0`,
-substituindo a margem anterior de 2%. O payout líquido mínimo de 60%, os filtros
-técnicos e os controles de risco continuam ativos. Isso representa retorno
-esperado não negativo segundo o modelo; não garante ausência de perdas.
-A confiança de uma previsão difere da taxa histórica de acerto: a aprovação
-do treino exige pelo menos 45% de acertos na estratégia completa.
+A confiança estimada pelo modelo operacional deve ser estritamente maior que
+`AI_CONFIDENCE_MIN`, derivado de `MIN_APPROVAL_WIN_RATE`. Quando a IA atua como
+filtro auxiliar de um sinal técnico na mesma direção, o filtro direto usa piso
+efetivo de 55%. A proposta só permite compra quando
+`probabilidade × payout_total / preço − 1 >= 0`, substituindo a margem anterior
+de 2%. O payout líquido mínimo de 60%, os filtros técnicos e os controles de
+risco continuam ativos. Isso representa retorno esperado não negativo segundo o
+modelo; não garante ausência de perdas. A confiança de uma previsão difere da
+taxa histórica de acerto: a aprovação do treino exige pelo menos 45% de acertos
+na estratégia completa.
 Mudanças no código não reiniciam o executor nem promovem modelos existentes.
 
 O backtest com IA aplica a mesma função `profitable_proposal` do executor,
-exigindo `win_probability` válida, confiança acima de 55% e retorno esperado
-não negativo. Custos hipotéticos configurados no backtest são descontados
-antes da aceitação. Rejeições aparecem como `unprofitable_proposal` no relatório.
-O modo técnico permanece um comparador sem previsão probabilística.
+exigindo `win_probability` válida, confiança acima de `AI_CONFIDENCE_MIN` e
+retorno esperado não negativo. Custos hipotéticos configurados no backtest são
+descontados antes da aceitação. Rejeições aparecem como
+`unprofitable_proposal` no relatório. O modo técnico permanece um comparador sem
+previsão probabilística.

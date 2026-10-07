@@ -3472,20 +3472,18 @@ def _main_session(resources, forced_symbol=None) -> None:
 
     # ── FASE 5: Re-treino ─────────────────────────────────────
 
-    if model_required and (model_exists or pending):
+    if model_required and model_exists:
         retrain_thread = threading.Thread(
             target=_retrain_loop,
             daemon=True,
             name="Retrain",
         )
-        if model_exists:
-            resources["retrain"] = retrain_thread
-            retrain_thread.start()
-            print('[PIPELINE] Re-treino adaptativo iniciado para o bundle compatível')
+        resources["retrain"] = retrain_thread
+        retrain_thread.start()
+        print('[PIPELINE] Re-treino adaptativo iniciado para o bundle compatível')
     elif not model_required:
         print('[PIPELINE] IA desligada; retreino e promoção de modelo não bloqueiam a execução.')
     else:
-        print('[PIPELINE] Sem modelo compatível; entradas permanecem bloqueadas até promoção.')
         retrain_thread = threading.Thread(
             target=_retrain_loop,
             kwargs={'bootstrap_until_ready': True},
@@ -3494,10 +3492,17 @@ def _main_session(resources, forced_symbol=None) -> None:
         )
         resources["retrain"] = retrain_thread
         retrain_thread.start()
-        print('[PIPELINE] Coleta e treino inicial adaptativo ativos para o símbolo atual')
-        if not _wait_for_compatible_model(collector=collector):
-            return
-        model_exists = True
+        if pending:
+            print(
+                '[PIPELINE] Contrato pendente sem bundle compatível; '
+                'bot reconciliará a operação enquanto o bootstrap treina em paralelo.'
+            )
+        else:
+            print('[PIPELINE] Sem modelo compatível; entradas permanecem bloqueadas até promoção.')
+            print('[PIPELINE] Coleta e treino inicial adaptativo ativos para o símbolo atual')
+            if not _wait_for_compatible_model(collector=collector):
+                return
+            model_exists = True
 
     # ── FASE 6: Bot ───────────────────────────────────────────
 

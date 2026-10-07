@@ -424,6 +424,79 @@ def test_initial_training_failure_starts_only_bootstrap_retrain(monkeypatch, tmp
     assert captured['bot_run'] is True
 
 
+def test_pending_contract_without_model_starts_bootstrap_retrain(monkeypatch, tmp_path):
+    """Garante que contrato pendente não impede bootstrap quando não há modelo compatível."""
+    started_threads = []
+    captured = {'symbol': 'R_100', 'bot_run': False, 'waited_model': False}
+
+    class FakeThread:
+        """Thread falsa que apenas registra as inicializações."""
+        def __init__(self, *args, **kwargs):
+            """Guarda os kwargs e o nome da thread."""
+            self.kwargs = kwargs
+            self.name = kwargs.get('name')
+        def start(self):
+            """Registra a thread iniciada."""
+            started_threads.append(self)
+
+    class Collector:
+        """Coletor falso sempre ativo e sem erro fatal."""
+        fatal_error = ''
+        def __init__(self, symbol):
+            """Guarda o símbolo recebido."""
+            self.symbol = symbol
+        def start(self):
+            """Não inicia nada."""
+            return None
+        def stop(self):
+            """Não para nada."""
+            return None
+        def is_alive(self):
+            """Informa que o coletor está ativo."""
+            return True
+
+    class Bot:
+        """Bot falso que apenas registra a execução."""
+        def __init__(self, **_kwargs):
+            """Ignora os argumentos."""
+            pass
+        def run(self):
+            """Registra que o bot foi executado."""
+            captured['bot_run'] = True
+
+    state = tmp_path / 'state.json'
+    state.write_text(json.dumps({'active_contract': {'symbol': 'R_100'}}))
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pipeline.sys, 'argv', ['pipeline.py', '--demo', '--top-symbols', '1'])
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
+    monkeypatch.setattr(pipeline, 'AI_MODEL_PATH', str(tmp_path / 'model.pkl'))
+    monkeypatch.setattr(pipeline, '_BOT_STATUS_JSON', tmp_path / 'bot_status.json')
+    monkeypatch.setattr(pipeline, '_validate_deriv_token', lambda demo: True)
+    monkeypatch.setattr(pipeline, '_set_runtime_symbol', lambda symbol: captured.update(symbol=symbol))
+    monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: captured['symbol'])
+    monkeypatch.setattr(pipeline, '_prepare_training_start', lambda **_kwargs: None)
+    monkeypatch.setattr(pipeline, '_banner', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(pipeline, '_ensure_ticks_header', lambda: None)
+    monkeypatch.setattr(pipeline, '_CollectorThread', Collector)
+    monkeypatch.setattr(pipeline, '_fetch_historical_ticks', lambda _count: 0)
+    monkeypatch.setattr(pipeline, '_count_ticks', lambda: 200)
+    monkeypatch.setattr(pipeline, '_load_latest_final_metrics', lambda: None)
+    monkeypatch.setattr(pipeline, '_wait_for_compatible_model', lambda collector=None: captured.update(waited_model=True) or True)
+    monkeypatch.setattr(pipeline, '_uses_bearer_auth', lambda: False)
+    monkeypatch.setattr(pipeline, 'RiskManager', lambda initial_balance: Mock())
+    monkeypatch.setattr(pipeline, 'DerivBot', Bot)
+    monkeypatch.setattr(pipeline, '_check_market_switch', lambda: None)
+    monkeypatch.setattr(pipeline.threading, 'Thread', FakeThread)
+
+    pipeline._main_session({'lock': Mock()})
+
+    assert [thread.name for thread in started_threads] == ['RetrainBootstrap']
+    assert started_threads[0].kwargs.get('kwargs') == {'bootstrap_until_ready': True}
+    assert captured['bot_run'] is True
+    assert captured['waited_model'] is False
+
+
 def test_bootstrap_retrain_requests_market_switch_after_repeated_rejections(monkeypatch, tmp_path):
     """Garante que o retreino de bootstrap pede troca de mercado após rejeições repetidas do candidato."""
     calls = {"training": 0, "switch": []}
