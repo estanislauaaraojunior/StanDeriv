@@ -1,3 +1,4 @@
+"""Orquestrador do pipeline: coleta, dataset, treino, bot e retreino."""
 from pathlib import Path
 import math
 #!/usr/bin/env python3
@@ -214,10 +215,12 @@ _market_switch = threading.Event()
 
 
 class MarketUnavailable(Exception):
+    """Sinaliza que o mercado ativo deve ser trocado."""
     pass
 
 
 def _request_market_switch(symbol):
+    """Pede troca de mercado se `symbol` for o ativo atual (contrato indisponível)."""
     if symbol == _runtime_symbol():
         if not _market_switch.is_set():
             print(f'\n[MERCADO] {symbol}: contrato indisponível; buscando outro ativo após concluir pendências.')
@@ -225,6 +228,7 @@ def _request_market_switch(symbol):
 
 
 def _request_market_switch_for_unfavorable(symbol, reason, streak, indicators=None):
+    """Pede troca de mercado após sequência de avaliações desfavoráveis do ativo atual."""
     if symbol == _runtime_symbol():
         if not _market_switch.is_set():
             adx = ""
@@ -238,6 +242,7 @@ def _request_market_switch_for_unfavorable(symbol, reason, streak, indicators=No
 
 
 def _check_market_switch():
+    """Levanta `MarketUnavailable` se houver troca de mercado solicitada."""
     if _market_switch.is_set():
         raise MarketUnavailable(_runtime_symbol())
 
@@ -246,6 +251,7 @@ _pipeline_status_lock = threading.Lock()
 
 
 def _write_pipeline_status(**updates):
+    """Mescla `updates` em `bot_status.json` com escrita atômica protegida por lock."""
     import tempfile
 
     with _pipeline_status_lock:
@@ -277,6 +283,7 @@ def _write_pipeline_status(**updates):
 
 
 def _pipeline_heartbeat(stage: str, **updates):
+    """Publica no status o estágio atual, o horário e o símbolo."""
     _write_pipeline_status(
         status=stage,
         running=True,
@@ -287,6 +294,7 @@ def _pipeline_heartbeat(stage: str, **updates):
 
 
 def _mark_market_failure(symbol: str, reason: str = "") -> None:
+    """Coloca o símbolo em quarentena, registra a troca na janela de orçamento e atualiza o status."""
     if not symbol:
         return
     _market_failure_until[str(symbol)] = time.time() + max(0, int(MARKET_SWITCH_COOLDOWN_SEC or 0))
@@ -298,11 +306,13 @@ def _mark_market_failure(symbol: str, reason: str = "") -> None:
 
 
 def _market_available_for_switch(symbol: str) -> bool:
+    """Indica se a quarentena do símbolo já terminou."""
     until = float(_market_failure_until.get(str(symbol), 0.0) or 0.0)
     return until <= time.time()
 
 
 def _switch_budget_exhausted() -> bool:
+    """Indica se o limite de trocas de mercado na janela recente foi atingido."""
     cutoff = time.time() - max(1, int(MARKET_SWITCH_WINDOW_SEC or 1))
     recent = [t for t in _market_switch_times if t >= cutoff]
     _market_switch_times[:] = recent
@@ -336,6 +346,7 @@ def _count_market_records():
 
 
 def _count_candles():
+    """Contagem de candles históricos do ativo."""
     return _count_records(('candle',))
 
 
@@ -345,6 +356,7 @@ def _minimum_history_candles():
 
 
 def _effective_history_count(requested):
+    """Quantidade de candles a baixar: 0 se inválida/não positiva, senão ao menos o mínimo necessário."""
     try:
         requested = int(requested)
     except (TypeError, ValueError):
@@ -360,6 +372,7 @@ def _history_fetch_count_for_start(requested):
 
 
 def _ensure_ticks_header():
+    """Garante o cabeçalho do CSV de ticks."""
     ensure_header(TICKS_CSV)
 
 
@@ -406,6 +419,7 @@ def _prepare_training_start(*, reuse=False, skip_collect=False, pending=None):
 
 
 def _uses_bearer_auth() -> bool:
+    """Indica se o pipeline usa autenticação Bearer com conta definida."""
     return (
         _AUTH_MODE == "bearer"
         and bool(_PAT_ACCOUNT_ID)
@@ -413,6 +427,7 @@ def _uses_bearer_auth() -> bool:
 
 
 def _get_ws_url() -> str:
+    """URL do WebSocket: a fixa legada ou, em Bearer, a pré-obtida (consumida) ou nova solicitada à API."""
     global _PAT_WS_URL
 
     if not _uses_bearer_auth():
@@ -512,6 +527,7 @@ def _fetch_prices_for_symbol(
     done = threading.Event()
 
     def _send_history_request(ws) -> None:
+        """Solicita as últimas `count` velas do símbolo."""
         ws.send(
             json.dumps(
                 {
@@ -526,6 +542,7 @@ def _fetch_prices_for_symbol(
         )
 
     def _on_open(ws) -> None:
+        """Pede o histórico (Bearer) ou envia `authorize` (modo legado)."""
         if _uses_bearer_auth():
             _send_history_request(ws)
         else:
@@ -538,6 +555,7 @@ def _fetch_prices_for_symbol(
             )
 
     def _on_message(ws, message) -> None:
+        """Coleta fechamentos de velas já encerradas e fecha a conexão."""
         try:
             data = json.loads(message)
         except (TypeError, json.JSONDecodeError):
@@ -563,9 +581,11 @@ def _fetch_prices_for_symbol(
             ws.close()
 
     def _on_error(ws, err) -> None:
+        """Fecha a conexão em caso de erro."""
         ws.close()
 
     def _on_close(ws, *_args) -> None:
+        """Sinaliza o término da coleta."""
         done.set()
 
     ws = websocket.WebSocketApp(
@@ -684,6 +704,7 @@ def _scan_group(candidates: list) -> dict:
     lock = threading.Lock()
 
     def _scan_one(symbol: str) -> None:
+        """Pontua um símbolo (0 se fechado ou com poucos dados), guarda em `results` e imprime o resultado."""
         if not _local_market_open(symbol):
             with lock:
                 results[symbol] = 0.0
@@ -757,6 +778,7 @@ def _scan_group(candidates: list) -> dict:
 
 
 def _scan_candidates() -> list:
+    """Lista ordenada de todos os símbolos candidatos ao scan (forex, primários, secundários)."""
     return (
         list(_SCAN_SYMBOLS_FOREX)
         + list(_SCAN_SYMBOLS_PRIMARY)
@@ -765,6 +787,7 @@ def _scan_candidates() -> list:
 
 
 def _local_market_open(symbol):
+    """Consulta o calendário local de mercado; assume aberto em caso de falha."""
     try:
         import config as _cfg
         return _cfg.is_market_open(symbol)
@@ -785,6 +808,7 @@ def _probe_symbol(symbol, timeout=20):
     }
 
     def request(ws):
+        """Assina ticks e solicita catálogo de contratos e propostas CALL/PUT de teste."""
         ws.send(json.dumps({'ticks': symbol, 'subscribe': 1}))
         ws.send(json.dumps({'contracts_for': symbol}))
         for req_id, direction in ((910001, 'CALL'), (910002, 'PUT')):
@@ -795,12 +819,14 @@ def _probe_symbol(symbol, timeout=20):
             ws.send(json.dumps(request))
 
     def on_open(ws):
+        """Inicia as requisições de sondagem (após `authorize`, no modo legado)."""
         if _uses_bearer_auth():
             request(ws)
         else:
             ws.send(json.dumps({'authorize': TOKEN}))
 
     def on_message(ws, raw):
+        """Acumula tick, catálogo e propostas em `result` e encerra ao concluir ou errar."""
         try:
             data = json.loads(raw)
             if 'error' in data:
@@ -849,6 +875,7 @@ def _probe_symbol(symbol, timeout=20):
             ws.close()
 
     def on_error(ws, error):
+        """Registra falha de conexão como motivo e encerra a sondagem."""
         result['reason'] = 'falha de conexao na validacao do ativo'
         done.set()
         ws.close()
@@ -867,6 +894,7 @@ def _probe_symbol(symbol, timeout=20):
 
 
 def _best_live_from(results):
+    """Primeiro símbolo, por score decrescente e acima do piso, que passa na sondagem; retorna (símbolo, score) ou ('', 0.0)."""
     for symbol in sorted(results, key=results.get, reverse=True):
         if results[symbol] < _ADX_TREND_MIN:
             break
@@ -929,6 +957,7 @@ def _first_live_symbol_with_compatible_model(candidates):
 
 
 def _require_live_symbol(symbol, *, allow_fallback=False):
+    """Retorna o símbolo se operável; com `allow_fallback` tenta outro candidato, senão levanta RuntimeError."""
     available, reason = _probe_symbol(symbol)
     if available:
         return symbol
@@ -1243,6 +1272,7 @@ def _fetch_historical_ticks(
     next_end = ["latest"]
 
     def _send_history_request(ws) -> None:
+        """Pede uma página (até 1000) de velas anterior à mais antiga já recebida."""
         remaining = max(1, count - len(received))
         ws.send(
             json.dumps(
@@ -1258,6 +1288,7 @@ def _fetch_historical_ticks(
         )
 
     def _on_open(ws) -> None:
+        """Pede o histórico (Bearer) ou envia `authorize` (modo legado)."""
         if _uses_bearer_auth():
             _send_history_request(ws)
         else:
@@ -1270,6 +1301,7 @@ def _fetch_historical_ticks(
             )
 
     def _on_message(ws, message) -> None:
+        """Acumula páginas de velas fechadas sem duplicar e pede a próxima página até atingir `count`."""
         try:
             data = json.loads(message)
         except (
@@ -1340,6 +1372,7 @@ def _fetch_historical_ticks(
                 _send_history_request(ws)
 
     def _on_error(ws, err) -> None:
+        """Guarda a mensagem de erro e fecha a conexão."""
         error_msg.append(str(err))
         ws.close()
 
@@ -1348,6 +1381,7 @@ def _fetch_historical_ticks(
         code,
         msg,
     ) -> None:
+        """Sinaliza o término do download."""
         done.set()
 
     ws = websocket.WebSocketApp(
@@ -1410,6 +1444,7 @@ def _banner(
     demo: bool,
     symbol: Optional[str] = None,
 ) -> None:
+    """Imprime o resumo da configuração do pipeline."""
     mode = (
         "DEMO"
         if demo
@@ -1504,6 +1539,7 @@ def _validate_deriv_token(
         }
 
         def _on_open(ws) -> None:
+            """Envia `authorize` com o token."""
             ws.send(
                 json.dumps(
                     {
@@ -1516,6 +1552,7 @@ def _validate_deriv_token(
             ws,
             message,
         ) -> None:
+            """Interpreta a resposta de `authorize`, validando o tipo de conta contra o modo, e fecha a conexão."""
             try:
                 data = json.loads(message)
             except (
@@ -1572,6 +1609,7 @@ def _validate_deriv_token(
                 ws.close()
 
         def _on_error(ws, err) -> None:
+            """Guarda o erro como mensagem e fecha a conexão."""
             result["message"] = str(err)
             ws.close()
 
@@ -1579,6 +1617,7 @@ def _validate_deriv_token(
             ws,
             *_args,
         ) -> None:
+            """Sinaliza o fim da validação."""
             done.set()
 
         ws = websocket.WebSocketApp(
@@ -1792,6 +1831,7 @@ def _validate_deriv_bearer_token(
 
 
 def _print_bearer_migration_hint() -> None:
+    """Imprime orientações de verificação de App ID e token Bearer/PAT."""
     print(
         "[AUTH] ──────────────────────────────────────────"
     )
@@ -1820,6 +1860,7 @@ class _CollectorThread(threading.Thread):
     """Thread de coleta de ticks com reconexão automática."""
 
     def __init__(self, symbol: str) -> None:
+        """Prepara estado, gravador de cotações de payout e último epoch já coletado do símbolo."""
         super().__init__(
             daemon=True,
             name="Collector",
@@ -1891,6 +1932,7 @@ class _CollectorThread(threading.Thread):
         return last
 
     def run(self) -> None:
+        """Mantém a conexão WebSocket, reconectando a cada 5s, até parada, encerramento ou erro fatal."""
         _ensure_ticks_header()
 
         while not _shutdown.is_set() and not self._stopped.is_set() and not self.fatal_error:
@@ -1922,6 +1964,7 @@ class _CollectorThread(threading.Thread):
                 break
 
     def stop(self) -> None:
+        """Interrompe a coleta e fecha o WebSocket."""
         self._stopped.set()
         if self._first_tick_timer:
             self._first_tick_timer.cancel()
@@ -1932,6 +1975,7 @@ class _CollectorThread(threading.Thread):
                 pass
 
     def _on_open(self, ws) -> None:
+        """Arma o timer de primeiro tick, carrega épocas já gravadas e autoriza ou assina ticks."""
         self._first_tick_timer = threading.Timer(30, ws.close)
         self._first_tick_timer.daemon = True
         self._first_tick_timer.start()
@@ -1958,6 +2002,7 @@ class _CollectorThread(threading.Thread):
         self._subscribe(ws)
 
     def _subscribe(self, ws):
+        """Assina o fluxo de ticks do símbolo."""
         ws.send(
             json.dumps(
                 {
@@ -1972,6 +2017,7 @@ class _CollectorThread(threading.Thread):
         ws,
         message: str,
     ) -> None:
+        """Trata erros, autorização, páginas de histórico e ticks ao vivo, gravando ticks válidos em `ticks.csv`."""
         try:
             data = json.loads(message)
         except (
@@ -2137,6 +2183,7 @@ class _CollectorThread(threading.Thread):
             )
 
     def _request_tick_history(self, ws):
+        """Solicita até 5000 ticks históricos do intervalo ainda faltante."""
         ws.send(json.dumps({'ticks_history': self._symbol, 'style': 'ticks',
                             'start': self._history_start, 'end': self._history_end,
                             'count': 5000}))
@@ -2146,6 +2193,7 @@ class _CollectorThread(threading.Thread):
         ws,
         error,
     ) -> None:
+        """Imprime o erro e fecha o WebSocket para reconectar."""
         if not _shutdown.is_set():
             print(
                 f"\n[COLETOR] Erro WebSocket: "
@@ -2159,6 +2207,7 @@ class _CollectorThread(threading.Thread):
         code,
         msg,
     ) -> None:
+        """Informa o encerramento da conexão quando não foi intencional."""
         if not _shutdown.is_set() and not self._stopped.is_set():
             action = 'coleta bloqueada' if self.fatal_error else 'reconectando...'
             print(
@@ -2178,6 +2227,7 @@ def _wait_for_ticks(
 ) -> None:
     """Bloqueia até haver ticks e contratos rotuláveis para treino temporal."""
     def check_collector():
+        """Levanta se houver troca de mercado ou se o coletor falhou ou terminou."""
         _check_market_switch()
         if collector is not None and (collector.fatal_error or not collector.is_alive()):
             raise RuntimeError(collector.fatal_error or 'coletor encerrado sem dados')
@@ -2226,6 +2276,7 @@ def _wait_for_ticks(
 
 
 def _count_labelable_contracts_for_training() -> int:
+    """Conta contratos rotuláveis do ativo no CSV de ticks; 0 se ausente."""
     if not os.path.exists(TICKS_CSV):
         return 0
     try:
@@ -2274,6 +2325,7 @@ def _load_latest_final_metrics():
 
 
 def _should_promote_model(current,challenger):
+    """Decide se o candidato substitui o modelo atual; retorna (promover, motivo)."""
     if not challenger or not challenger.get('eligible'):
         reasons = (challenger or {}).get('rejection_reasons')
         return False, '; '.join(reasons) if reasons else 'teste final não comprova qualidade mínima no vencimento configurado'
@@ -2446,10 +2498,12 @@ def _run_training(
 
 
 def _safe_symbol_slug(symbol: str) -> str:
+    """Converte o símbolo em texto seguro para nomes de arquivo."""
     return "".join(ch if ch.isalnum() else "_" for ch in str(symbol)).strip("_") or "symbol"
 
 
 def _training_rank_key(metrics: dict) -> tuple:
+    """Chave de ordenação de candidatos: elegibilidade, expectativa, win rate, AUC, F1 e número de contratos."""
     observed = metrics.get("observed_payout_evaluation") or {}
     payout_metrics = observed if observed.get("eligible") is not None else metrics
     return (
@@ -2572,6 +2626,7 @@ def _run_initial_symbol_tournament(
 # ─────────────────────────────────────────────────────────────────
 
 def _reset_ai_predictor():
+    """Reinicia o estado do preditor de IA."""
     import ai_predictor
     ai_predictor.reset()
 
@@ -2948,6 +3003,7 @@ def _wait_for_compatible_model(collector=None, poll_sec: int = 10) -> bool:
 # ─────────────────────────────────────────────────────────────────
 
 def _confirm_real_mode() -> bool:
+    """Exibe aviso do modo real e retorna True somente se o usuário digitar 'sim'."""
     print(
         "\n" + "!" * 55
     )
@@ -2977,6 +3033,7 @@ def _confirm_real_mode() -> bool:
 # ─────────────────────────────────────────────────────────────────
 
 def _main_session(resources, forced_symbol=None) -> None:
+    """Executa uma sessão do pipeline para um mercado: argumentos, coleta, treino, bot e retreino."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -3110,6 +3167,7 @@ def _main_session(resources, forced_symbol=None) -> None:
         sig,
         frame,
     ) -> None:
+        """Handler de Ctrl+C: sinaliza o encerramento e sai."""
         print(
             "\n\n[PIPELINE] "
             "Encerrando tudo... aguarde."
@@ -3493,6 +3551,7 @@ def _main_session(resources, forced_symbol=None) -> None:
 
 
 def _finish_market_session(resources):
+    """Encerra o coletor e aguarda o retreino em andamento antes de trocar de ativo."""
     # Never change module symbols while the previous training job can still write.
     _shutdown.set()
     collector = resources.pop('collector', None)
@@ -3508,6 +3567,7 @@ def _finish_market_session(resources):
 
 
 def main() -> None:
+    """Ponto de entrada: obtém o lock de execução e repete sessões, trocando de mercado quando indisponível."""
     resources = {'lock': acquire_execution_lock(Path(__file__).resolve().parent/'executor.lock')}
     forced_symbol = None
     try:

@@ -51,6 +51,7 @@ def _require_token(f):
     """Decorator: exige 'X-Auth-Token' correto para rotas de controle do bot."""
     @wraps(f)
     def wrapper(*args, **kwargs):
+        """Valida o token (ou a origem local) antes de chamar a rota."""
         # Permite requisições sem token apenas de localhost (sem token configurado)
         is_local = request.remote_addr in ("127.0.0.1", "::1")
         if _DASHBOARD_TOKEN:
@@ -93,12 +94,17 @@ CORS(app, origins=["http://localhost:*", "http://127.0.0.1:*"])
 import math as _math
 
 class _SafeJSONProvider(app.json_provider_class):  # type: ignore[name-defined]
+    """Provedor JSON do Flask que serializa NaN/Inf como null."""
     def dumps(self, obj, **kw):
+        """Serializa `obj` substituindo floats não finitos por null."""
         import json as _json
         class _Enc(_json.JSONEncoder):
+            """Encoder que limpa floats não finitos antes de codificar."""
             def iterencode(self, o, _one_shot=False):
+                """Codifica o objeto após `_clean`."""
                 return super().iterencode(self._clean(o), _one_shot)
             def _clean(self, o):
+                """Percorre dicts e listas trocando NaN/Inf por None."""
                 if isinstance(o, float):
                     if _math.isnan(o) or _math.isinf(o):
                         return None
@@ -109,6 +115,7 @@ class _SafeJSONProvider(app.json_provider_class):  # type: ignore[name-defined]
                     return [self._clean(v) for v in o]
                 return o
             def default(self, o):
+                """Delega ao encoder padrão."""
                 return super().default(o)
         return _json.dumps(obj, cls=_Enc, **kw)
 
@@ -209,12 +216,14 @@ def _read_csv_safe(path, **kwargs):
 
 
 def _last_local_contract() -> dict | None:
+    """Última operação do CSV local formatada como contrato encerrado, ou None se vazio."""
     df = _read_csv_safe(OPERATIONS_CSV)
     if df.empty:
         return None
     row = df.iloc[-1].to_dict()
 
     def _float(name: str) -> float:
+        """Campo da linha como float; 0.0 se ausente ou inválido."""
         try:
             value = float(row.get(name, 0) or 0)
             return value if pd.notna(value) else 0.0
@@ -222,6 +231,7 @@ def _last_local_contract() -> dict | None:
             return 0.0
 
     def _int(name: str) -> int:
+        """Campo da linha como inteiro positivo; 0 se ausente ou inválido."""
         try:
             value = int(float(row.get(name, 0) or 0))
             return value if value > 0 else 0
@@ -249,6 +259,7 @@ def _last_local_contract() -> dict | None:
 
 
 def _deriv_credentials_available() -> bool:
+    """Indica se há token configurado que não seja de teste/offline."""
     try:
         from config import TOKEN
         token = str(TOKEN or "").strip()
@@ -315,6 +326,7 @@ def _request_deriv_profit_table(limit: int = 100) -> list[dict]:
 
 
 def _contract_direction(transaction: dict) -> str:
+    """Mapeia o tipo/descrição do contrato para 'BUY' ou 'SELL' (ou o tipo bruto)."""
     contract_type = str(transaction.get("contract_type", "")).upper()
     if contract_type in {"CALL", "MULTUP", "ASIANU", "DIGITOVER"}:
         return "BUY"
@@ -329,6 +341,7 @@ def _contract_direction(transaction: dict) -> str:
 
 
 def _normalize_deriv_contract(transaction: dict) -> dict:
+    """Converte uma transação da profit_table da Deriv no registro de contrato usado pelo dashboard."""
     buy_price = float(transaction.get("buy_price", 0.0) or 0.0)
     sell_price = float(transaction.get("sell_price", 0.0) or 0.0)
     profit = float(transaction.get("profit", sell_price - buy_price) or 0.0)
@@ -363,6 +376,7 @@ def _normalize_deriv_contract(transaction: dict) -> dict:
 
 
 def _deriv_contract_report(limit: int = 100, *, force: bool = False) -> list[dict]:
+    """Contratos normalizados da Deriv com cache de 15s (ignorado com `force`); [] em caso de erro, que fica no cache."""
     global _deriv_contract_cache
     now = time.time()
     if (
@@ -382,6 +396,7 @@ def _deriv_contract_report(limit: int = 100, *, force: bool = False) -> list[dic
 
 
 def _contracts_frame(limit: int = 500) -> pd.DataFrame:
+    """Relatório de contratos como DataFrame."""
     return pd.DataFrame(_deriv_contract_report(limit=limit))
 
 
@@ -407,6 +422,7 @@ def _bot_pid() -> int | None:
 
 
 def _clear_stale_bot_pid(pid: int | None = None) -> None:
+    """Remove o arquivo de PID (se corresponder a `pid`) e marca o status do bot como obsoleto."""
     try:
         if PID_FILE.exists():
             current = int(PID_FILE.read_text().strip())
@@ -418,6 +434,7 @@ def _clear_stale_bot_pid(pid: int | None = None) -> None:
 
 
 def _mark_stale_bot_status(pid: int | None = None) -> None:
+    """Marca como 'crashed' um status que ainda indica execução sem processo correspondente."""
     try:
         state = _get_bot_status()
         status_pid = int(state.get("pid") or 0)
@@ -443,6 +460,7 @@ def _mark_stale_bot_status(pid: int | None = None) -> None:
 
 
 def _is_pipeline_process(proc) -> bool:
+    """Verifica se o processo psutil é um pipeline.py ativo executando neste repositório."""
     try:
         if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
             return False
@@ -495,10 +513,12 @@ def _bot_running() -> tuple[bool, int | None]:
 
 
 def _utc_now_iso() -> str:
+    """Instante atual em UTC no formato ISO 8601."""
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
 def _append_bot_log(message: str) -> None:
+    """Acrescenta a mensagem ao log em disco e ao buffer circular."""
     try:
         with PIPELINE_LOG_TXT.open("a", encoding="utf-8") as log_file:
             log_file.write(message + "\n")
@@ -509,6 +529,7 @@ def _append_bot_log(message: str) -> None:
 
 
 def _persist_bot_status(status: dict) -> None:
+    """Grava o status do bot em `bot_status.json` com substituição atômica sob lock."""
     with _bot_status_lock:
         temp_path = BOT_STATUS_JSON.with_name(
             f".{BOT_STATUS_JSON.name}.{os.getpid()}.{threading.get_ident()}.tmp"
@@ -525,12 +546,14 @@ def _persist_bot_status(status: dict) -> None:
 
 
 def _get_bot_status() -> dict:
+    """Lê o status persistido do bot; dict vazio se inválido."""
     with _bot_status_lock:
         data = _read_json_safe(BOT_STATUS_JSON)
     return data if isinstance(data, dict) else {}
 
 
 def _set_bot_status(**updates) -> dict:
+    """Mescla `updates` ao status persistido do bot e o retorna."""
     state = _get_bot_status()
     state.update(updates)
     _persist_bot_status(state)
@@ -538,6 +561,7 @@ def _set_bot_status(**updates) -> dict:
 
 
 def _mark_bot_stopped(returncode: int | None = None, *, requested: bool = False) -> dict:
+    """Registra o fim do processo ('stopped' ou 'crashed'), limpa PID e processo e registra no log."""
     global _bot_process
     now = _utc_now_iso()
     if not isinstance(returncode, int):
@@ -564,6 +588,7 @@ def _mark_bot_stopped(returncode: int | None = None, *, requested: bool = False)
 
 
 def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> dict:
+    """Reconcilia o status persistido com a existência real do processo, marcando queda quando necessário."""
     if running is None:
         running, pid = _bot_running()
     state = _get_bot_status()
@@ -597,6 +622,7 @@ def _persist_backtest_state(state: dict) -> None:
 
 
 def _get_backtest_state() -> dict:
+    """Estado do backtest em memória, carregado do disco se ainda vazio."""
     global _backtest_state
     with _backtest_lock:
         if not _backtest_state and BACKTEST_STATE_JSON.exists():
@@ -610,6 +636,7 @@ def _get_backtest_state() -> dict:
 
 
 def _set_backtest_state(**updates) -> dict:
+    """Mescla `updates` ao estado do backtest, persiste e retorna uma cópia."""
     global _backtest_state
     with _backtest_lock:
         current = _get_backtest_state()
@@ -620,6 +647,7 @@ def _set_backtest_state(**updates) -> dict:
 
 
 def _backtest_running() -> tuple[bool, int | None]:
+    """(em execução, PID) considerando apenas o subprocesso deste servidor."""
     with _backtest_lock:
         if _backtest_process is not None and _backtest_process.poll() is None:
             return True, _backtest_process.pid
@@ -683,6 +711,7 @@ def _validated_number(
     maximum: float,
     integer: bool = False,
 ):
+    """Lê `key` de `data` como número (int ou float) dentro de [minimum, maximum]; ValueError se inválido."""
     try:
         value = int(data.get(key, default)) if integer else float(data.get(key, default))
     except (TypeError, ValueError):
@@ -693,6 +722,7 @@ def _validated_number(
 
 
 def _safe_report_path(state: dict) -> Path | None:
+    """Caminho do relatório do estado se estiver dentro da raiz de backtests; senão None."""
     raw = state.get("report_path")
     if not raw:
         return None
@@ -710,6 +740,7 @@ def _safe_report_path(state: dict) -> Path | None:
 
 @app.route("/")
 def index():
+    """GET /: serve a página principal do dashboard."""
     return send_from_directory(str(STATIC_DIR), "index.html")
 
 
@@ -736,6 +767,7 @@ def app_js():
 
 @app.route("/api/summary")
 def api_summary():
+    """GET /api/summary: resumo de desempenho a partir dos contratos da Deriv e do estado de risco."""
     risk_state = _read_json_safe(RISK_STATE_JSON)
     summary = _summary_from_contract_report(_deriv_contract_report(limit=500), risk_state)
     summary["risk_state"] = risk_state
@@ -749,6 +781,7 @@ def api_summary():
 
 @app.route("/api/ticks")
 def api_ticks():
+    """GET /api/ticks: últimos `n` ticks (máx. 2000), filtráveis por `symbol` e `from_epoch`."""
     n = min(int(request.args.get("n", 300)), 2000)
     symbol = str(request.args.get("symbol", "")).strip()
     from_epoch_raw = request.args.get("from_epoch")
@@ -791,6 +824,7 @@ def api_ticks():
 
 @app.route("/api/trades")
 def api_trades():
+    """GET /api/trades: últimos `n` contratos da Deriv (máx. 500) e o erro de consulta, se houver."""
     n = min(int(request.args.get("n", 50)), 500)
     force = str(request.args.get("force", "")).lower() in {"1", "true", "yes"}
     records = _deriv_contract_report(limit=n, force=force)[:n]
@@ -805,6 +839,7 @@ def api_trades():
 
 @app.route("/api/indicators")
 def api_indicators():
+    """GET /api/indicators: indicadores registrados na última operação local."""
     df = _read_csv_safe(OPERATIONS_CSV)
 
     if df.empty:
@@ -827,6 +862,7 @@ def api_indicators():
 
 @app.route("/api/model")
 def api_model():
+    """GET /api/model: existência dos arquivos de modelo e contagens de ticks e linhas do dataset."""
     ticks_count  = 0
     dataset_rows = 0
 
@@ -856,6 +892,7 @@ def api_model():
 
 @app.route("/api/bot/status")
 def api_bot_status():
+    """GET /api/bot/status: situação do processo do bot, uptime e últimas decisões."""
     running, pid = _bot_running()
     status = _refresh_bot_status(running, pid)
 
@@ -892,6 +929,7 @@ def api_bot_status():
 @app.route("/api/bot/start", methods=["POST"])
 @_require_token
 def api_bot_start():
+    """POST /api/bot/start (token): valida parâmetros e inicia `pipeline.py` em subprocesso; retorna PID e opções."""
     running, pid = _bot_running()
     if running:
         return jsonify({"ok": False, "msg": f"Bot já está rodando (PID {pid})."}), 409
@@ -1020,6 +1058,7 @@ def api_bot_start():
 @app.route("/api/bot/stop", methods=["POST"])
 @_require_token
 def api_bot_stop():
+    """POST /api/bot/stop (token): envia SIGTERM ao pipeline e seus filhos e marca o status como 'stopping'."""
     running, pid = _bot_running()
     if not running or pid is None:
         return jsonify({"ok": False, "msg": "Bot não está rodando."}), 409
@@ -1083,6 +1122,7 @@ def api_bot_data_clear():
 
 @app.route("/api/bot/logs")
 def api_bot_logs():
+    """GET /api/bot/logs: linhas recentes do log do pipeline (buffer ou arquivo)."""
     with _bot_log_lock:
         lines = list(_bot_log_buffer)
     if not lines:
@@ -1094,6 +1134,7 @@ def api_bot_logs():
 
 @app.route("/api/backtest/status")
 def api_backtest_status():
+    """GET /api/backtest/status: estado da execução do backtest, parâmetros e últimos logs."""
     running, pid = _backtest_running()
     state = _get_backtest_state()
     with _backtest_lock:
@@ -1128,6 +1169,7 @@ def api_backtest_status():
 @app.route("/api/backtest/start", methods=["POST"])
 @_require_token
 def api_backtest_start():
+    """POST /api/backtest/start (token): valida parâmetros e inicia `backtest.py` em subprocesso (HTTP 202 com run_id e PID)."""
     global _backtest_process
 
     bot_is_running, _ = _bot_running()
@@ -1296,6 +1338,7 @@ def api_backtest_start():
 @app.route("/api/backtest/stop", methods=["POST"])
 @_require_token
 def api_backtest_stop():
+    """POST /api/backtest/stop (token): termina o subprocesso do backtest em execução."""
     running, pid = _backtest_running()
     if not running or pid is None:
         return jsonify({"ok": False, "msg": "Backtest não está em execução."}), 409
@@ -1315,6 +1358,7 @@ def api_backtest_stop():
 
 @app.route("/api/backtest/result")
 def api_backtest_result():
+    """GET /api/backtest/result: relatório do último backtest com as últimas `n` operações e curva de capital amostrada."""
     state = _get_backtest_state()
     report_path = _safe_report_path(state)
     if report_path is None or not report_path.exists():
@@ -1358,6 +1402,7 @@ def api_backtest_result():
 
 @app.route("/api/equity")
 def api_equity():
+    """GET /api/equity: curva de saldo reconstruída a partir dos contratos e do saldo atual."""
     records = list(reversed(_deriv_contract_report(limit=500)))
     if not records:
         return jsonify([])
@@ -1460,6 +1505,7 @@ def _tail_csv(path, n: int) -> pd.DataFrame:
 
 
 def _read_json_safe(path) -> dict:
+    """Lê um arquivo JSON; dict vazio se ausente ou inválido."""
     try:
         if os.path.exists(path):
             with open(path) as f:
@@ -1504,6 +1550,7 @@ def _summary_from_risk_state(risk_state: dict) -> dict:
 
 
 def _summary_from_contract_report(records: list[dict], risk_state: dict) -> dict:
+    """Resumo de saldo, PnL e taxa de acerto a partir dos contratos (do dia, se houver); sem contratos usa o estado de risco."""
     balance = float(risk_state.get("balance", 0.0) or 0.0)
     daily_start = float(risk_state.get("daily_start_balance", risk_state.get("initial_balance", balance)) or 0.0)
     today = dt.datetime.now().date()
@@ -1684,6 +1731,7 @@ def api_state():
 
 @app.route("/api/contract-active")
 def api_contract_active():
+    """GET /api/contract-active: contrato ativo salvo em `state.json` ou, sem ele, o último contrato local."""
     state = _read_json_safe(STATE_JSON)
     ac = state.get("active_contract")
     if not isinstance(ac, dict) or not ac.get("has_active"):
@@ -1775,6 +1823,7 @@ def api_indicator_series():
 
 @app.route("/api/model-history")
 def api_model_history():
+    """GET /api/model-history: histórico de métricas de treino (lista), sem cache."""
     data = _read_json_safe(MODEL_METRICS_JSON)
     resp = jsonify(data) if isinstance(data, list) else jsonify([])
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -1786,6 +1835,7 @@ def api_model_history():
 
 @app.route("/api/model-metrics")
 def api_model_metrics():
+    """GET /api/model-metrics: métricas do modelo publicado, apenas se o artefato for válido e compatível; sem cache."""
     # Apenas métricas do artefato aprovado; histórico de candidatos tem rota própria.
     entry = {}
     try:
@@ -1809,6 +1859,7 @@ def api_model_metrics():
 
 @app.route("/api/system")
 def api_system():
+    """GET /api/system: uso de CPU, RAM e disco do sistema e do processo do bot (None sem psutil)."""
     result: dict = {
         "cpu_pct":     None,
         "ram_pct":     None,
@@ -1846,6 +1897,7 @@ def api_system():
 
 @app.route("/api/stats")
 def api_stats():
+    """GET /api/stats: estatísticas dos contratos (médias, profit factor, expectativa, histograma e por direção)."""
     df = _contracts_frame(limit=500)
     if df.empty:
         return jsonify({})
@@ -1916,6 +1968,7 @@ def api_stats():
 
 @app.route("/api/candles")
 def api_candles():
+    """GET /api/candles: últimas `n` velas OHLC (máx. 500) a partir do CSV de ticks, filtráveis por símbolo e epoch."""
     n = min(int(request.args.get("n", 100)), 500)
     symbol = str(request.args.get("symbol", "")).strip()
     from_epoch_raw = request.args.get("from_epoch")

@@ -85,6 +85,7 @@ class DerivBot:
         account_id: str = "",
         initial_ws_url: str = "",
     ) -> None:
+        """Inicializa buffers, estado da operação e restaura contrato ativo salvo em `state.json`."""
         self.symbol = SYMBOL
         self.risk_manager = risk_manager
         self.demo = demo
@@ -180,9 +181,11 @@ class DerivBot:
 
 
     def _uses_bearer_auth(self) -> bool:
+        """Indica se a sessão usa autenticação Bearer com conta definida."""
         return self.auth_mode == "bearer" and bool(self.account_id)
 
     def _get_ws_url(self) -> str:
+        """URL do WebSocket: a legada fixa ou, em Bearer, a pré-obtida/solicitada à API (consome a pré-obtida)."""
         if not self._uses_bearer_auth():
             return self._ws_url
 
@@ -199,10 +202,12 @@ class DerivBot:
         )
 
     def _next_request_id(self):
+        """Gera o próximo `req_id` incremental das requisições."""
         self._request_counter += 1
         return self._request_counter
 
     def _restore_active_contract(self):
+        """Recarrega de `state.json` um contrato ativo pendente; propostas sem compra são descartadas."""
         if not _STATE_JSON.exists():
             return
         saved = json.loads(_STATE_JSON.read_text()).get('active_contract')
@@ -228,6 +233,7 @@ class DerivBot:
             self._clear_pending()
 
     def _set_active_contract_state(self, clear=False):
+        """Persiste (ou limpa, com `clear`) o contrato ativo em `state.json` de forma atômica."""
         state = json.loads(_STATE_JSON.read_text()) if _STATE_JSON.exists() else {}
         state['active_contract'] = None if clear else dict(
             has_active=True, phase=self._phase, contract_id=self._open_contract_id,
@@ -241,6 +247,7 @@ class DerivBot:
         write_json_atomic(_STATE_JSON,state)
 
     def _write_runtime_status(self, *, tick_epoch: int = 0, force: bool = False, **updates) -> None:
+        """Atualiza `bot_status.json` (limitado a uma escrita a cada 5s, salvo `force`); falhas de I/O são ignoradas."""
         now = time.time()
         if not force and now - self._last_status_write < 5:
             return
@@ -266,6 +273,7 @@ class DerivBot:
             pass
 
     def _decision_counts(self) -> dict:
+        """Contagem de decisões recentes por motivo."""
         counts: dict[str, int] = {}
         for item in self._decision_history:
             reason = str(item.get("reason", "unknown") or "unknown")
@@ -281,6 +289,7 @@ class DerivBot:
         tick_epoch: int = 0,
         force: bool = True,
     ) -> None:
+        """Registra uma decisão no histórico, atualiza a sequência desfavorável e publica o status."""
         event = {
             "epoch": int(tick_epoch or self._last_tick_epoch or time.time()),
             "symbol": self.symbol,
@@ -334,6 +343,7 @@ class DerivBot:
         event: dict,
         indicators: Optional[dict],
     ) -> None:
+        """Conta decisões desfavoráveis consecutivas e aciona `on_market_unfavorable` ao atingir o limite."""
         unfavorable = set(
             getattr(config, "UNFAVORABLE_SYMBOL_SWITCH_REASONS", ())
         )
@@ -367,6 +377,7 @@ class DerivBot:
             )
 
     def _risk_allows_trade(self):
+        """Consulta o gerenciador de risco, a menos que `ENFORCE_RISK_GATE` esteja desligado."""
         return (not getattr(config, "ENFORCE_RISK_GATE", True)) or self.risk_manager.can_trade()
 
     def _record_api_error(
@@ -376,6 +387,7 @@ class DerivBot:
         phase: str,
         req_id=None,
     ) -> None:
+        """Imprime o erro da API e o grava em `bot_status.json` como `last_api_error`."""
         code = str(error.get("code") or "UnknownError")
         message = str(error.get("message") or "Erro desconhecido")
         details = {
@@ -400,9 +412,11 @@ class DerivBot:
         )
 
     def _proposal_error_switch_threshold(self) -> int:
+        """Limite configurado de erros de proposta antes de pedir troca de mercado."""
         return int(getattr(config, "PROPOSAL_API_ERROR_SWITCH_THRESHOLD", 3) or 0)
 
     def _request_switch_after_repeated_proposal_errors(self, reason: str) -> None:
+        """Conta erros de proposta e, ao atingir o limite sem contrato aberto, aciona `on_market_unfavorable`."""
         threshold = self._proposal_error_switch_threshold()
         if threshold <= 0:
             return
@@ -424,6 +438,7 @@ class DerivBot:
 
     @staticmethod
     def _payout_limit_from_error(error: dict) -> Optional[tuple[float, float]]:
+        """Extrai (payout máximo, payout atual) da mensagem de erro da API, ou None se ausente/inválido."""
         message = str(error.get("message") or "")
         match = re.search(
             r"maximum payout of\s+([0-9]+(?:\.[0-9]+)?).*?"
@@ -439,6 +454,7 @@ class DerivBot:
         return maximum, current
 
     def _retry_proposal_with_payout_cap(self, error: dict) -> bool:
+        """Reenvia uma vez a proposta com stake reduzida ao teto de payout; retorna se reenviou."""
         parsed = self._payout_limit_from_error(error)
         if (
             parsed is None
@@ -478,6 +494,7 @@ class DerivBot:
         return True
 
     def _handle_api_error(self, data: dict) -> None:
+        """Trata erro da API conforme a fase: proposta rejeitada, compra incerta (reconciliação) ou não correlacionado."""
         error = data.get("error") or {}
         req_id = data.get("req_id")
         phase = self._phase
@@ -521,6 +538,7 @@ class DerivBot:
         )
 
     def _decision_reason(self, signal: Optional[str], indicators: dict) -> str:
+        """Traduz sinal e indicadores no motivo textual registrado para a decisão."""
         if signal in ("BUY", "SELL"):
             return "signal_ready"
         if indicators.get("decision_block"):
@@ -538,6 +556,7 @@ class DerivBot:
         return "insufficient_indicator_data"
 
     def _clear_pending(self):
+        """Zera o estado da operação pendente e remove o contrato ativo persistido."""
         self._in_trade=False
         self._phase='idle'
         self._open_contract_id=None
@@ -604,6 +623,7 @@ class DerivBot:
                 time.sleep(5)
 
     def _merge_candles(self, candles):
+        """Valida e mescla velas fechadas ao buffer (máx. 500), descartando o que precede a última lacuna; ValueError se inválida."""
         merged = {int(c['epoch']): c for c in self._candles}
         for candle in candles:
             c = {k:float(candle[k]) for k in ('open','high','low','close')}
@@ -624,6 +644,7 @@ class DerivBot:
         self._candle_epochs=deque((c['epoch'] for c in ordered),maxlen=500)
 
     def _warm_adx(self):
+        """Recalcula o histórico de ADX a partir dos fechamentos do buffer."""
         self._adx_history.clear()
         closes=list(self._candle_closes)
         for end in range(29,len(closes)+1):
@@ -632,6 +653,7 @@ class DerivBot:
                 self._adx_history.append(value)
 
     def _preload_candles_from_csv(self):
+        """Pré-carrega velas fechadas do símbolo a partir do CSV de ticks, se o histórico for válido."""
         if not Path(TICKS_CSV).exists():
             return
         records, rejected=read_records(TICKS_CSV)
@@ -648,6 +670,7 @@ class DerivBot:
         self._warm_adx()
 
     def _on_open(self, ws) -> None:
+        """Ao conectar, verifica a conta Bearer e inicia o fluxo, ou envia `authorize` no modo legado."""
         print("[BOT] Conectado à Deriv WebSocket API")
         self._write_runtime_status(force=True, event="ws_open")
 
@@ -663,12 +686,15 @@ class DerivBot:
             ws.send(json.dumps({"authorize": TOKEN}))
 
     def _market_switch_pending(self):
+        """Indica se há troca de mercado solicitada pelo callback externo."""
         return getattr(self, 'market_switch_requested', lambda: False)()
 
     def _market_switch_ready(self):
+        """Troca de mercado solicitada e sem contrato em andamento."""
         return self._market_switch_pending() and not self._in_trade
 
     def _on_message(self, ws, message: str) -> None:
+        """Despacha cada mensagem do WebSocket ao tratador do seu `msg_type`."""
         if self._market_switch_ready():
             ws.close()
             return
@@ -729,9 +755,11 @@ class DerivBot:
             )
 
     def _on_error(self, ws, error) -> None:
+        """Imprime erro do WebSocket."""
         print(f"[BOT] Erro WebSocket: {error}")
 
     def _on_close(self, ws, code, msg) -> None:
+        """Marca a conta como não verificada ao perder a conexão."""
         self._auth_verified=False
         print(
             f"[BOT] Conexão encerrada "
@@ -743,6 +771,7 @@ class DerivBot:
     # ─────────────────────────────────────────────────────────
 
     def _handle_authorize(self, ws, auth):
+        """Confere que a conta autorizada corresponde ao modo demo/real, vincula-a ao risco e inicia o stream."""
         virtual=auth.get('is_virtual')
         if virtual not in (0,1,False,True) or bool(virtual)!=self.demo or not auth.get('loginid'):
             self._auth_verified=False
@@ -753,6 +782,7 @@ class DerivBot:
         self._start_authenticated_stream(ws)
 
     def _verify_account(self,key,balance):
+        """Vincula a conta (hash e saldo) ao gerenciador de risco; ValueError se houver contrato pendente de outra conta."""
         saved=getattr(self,'_saved_account_key','')
         if self._in_trade and (not saved or saved!=key):
             raise ValueError('contrato pendente sem identidade de conta compatível; reconciliação necessária')
@@ -760,6 +790,7 @@ class DerivBot:
         self._auth_verified=True
 
     def _start_authenticated_stream(self, ws) -> None:
+        """Após autenticação, reconcilia/reassina contrato ativo e solicita 100 velas históricas."""
         if not self._auth_verified:
             return
         if self._in_trade and not self._open_contract_id:
@@ -807,10 +838,12 @@ class DerivBot:
         )
 
     def _request_portfolio_reconciliation(self, ws) -> None:
+        """Solicita o portfólio para reconciliar uma compra sem confirmação."""
         self._portfolio_req_id = self._next_request_id()
         ws.send(json.dumps({"portfolio": 1, "req_id": self._portfolio_req_id}))
 
     def _handle_portfolio(self, ws, portfolio, req_id=None) -> None:
+        """Procura no portfólio o contrato da compra incerta; se achar, retoma o acompanhamento, senão descarta o pendente."""
         if not self._in_trade or self._open_contract_id:
             return
         if self._portfolio_req_id is not None and req_id != self._portfolio_req_id:
@@ -877,6 +910,7 @@ class DerivBot:
         self._clear_pending()
 
     def _handle_api_candles(self, ws, candles):
+        """Carrega velas históricas da API, inicia a vela corrente e assina o fluxo de ticks."""
         cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
         closed=[c for c in candles if int(c['epoch'])+CANDLE_TIMEFRAME_SEC<=cutoff]
         self._merge_candles(closed)
@@ -893,6 +927,7 @@ class DerivBot:
         ws.send(json.dumps({'ticks':self.symbol,'subscribe':1}))
 
     def _handle_tick(self, ws, tick: dict) -> None:
+        """Valida o tick, monta velas, aplica timeouts e, em vela fechada com risco liberado, avalia sinal e envia proposta."""
         if tick.get('symbol') != self.symbol or not self._auth_verified:
             return
         try:
@@ -1121,6 +1156,7 @@ class DerivBot:
                 self._candles_since_last_entry = 0
 
     def _send_proposal(self,ws,direction,indicators):
+        """Aplica pré-checagens, persiste a intenção e envia a proposta CALL/PUT; retorna se foi enviada."""
         if self._market_switch_pending() or self._in_trade or not self._auth_verified or not self._risk_allows_trade():
             self._record_decision(reason="proposal_precheck_block", signal=direction, indicators=indicators)
             return False
@@ -1171,6 +1207,7 @@ class DerivBot:
         return True
 
     def _handle_proposal(self,ws,proposal,req_id=None):
+        """Valida a proposta recebida (preço, payout, risco) e envia a compra; caso contrário descarta o pendente."""
         if self._phase!='proposal' or req_id is None or req_id!=self._proposal_req_id:
             return
         if self._market_switch_pending() or time.time()-self._pending_timestamp>PROPOSAL_TIMEOUT_SEC:
@@ -1203,6 +1240,7 @@ class DerivBot:
         ws.send(json.dumps({'buy':self._proposal_id,'price':self._pending_buy_price,'req_id':self._buy_req_id}))
 
     def _handle_buy(self,ws,buy,req_id=None):
+        """Registra o contrato comprado, assina suas atualizações e agenda a consulta de resultado."""
         if self._phase not in ('buy','reconciling') or req_id is None or req_id!=self._buy_req_id:
             return
         contract_id=str(buy.get('contract_id',''))
@@ -1222,6 +1260,7 @@ class DerivBot:
         self._schedule_poll(contract_id,duration_seconds(self._pending_duration,DURATION_UNIT)+2)
 
     def _schedule_poll(self,contract_id,delay=5):
+        """Agenda (substituindo o anterior) um timer que consulta o resultado do contrato."""
         if self._contract_poll_timer is not None:
             self._contract_poll_timer.cancel()
         self._contract_poll_timer=threading.Timer(delay,self._poll_contract_result,args=[contract_id])
@@ -1229,6 +1268,7 @@ class DerivBot:
         self._contract_poll_timer.start()
 
     def _handle_contract_update(self,contract):
+        """Atualiza entrada do contrato aberto e, quando vendido, registra o resultado no risco e limpa o pendente."""
         with self._state_lock:
             if str(contract.get('contract_id',''))!=self._open_contract_id:
                 return
@@ -1262,6 +1302,7 @@ class DerivBot:
             self._clear_pending()
 
     def _poll_contract_result(self,contract_id,attempt=0):
+        """Pede o estado do contrato à API e reagenda nova consulta enquanto ele estiver aberto."""
         if self._open_contract_id!=contract_id:
             return
         self._contract_poll_timer=None
@@ -1287,6 +1328,7 @@ class DerivBot:
         self._watchdog.start()
 
     def _on_heartbeat_fail(self) -> None:
+        """Callback do watchdog: registra o timeout e fecha o WebSocket para forçar reconexão."""
         print(
             f"\n[SAÚDE] Nenhum tick recebido por "
             f"{HEARTBEAT_TIMEOUT_SEC}s "
@@ -1441,6 +1483,7 @@ class DerivBot:
         indicators: dict,
         signal: Optional[str],
     ) -> None:
+        """Imprime em linha única o preço, os indicadores e o sinal atual."""
         if not indicators:
             return
 

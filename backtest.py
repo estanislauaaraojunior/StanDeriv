@@ -58,6 +58,7 @@ from market_data import read_records, canonicalize
 
 @dataclass(frozen=True)
 class Tick:
+    """Tick de preço imutável (epoch, preço e símbolo)."""
     epoch: int
     price: float
     symbol: str
@@ -65,6 +66,7 @@ class Tick:
 
 @dataclass(frozen=True)
 class Candle:
+    """Vela OHLC com o índice do primeiro tick que a compõe."""
     epoch: int
     open: float
     high: float
@@ -75,6 +77,7 @@ class Candle:
 
 @dataclass(frozen=True)
 class SignalContext:
+    """Dados disponíveis no momento da decisão, entregues ao provedor de sinal e de duração."""
     prices: list[float]
     adx_min: float
     adx_history: list[float]
@@ -85,6 +88,7 @@ class SignalContext:
 
 @dataclass
 class BacktestSettings:
+    """Parâmetros configuráveis da simulação (capital, payout, custos, risco, vela e contrato)."""
     initial_balance: float = 1000.0
     payout_ratio: float = 0.85
     cost_rate: float = 0.0
@@ -112,6 +116,7 @@ class BacktestSettings:
     risk_timezone: str = "UTC"
 
     def validate(self) -> None:
+        """Levanta ValueError se algum parâmetro estiver fora dos limites aceitos."""
         try:
             ZoneInfo(self.risk_timezone)
         except (ZoneInfoNotFoundError, ValueError, TypeError) as exc:
@@ -148,6 +153,7 @@ class BacktestSettings:
 
 @dataclass
 class TradeRecord:
+    """Registro de um contrato simulado, do sinal à liquidação."""
     trade_id: int
     symbol: str
     direction: str
@@ -171,6 +177,7 @@ class TradeRecord:
 
 @dataclass
 class BacktestReport:
+    """Resultado completo do backtest: configuração, qualidade dos dados, artefatos, métricas e operações."""
     created_at: str
     source: str
     symbol: str
@@ -181,6 +188,7 @@ class BacktestReport:
     trades: list[TradeRecord]
 
     def to_dict(self, include_trades: bool = True) -> dict:
+        """Converte o relatório em dict serializável, com ou sem a lista de operações."""
         result = {
             "created_at": self.created_at,
             "source": self.source,
@@ -203,6 +211,7 @@ class HistoricalRiskManager:
     """Espelho determinístico das regras de risco, guiado pelo tempo histórico."""
 
     def __init__(self, settings: BacktestSettings) -> None:
+        """Inicializa saldo, contadores diários e pausa a partir das configurações."""
         self.settings = settings
         self.timezone = ZoneInfo(settings.risk_timezone)
         self.balance = settings.initial_balance
@@ -214,6 +223,7 @@ class HistoricalRiskManager:
         self.pause_until_epoch = 0
 
     def _advance_day(self, epoch: int) -> None:
+        """Reinicia lucro diário e perdas consecutivas ao mudar o dia no fuso de risco."""
         day = datetime.fromtimestamp(epoch, self.timezone).date()
         if day != self.current_day:
             self.current_day = day
@@ -222,9 +232,11 @@ class HistoricalRiskManager:
             self.consecutive_losses = 0
 
     def get_stake(self) -> float:
+        """Stake como percentual do saldo, respeitando o mínimo."""
         return max(round(self.balance * self.settings.stake_pct, 2), self.settings.min_stake)
 
     def can_trade(self, epoch: int) -> tuple[bool, str]:
+        """Retorna (permitido, motivo do bloqueio) conforme pausa, stops diários e saldo."""
         self._advance_day(epoch)
         if epoch < self.pause_until_epoch:
             return False, "pause"
@@ -244,6 +256,7 @@ class HistoricalRiskManager:
         return True, ""
 
     def settle(self, epoch: int, net_profit: float) -> tuple[float, float]:
+        """Aplica o resultado líquido ao saldo, atualiza sequência de perdas e pausa; retorna (saldo antes, saldo depois)."""
         self._advance_day(epoch)
         balance_before = self.balance
         self.balance = round(self.balance + net_profit, 10)
@@ -355,6 +368,7 @@ def _resolve_expiry_index(
     duration: int,
     duration_unit: str,
 ) -> Optional[int]:
+    """Índice do tick de expiração (por ticks ou tempo), ou None se os dados acabarem antes."""
     if duration_unit == "t":
         expiry_index = entry_index + duration
     else:
@@ -365,6 +379,7 @@ def _resolve_expiry_index(
 
 
 def _artifact_fingerprint(path: str) -> Optional[str]:
+    """SHA-256 do arquivo, ou None se não existir."""
     artifact = Path(path)
     if not artifact.exists() or not artifact.is_file():
         return None
@@ -376,10 +391,12 @@ def _artifact_fingerprint(path: str) -> Optional[str]:
 
 
 def _utc_iso(epoch: int) -> str:
+    """Epoch em segundos como timestamp ISO 8601 em UTC."""
     return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
 
 
 def _ticks_fingerprint(ticks: list[Tick]) -> str:
+    """SHA-256 do conteúdo serializado dos ticks."""
     digest = hashlib.sha256()
     for tick in ticks:
         digest.update(json.dumps(asdict(tick), sort_keys=True).encode())
@@ -388,6 +405,7 @@ def _ticks_fingerprint(ticks: list[Tick]) -> str:
 
 
 class BacktestEngine:
+    """Motor que percorre velas fechadas, gera sinais, simula entradas/liquidações e calcula métricas."""
     def __init__(
         self,
         ticks: list[Tick],
@@ -396,6 +414,7 @@ class BacktestEngine:
         signal_provider: Optional[SignalProvider] = None,
         duration_provider: Optional[DurationProvider] = None,
     ) -> None:
+        """Valida as configurações e define provedores de sinal e duração (padrão: estratégia e duração configurada)."""
         self._strict_data = signal_provider is None
         self.ticks = ticks
         self.symbol = symbol
@@ -405,6 +424,7 @@ class BacktestEngine:
         self.duration_provider = duration_provider or self._default_duration
 
     def _default_signal(self, context: SignalContext) -> tuple[Optional[str], dict]:
+        """Sinal padrão via `strategy.get_signal`."""
         return strategy.get_signal(
             context.prices,
             adx_min=context.adx_min,
@@ -416,11 +436,13 @@ class BacktestEngine:
         )
 
     def _default_duration(self, context: SignalContext) -> int:
+        """Duração fixa configurada ou prevista pelo modelo quando `dynamic_duration` está ativo."""
         if self.settings.dynamic_duration:
             return ai_predictor.predict_duration(context.prices)
         return self.settings.duration
 
     def run(self, source: str = "") -> BacktestReport:
+        """Executa a simulação sobre os ticks e retorna o relatório; levanta ValueError para dados ou modelo inadequados."""
         if self._strict_data and any(b.epoch-a.epoch>MAX_TICK_GAP_SEC for a,b in zip(self.ticks,self.ticks[1:])):
             raise ValueError('backtest exige segmento contínuo de ticks identificados; separe lacunas antes de avaliar')
         candles = build_candles(self.ticks, self.settings.timeframe_sec)
@@ -454,6 +476,7 @@ class BacktestEngine:
         equity_curve = [self.settings.initial_balance]
 
         def settle_pending() -> None:
+            """Liquida a operação pendente no risco, registra-a e anexa o saldo à curva de capital."""
             nonlocal pending
             if pending is None:
                 return
@@ -627,6 +650,7 @@ class BacktestEngine:
         alerts: deque[dict],
         evaluation_epoch: int,
     ) -> None:
+        """Detecta padrões de vela fortes (>= 0.5), acrescenta alertas e descarta os expirados."""
         if not self.settings.use_candle_patterns or len(candles) < 3:
             return
         raw = [
@@ -664,6 +688,7 @@ class BacktestEngine:
         blocked_reasons: Counter[str],
         risk: HistoricalRiskManager,
     ) -> dict:
+        """Calcula métricas de resultado, drawdown, sequências, distribuições e premissas da simulação."""
         wins = sum(trade.outcome == "WIN" for trade in trades)
         losses = sum(trade.outcome in {"LOSS", "TIE"} for trade in trades)
         gross_wins = sum(max(trade.net_profit, 0.0) for trade in trades)
@@ -748,6 +773,7 @@ class BacktestEngine:
 
 
 def write_report(report: BacktestReport, output_dir: str | Path) -> tuple[Path, Path]:
+    """Grava `backtest_report.json` e `backtest_trades.csv` no diretório e retorna os caminhos."""
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     json_path = destination / "backtest_report.json"
@@ -769,6 +795,7 @@ def write_report(report: BacktestReport, output_dir: str | Path) -> tuple[Path, 
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Monta o parser de argumentos da CLI."""
     parser = argparse.ArgumentParser(description="Backtesting offline do StanDeriv")
     parser.add_argument("--input", default=TICKS_CSV, help="CSV de ticks")
     parser.add_argument("--symbol", help="símbolo isolado; padrão: ativo ou mais frequente")
@@ -798,6 +825,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """CLI: carrega ticks, executa o backtest, grava relatórios e retorna 0 (sucesso) ou 1 (erro)."""
     args = _build_parser().parse_args()
     settings = BacktestSettings(
         initial_balance=args.balance,

@@ -29,6 +29,7 @@ from model_contract import compatible, fingerprint, write_json_atomic, usable, l
 class CalibratedDirectionModel:
     """Calibração temporal multinomial/temperatura e controle bruto diagnóstico."""
     def __init__(self, estimator, method='multinomial'):
+        """Envolve o estimador; `method` é 'multinomial', 'temperature' ou 'raw' (sem calibração)."""
         if method not in ('multinomial', 'temperature', 'raw'):
             raise ValueError('método de calibração inválido')
         self.estimator = estimator
@@ -36,11 +37,13 @@ class CalibratedDirectionModel:
         self.method = method
 
     def fit(self, X, y):
+        """Ajusta o estimador base com os rótulos codificados e guarda `classes_`."""
         self.estimator.fit(X, self.encoder.fit_transform(y))
         self.classes_ = self.encoder.classes_
         return self
 
     def calibrate(self, X, y):
+        """Calibra as probabilidades (temperatura ou regressão logística) em dados separados do ajuste."""
         if self.method == 'raw':
             return self
         if self.method == 'temperature':
@@ -49,6 +52,7 @@ class CalibratedDirectionModel:
             logits = np.log(np.clip(self._raw_aligned(X), 1e-12, 1))
             labels = np.searchsorted(self.classes_, y)
             def loss(log_temperature):
+                """Log loss médio das probabilidades reescaladas pela temperatura exp(log_temperature)."""
                 prob = softmax(logits / np.exp(log_temperature), axis=1)
                 return float(-np.log(np.clip(prob[np.arange(len(y)), labels], 1e-15, 1)).mean())
             result = minimize_scalar(loss, bounds=(-3., 3.), method='bounded')
@@ -62,6 +66,7 @@ class CalibratedDirectionModel:
         return self
 
     def predict_proba(self, X):
+        """Retorna probabilidades por classe conforme o método de calibração."""
         method = getattr(self, 'method', 'multinomial')  # bundles anteriores
         if method == 'raw':
             return self._raw_aligned(X)
@@ -70,12 +75,14 @@ class CalibratedDirectionModel:
         return self.calibrator.predict_proba(self.estimator.predict_proba(X))
 
     def _raw_aligned(self, X):
+        """Probabilidades brutas do estimador alinhadas ao conjunto completo `classes_`."""
         raw = self.estimator.predict_proba(X)
         result = np.zeros((len(X), len(self.classes_)))
         result[:, np.searchsorted(self.classes_, self.encoder.classes_)] = raw
         return result
 
     def predict(self, X):
+        """Retorna a classe de maior probabilidade."""
         return self.classes_[self.predict_proba(X).argmax(axis = 1)]
 
 
@@ -94,6 +101,7 @@ def _build_sequence_dataset(X, seq_len, epochs = None, timeframe_sec = 60):
 
 
 def temporal_partitions(df, test_ratio = .2):
+    """Divide em ajuste, calibração, validação e teste cronológicos com embargo de rótulos; levanta ValueError se insuficiente."""
     if not .1 <= test_ratio <= .3:
         raise ValueError('test_ratio deve estar entre 0.1 e 0.3')
     n = len(df)
@@ -111,6 +119,7 @@ def temporal_partitions(df, test_ratio = .2):
 
 
 def _metrics(model, df, payout=.85, *, features=None, quotes=None):
+    """Avalia o modelo via `training_evaluation.evaluate` e reprova amostras com menos de 30 contratos."""
     from training_evaluation import evaluate
     result = evaluate(model, df, payout, features=features, quotes=quotes)
     min_trades = 30
@@ -141,6 +150,7 @@ def walk_forward_partitions(development, folds=3):
 
 
 def candidate_estimators():
+    """Lista (nome, estimador) das árvores/boosting base com seed fixa."""
     from xgboost import XGBClassifier
     return [('RandomForest', RandomForestClassifier(n_estimators=300, max_depth=10,
                 min_samples_leaf=10, random_state=42, n_jobs=1)),
@@ -210,6 +220,7 @@ def fit_calibration_partition(development):
 
 
 def walk_forward_evaluate(development, features=None, *, candidates=None):
+    """Avalia cada candidato e método de calibração nas janelas walk-forward e agrega métricas e ganhos sobre a frequência de classes."""
     from copy import copy
     features = FEATURES if features is None else features
     partitions = list(walk_forward_partitions(development))
@@ -253,10 +264,12 @@ def walk_forward_evaluate(development, features=None, *, candidates=None):
 
 
 def choose_candidate(results):
+    """Escolhe o melhor resultado não diagnóstico segundo `selection_key`."""
     return max((r for r in results if not r.get('diagnostic_only', False)), key=selection_key)
 
 
 def selection_key(result):
+    """Chave de ordenação lexicográfica para seleção de candidatos."""
     return (result.get('log_loss_gain_vs_prior', 1.) > 0,
             result['trades'] >= 30 and result.get('empty_folds', 0) == 0,
             result['worst_expectancy'], result['mean_expectancy'],
@@ -266,6 +279,7 @@ def selection_key(result):
 def train(dataset_path, output_path, test_ratio = .2, gap_ratio = .02,
           tft_output_path = None, duration_output_path = None, payout_quotes_path = None, search_trials=6,
           compare_champion=True):
+    """Treina, calibra e avalia no teste final um bundle de direção; grava bundle, metadados, relatório e histórico de métricas e retorna as métricas finais."""
     metadata = json.loads(Path(str(dataset_path) + '.metadata.json').read_text())
     if not compatible(metadata, config.get_active_symbol()) or metadata.get('dataset_sha256') != fingerprint(dataset_path):
         raise ValueError('dataset incompatível, alterado ou sem proveniência')
@@ -399,6 +413,7 @@ def json_parameters(estimator):
 
 
 def main():
+    """CLI: treina com os argumentos informados e imprime as métricas em JSON."""
     p = argparse.ArgumentParser(description = __doc__)
     p.add_argument('--input', default = config.DATASET_CSV)
     p.add_argument('--output', default = config.AI_MODEL_PATH + '.candidate')
