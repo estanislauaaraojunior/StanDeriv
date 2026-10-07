@@ -90,12 +90,14 @@ def compute_feature_map(prices: list, candles: list = None) -> Optional[dict]:
             bb_position = (price - bb_lower) / band_range
 
     def _ret(n: int) -> float:
+        """Retorno percentual do preço atual em relação ao de `n` candles atrás."""
         if len(prices) <= n:
             return 0.0
         p_prev = prices[-1 - n]
         return (price - p_prev) / p_prev if p_prev != 0 else 0.0
 
     def _vol(n: int) -> float:
+        """Desvio-padrão dos retornos simples dos últimos `n` candles."""
         slice_ = prices[-n - 1:]
         if len(slice_) < 2:
             return 0.0

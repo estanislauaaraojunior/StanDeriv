@@ -16,12 +16,14 @@ _prediction_context = threading.local()
 
 
 def reset():
+    """Descarta o modelo carregado e seu estado, forçando novo carregamento na próxima consulta."""
     global _model, _model_loaded, _metadata, _loaded_symbol, _model_features
     with _lock:
         _model, _model_loaded, _metadata, _loaded_symbol, _model_features = None, False, {}, None, []
 
 
 def _load_model():
+    """Carrega e valida o bundle do ativo ativo; em falha, deixa o modelo vazio e registra o motivo."""
     global _model, _model_loaded, _model_features, _metadata, _loaded_symbol, _load_error
     _model_loaded = True
     _loaded_symbol = config.get_active_symbol()
@@ -42,14 +44,17 @@ def _load_model():
 
 
 def model_id():
+    """Identificador (hash) do modelo carregado, ou string vazia."""
     return _metadata.get('model_id', '')
 
 
 def prediction_model_id():
+    """Identificador do modelo usado na última previsão desta thread, ou string vazia."""
     return getattr(_prediction_context, 'model_id', '')
 
 
 def status():
+    """Garante o carregamento do modelo e informa se está pronto, seu id e o motivo de falha."""
     with _lock:
         if not _model_loaded or _loaded_symbol != config.get_active_symbol():
             _load_model()
@@ -57,15 +62,18 @@ def status():
 
 
 def _compute_feature_map(prices, candles = None):
+    """Atalho para `compute_feature_map`."""
     return compute_feature_map(prices, candles)
 
 
 def _extract_features(prices, candles = None):
+    """Vetor de features na ordem do modelo, ou None se não for possível calcular."""
     fm = compute_feature_map(prices, candles)
     return None if fm is None else [fm[f] for f in _FEATURES]
 
 
 def predict(prices, candles = None):
+    """Retorna (direção 'BUY'/'SELL' ou None, confiança); None com 0.0 se modelo ou dados forem inválidos."""
     _prediction_context.model_id = ""
     with _lock:
         if not _model_loaded or _loaded_symbol != config.get_active_symbol():

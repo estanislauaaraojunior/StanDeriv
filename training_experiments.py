@@ -16,6 +16,7 @@ from train_model import temporal_partitions, walk_forward_evaluate, choose_candi
 
 
 def compare(dataset_path, output_path):
+    """Compara perfis de features (base vs. contexto de horizonte) só no development e grava o relatório JSON."""
     metadata = json.loads(Path(str(dataset_path)+'.metadata.json').read_text())
     if not compatible(metadata, config.get_active_symbol()) or metadata.get('dataset_sha256') != fingerprint(dataset_path):
         raise ValueError('dataset sem proveniência compatível')

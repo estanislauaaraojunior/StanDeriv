@@ -12,6 +12,7 @@ from model_contract import MIN_EXPECTED_RETURN, EVALUATION_RISK_TIMEZONE, meets_
 
 
 def wilson_lower(wins, total):
+    """Limite inferior (95%) do intervalo de Wilson para a taxa de acerto; 0.0 sem amostras."""
     if not total:
         return 0.0
     rate, z = wins / total, 1.96
@@ -48,6 +49,7 @@ def probability_diagnostics(prob, classes, targets):
 
 
 def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence_floor=None):
+    """Simula entradas sequenciais (risco, cadência, payout e confiança) e retorna métricas e bloqueios por modo."""
     from backtest import BacktestSettings, HistoricalRiskManager
     floor = config.AI_CONFIDENCE_MIN if confidence_floor is None else confidence_floor
     if not math.isfinite(floor) or not config.AI_CONFIDENCE_MIN <= floor <= 1:
@@ -63,6 +65,7 @@ def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence
     break_even = []
 
     def settle():
+        """Liquida o contrato pendente no gerenciador de risco e atualiza pico e drawdown."""
         nonlocal pending, peak, max_drawdown
         risk.settle(*pending)
         peak = max(peak, risk.balance)
@@ -144,6 +147,7 @@ def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence
 
 
 def evaluate(model, df, payout=.85, *, features=None, quotes=None):
+    """Avalia o modelo no dataset (AUC, acurácia, F1, calibração e simulação por modo) e indica elegibilidade."""
     if not math.isfinite(payout) or payout <= 0 or df.empty:
         raise ValueError('payout ou dataset de avaliação inválido')
     features = FEATURES if features is None else features

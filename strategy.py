@@ -48,13 +48,16 @@ SignalResult = Tuple[Optional[str], dict]
 # ─────────────────────────────────────────────────────────────────
 
 def _entry_mode() -> str:
+    """Modo de entrada configurado (`ENTRY_MODE`), normalizado; padrão 'balanced'."""
     return str(getattr(config, "ENTRY_MODE", "balanced") or "balanced").strip().lower()
 
 def _opportunity_mode() -> bool:
+    """Indica se o modo de entrada é 'opportunity'."""
     return _entry_mode() == "opportunity"
 
 
 def _execution_signal_mode() -> str:
+    """Modo do sinal de execução configurado (`EXECUTION_SIGNAL_MODE`), validado contra os modos permitidos."""
     mode = str(
         getattr(config, "EXECUTION_SIGNAL_MODE", "trained_model") or "trained_model"
     ).strip().lower()
@@ -286,6 +289,7 @@ def _trained_model_signal(prices: list, *, candles: list = None) -> SignalResult
 
 
 def _price_action_signal(pa: Optional[dict]) -> tuple[Optional[str], float]:
+    """Combina as features de price action em um score e retorna (BUY/SELL/None, score) pelo limiar."""
     if not pa:
         return None, 0.0
     score = (
@@ -308,6 +312,7 @@ def _candle_pattern_signal(
     candle_alerts: list,
     evaluation_time: Optional[float] = None,
 ) -> tuple[Optional[str], Optional[str]]:
+    """Direção dos padrões de candle recentes e fortes mais novos; (None, 'candle_pattern_conflict') se divergirem."""
     now = time.time() if evaluation_time is None else evaluation_time
     valid = [
         alert for alert in (candle_alerts or [])

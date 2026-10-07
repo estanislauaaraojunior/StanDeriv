@@ -33,7 +33,9 @@ def market_unavailable(error):
 
 
 class ProposalRecorder:
+    """Solicita propostas CALL/PUT periodicamente (sem comprar) e registra o payout em CSV."""
     def __init__(self, path, symbol, duration, unit, currency='USD', interval=300, on_unavailable=None):
+        """Configura arquivo de saída, contrato amostrado, intervalo entre amostras e callback de mercado indisponível."""
         self.path, self.symbol = Path(path), symbol
         self.duration, self.unit, self.currency = duration, unit, currency
         self.interval, self.last_request = interval, -float('inf')
@@ -41,6 +43,7 @@ class ProposalRecorder:
         self.on_unavailable = on_unavailable
 
     def sample(self, ws, *, bearer, now=None):
+        """Envia pelo websocket propostas CALL e PUT se o intervalo mínimo desde a última amostra já passou."""
         now = time.time() if now is None else now
         self.pending = {k:v for k,v in self.pending.items() if now-v[1] <= 30}
         if now-self.last_request < self.interval:
@@ -56,6 +59,7 @@ class ProposalRecorder:
             ws.send(json.dumps(request))
 
     def handle(self, message, now=None):
+        """Processa resposta de proposta pendente e grava a linha no CSV; retorna True se a mensagem era dela."""
         key = message.get('req_id')
         if key not in self.pending:
             return False
@@ -93,7 +97,9 @@ class ProposalRecorder:
 
 
 class QuoteHistory:
+    """Histórico de payouts líquidos amostrados, consultado de forma causal por última cotação anterior."""
     def __init__(self, path, *, currency='USD', max_age=900):
+        """Carrega o CSV de propostas (lock compartilhado), agrupando por símbolo, duração e direção."""
         self.groups, self.max_age = {}, max_age
         with Path(path).open(newline='') as f:
             fcntl.flock(f, fcntl.LOCK_SH)
@@ -111,6 +117,7 @@ class QuoteHistory:
         self.epochs = {key: [v[0] for v in values] for key, values in self.groups.items()}
 
     def lookup(self, symbol, duration, unit, direction, epoch):
+        """Payout líquido da cota mais recente até `epoch` (direction 1=CALL), ou None se não houver ou estiver velha."""
         key = (symbol, int(duration), unit, 'CALL' if direction == 1 else 'PUT')
         times = self.epochs.get(key, [])
         index = bisect.bisect_right(times, epoch)-1

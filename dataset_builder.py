@@ -16,10 +16,12 @@ from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, duration_seconds,
 
 
 def _extract_features(window, candles = None):
+    """Atalho para `compute_feature_map` sobre a janela de preços."""
     return compute_feature_map(window, candles)
 
 
 def _record_to_candle(record):
+    """Converte um registro de candle do CSV no dicionário OHLC usado pelos indicadores."""
     return dict(epoch=record['epoch'], open=record['open'], high=record['high'],
                 low=record['low'], close=record['price'])
 
@@ -33,6 +35,7 @@ def _merge_feature_candles(selected, ticks):
 
 
 def _load_training_series(ticks_path, symbol):
+    """Lê e valida o CSV; retorna registros do símbolo, ticks, épocas dos ticks e candles de features."""
     records, rejected = read_records(ticks_path)
     if rejected:
         raise ValueError('CSV contém registros inválidos; recupere antes de treinar')
@@ -84,6 +87,7 @@ def count_labelable_contracts(ticks_path, symbol = None, window_size = FEATURE_W
 
 
 def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookforward = None, symbol = None):
+    """Gera o CSV de treino (features, alvo CALL/PUT/empate) e seu metadado .metadata.json; retorna o número de linhas."""
     if window_size != FEATURE_WINDOW:
         raise ValueError(f'janela deve ser {FEATURE_WINDOW}, igual à inferência')
     horizon = duration_seconds(config.DURATION, config.DURATION_UNIT)
@@ -170,6 +174,7 @@ def build_dataset(ticks_path, output_path, window_size = FEATURE_WINDOW, lookfor
 
 
 def main():
+    """CLI: constrói o dataset a partir dos ticks conforme os argumentos informados."""
     p = argparse.ArgumentParser(description = __doc__)
     p.add_argument('--input', default = config.TICKS_CSV)
     p.add_argument('--output', default = config.DATASET_CSV)

@@ -21,7 +21,9 @@ FIELDS = ['timestamp', 'symbol', 'direction', 'stake', 'duration', 'result', 'pr
 
 
 class RiskManager:
+    """Controla saldo, stake, pausas, limites diários e registro idempotente de operações por conta."""
     def __init__(self, initial_balance):
+        """Inicializa com o saldo informado, restaura o estado salvo e descarrega resultados pendentes no log."""
         if not math.isfinite(initial_balance) or initial_balance <= 0:
             raise ValueError('saldo inicial inválido')
         self._authenticated_initial_balance = float(initial_balance)
@@ -41,6 +43,7 @@ class RiskManager:
         self._flush_outbox()
 
     def _ensure_log(self):
+        """Cria o CSV de operações com cabeçalho se ausente; senão, adota o cabeçalho existente."""
         path = Path(OPERATIONS_LOG)
         if not path.exists() or not path.stat().st_size:
             with path.open('w', newline = '') as f:
@@ -78,6 +81,7 @@ class RiskManager:
             self._save_risk_state()
 
     def synchronize_balance(self, balance, * , preserve_local_balance = False):
+        """Atualiza o saldo com o valor autenticado e reajusta saldo inicial do dia e pico (salvo se preservar o local)."""
         if not math.isfinite(balance) or balance < 0:
             raise ValueError('saldo inválido')
         if preserve_local_balance:
@@ -90,6 +94,7 @@ class RiskManager:
         self._peak_balance = max(self._peak_balance, self.balance)
 
     def _reset_daily_if_needed(self):
+        """Na virada do dia, reinicia saldo inicial, lucro e sequência de perdas diários."""
         if date.today() != self._today:
             self._today = date.today()
             self._daily_start_balance = self.balance
@@ -98,9 +103,11 @@ class RiskManager:
             # Não elimina IDs nem pausa pendente na virada do dia.
 
     def is_paused(self):
+        """Indica se há uma pausa de risco ativa."""
         return time.time() < self._pause_until
 
     def can_trade(self):
+        """Permite operar se não pausado, com saldo para o stake e dentro dos limites diários de stop loss e take profit."""
         self._reset_daily_if_needed()
         if self.is_paused() or self.get_stake() > self.balance:
             return False
@@ -108,9 +115,11 @@ class RiskManager:
         return - STOP_LOSS_PCT < pct < TAKE_PROFIT_PCT
 
     def get_stake(self):
+        """Stake como percentual do saldo, arredondado a 2 casas e com mínimo de 0,35."""
         return max(round(self.balance * STAKE_PCT, 2), .35)
 
     def record_result(self, symbol, direction, stake, duration, profit, indicators, contract_id = None, details = None):
+        """Registra o resultado de um contrato (saldo, perdas, pausa, drift) e o grava no log; False se já processado."""
         if not math.isfinite(profit):
             raise ValueError('resultado inválido')
         with self._lock:
@@ -155,6 +164,7 @@ class RiskManager:
             return True
 
     def _flush_outbox(self):
+        """Anexa ao CSV as operações pendentes ainda não gravadas (por contract_id) e salva o estado."""
         if not self._outbox:
             return
         with open(OPERATIONS_LOG, newline = '') as f:
@@ -173,10 +183,12 @@ class RiskManager:
         self._save_risk_state()
 
     def _check_drift(self):
+        """Imprime alerta quando a taxa de acerto recente cai abaixo do limite."""
         if self.to_state_dict()['drift_detected']:
             print('[DRIFT] Taxa de acerto recente abaixo do limite; avaliar modelo fora da amostra')
 
     def to_state_dict(self):
+        """Serializa o estado de risco (saldo, PnL, pausas, drift, contratos processados e pendentes)."""
         wr = 100 * sum(self._recent_results) / len(self._recent_results) if self._recent_results else 0.
         return dict(is_paused = self.is_paused(), pause_remaining_sec = max(0, int(self._pause_until - time.time())),
                     daily_pnl = self._daily_profit, daily_pnl_pct = 100 * self._daily_profit / self._daily_start_balance if self._daily_start_balance else 0.,
@@ -188,9 +200,11 @@ class RiskManager:
                     account_key = self._account_key, processed_contracts = sorted(self._processed_contracts), outbox = self._outbox)
 
     def _save_risk_state(self):
+        """Grava o estado de risco atual em risk_state.json de forma atômica."""
         write_json_atomic(self._path, self.to_state_dict())
 
     def _restore(self, saved):
+        """Restaura saldo, pausa, contratos processados e dados do dia a partir de um estado salvo."""
         self._account_key = saved.get('account_key', '')
         self._processed_contracts = set(saved.get('processed_contracts', []))
         self._outbox = saved.get('outbox', [])
@@ -210,6 +224,7 @@ class RiskManager:
             self._daily_start_balance = self.balance
 
     def _load_saved_state(self):
+        """Carrega risk_state.json, se existir, e restaura o estado."""
         if self._path.exists():
             # Corrupção de estado não deve apagar stops silenciosamente.
             self._restore(json.loads(self._path.read_text()))

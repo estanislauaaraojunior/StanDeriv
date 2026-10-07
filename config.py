@@ -1,3 +1,4 @@
+"""Configurações centralizadas do bot Deriv."""
 # ============================================================
 #  config.py — configurações centralizadas do bot Deriv
 #  Edite APENAS este arquivo para ajustar o comportamento.
@@ -13,6 +14,7 @@ load_dotenv()  # carrega variáveis de .env (ignorado se não existir)
 
 
 def _env_bool(name, default):
+    """Lê variável de ambiente como booleano (1/true/yes/on/sim); retorna `default` se ausente."""
     raw = os.environ.get(name)
     if raw is None:
         return default

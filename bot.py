@@ -22,6 +22,7 @@ from risk_manager import RiskManager
 
 
 def _handle_interrupt(sig, frame) -> None:
+    """Trata Ctrl+C encerrando o bot."""
     print("\n\n[BOT] Encerrado pelo usuário. Até logo.")
     sys.exit(0)
 
@@ -39,6 +40,7 @@ def _confirm_real_mode() -> bool:
 
 
 def main() -> None:
+    """Interpreta a CLI, adquire o lock de execução, prepara a sessão e o risco, e executa o `DerivBot`."""
     parser = argparse.ArgumentParser(
         description=(
             "Deriv Trading Bot — estratégia multi-indicador profissional.\n"

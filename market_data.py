@@ -75,6 +75,7 @@ def canonicalize(records):
 
 
 def ensure_header(path):
+    """Garante o cabeçalho v2 no CSV (criando-o se vazio); falha em esquema legado."""
     import fcntl
     with Path(path).open('a+', newline = '') as f:
         fcntl.flock(f, fcntl.LOCK_EX)
@@ -88,6 +89,7 @@ def ensure_header(path):
 
 
 def append_record(path, epoch, symbol, price, * , kind = 'tick', timeframe = 0, candle = None):
+    """Anexa um registro (tick ou candle) ao CSV v2 sob lock exclusivo, criando o cabeçalho se necessário."""
     import fcntl
     candle = candle or {}
     with Path(path).open('a+', newline = '') as f:

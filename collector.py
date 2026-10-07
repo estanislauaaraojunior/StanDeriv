@@ -1,3 +1,4 @@
+"""Coletor autônomo de ticks da Deriv que grava em CSV."""
 from market_data import ensure_header, append_record
 import math
 """
@@ -43,6 +44,7 @@ TICK_LOG_INTERVAL = 200
 # ─────────────────────────────────────────────────────────────
 
 def _ensure_header():
+    """Garante o cabeçalho do CSV de ticks."""
     ensure_header(TICKS_CSV)
 
 
@@ -54,10 +56,12 @@ def _is_valid_tick(prev: float, new_price: float) -> bool:
 
 
 def _uses_bearer_auth() -> bool:
+    """Indica se a sessão usa autenticação Bearer com conta definida."""
     return AUTH_MODE == "bearer" and bool(ACCOUNT_ID)
 
 
 def _get_ws_url() -> str:
+    """URL do WebSocket: a padrão no modo legado ou a obtida via OTP no modo Bearer."""
     if not _uses_bearer_auth():
         return WS_URL
     return deriv_session.get_options_ws_url(
@@ -98,6 +102,7 @@ def _setup_auth() -> bool:
 # ─────────────────────────────────────────────────────────────
 
 def on_open(ws) -> None:
+    """Ao conectar, autoriza (modo legado) e assina os ticks do símbolo."""
     print(f"[COLETOR] Conectado | Símbolo: {SYMBOL}")
     if not _uses_bearer_auth():
         ws.send(json.dumps({"authorize": TOKEN}))
@@ -105,6 +110,7 @@ def on_open(ws) -> None:
 
 
 def on_message(ws, message: str) -> None:
+    """Processa mensagens: valida, deduplica, rejeita spikes e grava cada tick no CSV."""
     global _tick_count, _last_price, _seen_epochs_deque, _seen_epochs_set
 
     data = json.loads(message)
@@ -156,10 +162,12 @@ def on_message(ws, message: str) -> None:
 
 
 def on_error(ws, error) -> None:
+    """Imprime erros do WebSocket."""
     print(f"\n[COLETOR] Erro WebSocket: {error}")
 
 
 def on_close(ws, close_status_code, close_msg) -> None:
+    """Informa o encerramento da conexão (a reconexão é feita por `run_forever`)."""
     print(f"\n[COLETOR] Conexão encerrada (código: {close_status_code}) — reconectando...")
 
 
@@ -168,6 +176,7 @@ def on_close(ws, close_status_code, close_msg) -> None:
 # ─────────────────────────────────────────────────────────────
 
 def _handle_interrupt(sig, frame) -> None:
+    """Trata Ctrl+C: informa o total coletado, fecha o WebSocket e encerra o processo."""
     print(f"\n\n[COLETOR] Interrompido. {_tick_count:,} ticks salvos em '{TICKS_CSV}'.")
     if _ws_instance:
         _ws_instance.close()
@@ -175,6 +184,7 @@ def _handle_interrupt(sig, frame) -> None:
 
 
 def main() -> None:
+    """Prepara a autenticação e executa o WebSocket de coleta com reconexão automática."""
     global _ws_instance
 
     _ensure_header()

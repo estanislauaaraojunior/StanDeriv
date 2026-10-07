@@ -13,6 +13,7 @@ EVALUATION_RISK_TIMEZONE = 'UTC'
 
 
 def minimum_training_rows():
+    """Número mínimo de linhas de treino considerando janela de features, horizonte e folds do walk-forward."""
     import config
     horizon = math.ceil(duration_seconds(config.DURATION, config.DURATION_UNIT)
                         / config.CANDLE_TIMEFRAME_SEC)
@@ -28,6 +29,7 @@ def minimum_training_rows():
 
 
 def minimum_history_candles():
+    """Histórico mínimo de candles a coletar para treinar e avaliar o modelo."""
     import config
     horizon = math.ceil(duration_seconds(config.DURATION, config.DURATION_UNIT)
                         / config.CANDLE_TIMEFRAME_SEC)
@@ -41,12 +43,14 @@ def minimum_history_candles():
 
 
 def duration_seconds(duration, unit):
+    """Converte a duração do contrato (unidade 's' ou 'm') para segundos; levanta ValueError se inválida."""
     if unit not in ('s', 'm') or int(duration) != duration or duration <= 0:
         raise ValueError('modelo de contratos exige duração positiva em segundos ou minutos')
     return int(duration) * (60 if unit == 'm' else 1)
 
 
 def specification(symbol):
+    """Monta a especificação do contrato (schema, features, expiração, políticas e parâmetros) esperada para `symbol`."""
     import config
     import time
     from feature_engine import FEATURES
@@ -73,10 +77,12 @@ def specification(symbol):
 
 
 def compatible(metadata, symbol):
+    """Indica se o metadado contém todos os campos da especificação atual para `symbol`."""
     return isinstance(metadata, dict) and all(metadata.get(k) == v for k, v in specification(symbol).items())
 
 
 def usable(metadata, symbol):
+    """Indica se o metadado é compatível, aprovado e gerado com as versões atuais de sklearn/xgboost."""
     if not compatible(metadata,symbol) or not metadata.get('approved'):
         return False
     import sklearn, xgboost
@@ -84,6 +90,7 @@ def usable(metadata, symbol):
 
 
 def fingerprint(path):
+    """Retorna o SHA-256 hexadecimal do arquivo, lido em blocos de 1 MiB."""
     h = hashlib.sha256()
     with open(path, 'rb') as f:
         for block in iter(lambda: f.read(1024 * 1024), b''):
@@ -122,6 +129,7 @@ def load_validated_bundle(path, symbol):
 
 
 def write_json_atomic(path, value):
+    """Grava JSON de forma atômica (arquivo temporário + fsync + replace) no mesmo diretório."""
     import os, tempfile
     p = Path(path)
     fd, tmp = tempfile.mkstemp(prefix = p.name + '.', dir = p.parent)
@@ -137,6 +145,7 @@ def write_json_atomic(path, value):
 
 
 def net_payout_ratio(price, payout):
+    """Payout líquido relativo: (payout - preço) / preço."""
     # Decimal preserves the inclusive boundary for quoted currency amounts.
     from decimal import Decimal
     price, payout = Decimal(str(price)), Decimal(str(payout))
@@ -144,6 +153,7 @@ def net_payout_ratio(price, payout):
 
 
 def meets_payout_floor(net_payout):
+    """Indica se o payout líquido é finito e atinge `config.MIN_NET_PAYOUT`."""
     import config
     try:
         ratio = float(net_payout)
@@ -167,6 +177,7 @@ def valid_payout_proposal(price, payout):
 
 
 def profitable_proposal(price, payout, probability, margin = MIN_EXPECTED_RETURN):
+    """Valida a proposta e exige confiança acima do mínimo e retorno esperado >= `margin`."""
     import config
     try:
         price, payout, probability = map(float, (price, payout, probability))
