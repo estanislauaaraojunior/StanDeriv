@@ -11,6 +11,7 @@ class TestFeatureSync:
     """Verifica que as listas de features estão sincronizadas."""
 
     def test_train_model_matches_ai_predictor(self):
+        """Garante que FEATURES do treino é idêntica a _FEATURES do preditor."""
         from train_model import FEATURES
         from ai_predictor import _FEATURES
         assert FEATURES == _FEATURES, (
@@ -20,10 +21,12 @@ class TestFeatureSync:
         )
 
     def test_feature_count_is_27(self):
+        """Garante que a lista FEATURES tem exatamente 27 itens."""
         from train_model import FEATURES
         assert len(FEATURES) == 27, f"Esperado 27 features, encontrado {len(FEATURES)}"
 
     def test_pa_features_present(self):
+        """Garante que todas as features de Price Action constam em FEATURES."""
         from train_model import FEATURES
         pa_features = [
             "pa_market_structure", "pa_bos_strength", "pa_trend_consistency",
@@ -39,6 +42,7 @@ class TestAiPredictorFeatureMap:
     """Verifica que _compute_feature_map retorna as features corretas."""
 
     def test_feature_map_returns_27_keys(self):
+        """Garante que _compute_feature_map retorna 27 chaves com 300 preços."""
         import math
         from ai_predictor import _compute_feature_map
 
@@ -49,6 +53,7 @@ class TestAiPredictorFeatureMap:
         assert len(result) == 27, f"Esperado 27 keys, encontrado {len(result)}: {list(result.keys())}"
 
     def test_feature_map_has_pa_keys(self):
+        """Garante que o mapa de features calculado contém as chaves de Price Action."""
         import math
         from ai_predictor import _compute_feature_map
 
@@ -70,6 +75,7 @@ class TestDatasetBuilder:
     """Verifica que dataset_builder extrai features PA."""
 
     def test_extract_features_has_pa(self):
+        """Garante que _extract_features do dataset_builder inclui as chaves de Price Action."""
         import math
         from dataset_builder import _extract_features
 
@@ -99,6 +105,7 @@ class TestDashboardImport:
         assert hasattr(ind, "detect_candle_patterns")
 
     def test_detect_candle_patterns_returns_list(self):
+        """Garante que detect_candle_patterns retorna uma lista para velas geradas."""
         import indicators as ind
         prices = [6500.0 + i * 0.1 for i in range(200)]
         candles = ind.ticks_to_candles(prices, 10)
@@ -181,6 +188,7 @@ class TestModelMetricsInApiState:
         assert '_run_training(model_path=AI_MODEL_PATH+".new")' in source
 
     def test_pipeline_skips_model_gates_when_model_module_is_disabled(self):
+        """Garante que o código-fonte do pipeline dispensa gates de modelo com IA desligada."""
         import os
         path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
         with open(path, encoding="utf-8") as f:
@@ -235,6 +243,7 @@ class TestRecommendedConfig:
 
 
 def test_pipeline_status_writes_are_thread_safe(tmp_path, monkeypatch):
+    """Garante que escritas concorrentes de status preservam todos os campos e não deixam temporários."""
     import json
     from concurrent.futures import ThreadPoolExecutor
     import pipeline

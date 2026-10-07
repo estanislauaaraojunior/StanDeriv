@@ -10,6 +10,7 @@ os.environ['DERIV_APP_ID'] = '1089'
 
 @pytest.fixture(autouse=True)
 def isolated_operations(tmp_path, monkeypatch):
+    """Redireciona log, estado, timer e modelo para diretório temporário e reseta a IA em cada teste."""
     import config, risk_manager, executor, ai_predictor
     monkeypatch.setattr(risk_manager,'OPERATIONS_LOG',str(tmp_path/'operations.csv'))
     monkeypatch.setattr(executor,'_STATE_JSON',tmp_path/'state.json')

@@ -13,6 +13,7 @@ from risk_manager import RiskManager
 
 @pytest.fixture
 def bot():
+    """Cria um DerivBot autenticado, com conta vinculada e tick recente."""
     risk = RiskManager(1000.)
     risk.bind_account('test-account', 1000.)
     b = DerivBot(risk)
@@ -23,11 +24,13 @@ def bot():
 
 
 def proposal(bot, ws, direction = 'BUY'):
+    """Envia uma proposta com probabilidade 0.8 e retorna o req_id correlacionado."""
     bot._send_proposal(ws, direction, {'win_probability': .8, 'ai_confidence': .8, 'model_id': 'offline'})
     return bot._proposal_req_id
 
 
 def buy(bot, ws, direction = 'BUY'):
+    """Percorre proposta, aceite e compra até abrir o contrato 12345."""
     rid = proposal(bot, ws, direction)
     bot._handle_proposal(ws, {'id': 'proposal-test', 'ask_price': '10', 'payout': '18.5'}, req_id = rid)
     bot._handle_buy(ws, {'contract_id': 12345}, req_id = bot._buy_req_id)
@@ -35,6 +38,7 @@ def buy(bot, ws, direction = 'BUY'):
 
 @pytest.mark.parametrize('direction,contract_type', [('BUY', 'CALL'), ('SELL', 'PUT')])
 def test_request_uses_same_symbol_duration_and_direction(bot, direction, contract_type):
+    """Garante que a proposta usa o símbolo, a duração e o tipo de contrato correspondentes à direção."""
     ws = MagicMock()
     proposal(bot, ws, direction)
     sent = json.loads(ws.send.call_args.args[0])
@@ -47,6 +51,7 @@ def test_request_uses_same_symbol_duration_and_direction(bot, direction, contrac
 
 
 def test_forex_symbol_can_open_contract_after_valid_signal(bot):
+    """Garante que um símbolo forex abre contrato PUT após proposta e compra válidas."""
     bot.symbol = 'frxEURAUD'
     ws = MagicMock()
     rid = proposal(bot, ws, 'SELL')
@@ -60,6 +65,7 @@ def test_forex_symbol_can_open_contract_after_valid_signal(bot):
 
 
 def test_non_model_decision_can_reach_buy_without_ai_metadata(bot):
+    """Garante que decisão sem módulo de IA chega à compra sem metadados do modelo."""
     ws = MagicMock()
     indicators = {
         'decision_modules': ['weighted_score'],
@@ -81,6 +87,7 @@ def test_non_model_decision_can_reach_buy_without_ai_metadata(bot):
 
 
 def test_non_model_decision_still_obeys_minimum_payout(bot):
+    """Garante que decisão sem IA continua rejeitando propostas com payout abaixo do mínimo."""
     ws = MagicMock()
     indicators = {
         'decision_modules': ['price_action'],
@@ -100,6 +107,7 @@ def test_non_model_decision_still_obeys_minimum_payout(bot):
 
 
 def test_no_second_proposal_while_first_pending(bot):
+    """Garante que não é enviada segunda proposta enquanto a primeira está pendente."""
     ws = MagicMock()
     proposal(bot, ws)
     proposal(bot, ws)
@@ -107,6 +115,7 @@ def test_no_second_proposal_while_first_pending(bot):
 
 
 def test_heartbeat_timeout_closes_stale_websocket(bot, tmp_path, monkeypatch):
+    """Garante que a falha de heartbeat fecha o websocket e grava o evento heartbeat_timeout no status."""
     monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
     ws = MagicMock()
     bot._ws = ws
@@ -121,6 +130,7 @@ def test_heartbeat_timeout_closes_stale_websocket(bot, tmp_path, monkeypatch):
 
 
 def test_proposal_retries_once_with_lower_stake_when_payout_exceeds_api_cap(bot, tmp_path, monkeypatch):
+    """Garante que payout acima do teto da API gera uma nova proposta com stake menor."""
     monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
     ws = MagicMock()
     bot.risk_manager.balance = 7566.79
@@ -143,6 +153,7 @@ def test_proposal_retries_once_with_lower_stake_when_payout_exceeds_api_cap(bot,
 
 
 def test_repeated_payout_cap_rejections_request_market_switch(bot, monkeypatch):
+    """Garante que rejeições repetidas por teto de payout acionam o callback de mercado desfavorável."""
     callback = MagicMock()
     monkeypatch.setattr(config, "PROPOSAL_API_ERROR_SWITCH_THRESHOLD", 3, raising=False)
     bot.on_market_unfavorable = callback
@@ -165,6 +176,7 @@ def test_repeated_payout_cap_rejections_request_market_switch(bot, monkeypatch):
 
 
 def test_entry_cadence_disabled_evaluates_without_new_closed_candle(bot, monkeypatch):
+    """Garante que, sem cadência de entrada, o tick avalia sinal e envia proposta sem nova vela fechada."""
     monkeypatch.setattr(config, "ENFORCE_ENTRY_CADENCE", False, raising=False)
     monkeypatch.setattr(config, "ENFORCE_RISK_GATE", False, raising=False)
     bot._api_history_loaded = True
@@ -190,6 +202,7 @@ def test_entry_cadence_disabled_evaluates_without_new_closed_candle(bot, monkeyp
 
 
 def test_risk_gate_disabled_allows_proposal_when_risk_manager_blocks(bot, monkeypatch):
+    """Garante que, com o gate de risco desligado, a proposta é enviada mesmo que o RiskManager bloqueie."""
     ws = MagicMock()
     monkeypatch.setattr(config, "ENFORCE_RISK_GATE", False, raising=False)
     bot.risk_manager.can_trade = MagicMock(return_value=False)
@@ -205,6 +218,7 @@ def test_risk_gate_disabled_allows_proposal_when_risk_manager_blocks(bot, monkey
 
 
 def test_risk_gate_enabled_blocks_proposal_when_risk_manager_blocks(bot, monkeypatch):
+    """Garante que, com o gate de risco ligado, o bloqueio do RiskManager impede a proposta e é registrado."""
     ws = MagicMock()
     monkeypatch.setattr(config, "ENFORCE_RISK_GATE", True, raising=False)
     bot.risk_manager.can_trade = MagicMock(return_value=False)
@@ -222,6 +236,7 @@ def test_risk_gate_enabled_blocks_proposal_when_risk_manager_blocks(bot, monkeyp
 
 @pytest.mark.parametrize('rid', [None, - 1])
 def test_unsolicited_proposal_is_ignored(bot, rid):
+    """Garante que proposta com req_id ausente ou diferente do pendente é ignorada."""
     ws = MagicMock()
     proposal(bot, ws)
     ws.reset_mock()
@@ -230,6 +245,7 @@ def test_unsolicited_proposal_is_ignored(bot, rid):
 
 
 def test_duplicate_proposal_cannot_buy_twice(bot):
+    """Garante que a mesma proposta recebida duas vezes gera apenas uma compra."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     ws.reset_mock()
@@ -242,6 +258,7 @@ def test_duplicate_proposal_cannot_buy_twice(bot):
 
 @pytest.mark.parametrize('price,payout', [(10, 10.01), (10, None), (10, float('nan')), (11, 25), (0, 20)])
 def test_invalid_or_unprofitable_proposal_not_bought(bot, price, payout):
+    """Garante que proposta inválida ou sem retorno esperado positivo não é comprada."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     ws.reset_mock()
@@ -251,6 +268,7 @@ def test_invalid_or_unprofitable_proposal_not_bought(bot, price, payout):
 
 
 def test_expired_proposal_is_rejected(bot):
+    """Garante que proposta expirada não é comprada e o bot volta a idle."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     ws.reset_mock()
@@ -268,6 +286,7 @@ def test_expired_proposal_is_rejected(bot):
     (.56, 17.0, False),  # Confiança >55% não basta para este payout.
 ])
 def test_buy_requires_nonnegative_expected_return(bot, probability, payout, accepted):
+    """Garante que a compra só ocorre quando o retorno esperado é não negativo para a probabilidade e o payout."""
     ws = MagicMock()
     bot._send_proposal(ws, 'BUY', {'win_probability': probability,
                                  'ai_confidence': probability, 'model_id': 'offline'})
@@ -280,6 +299,7 @@ def test_buy_requires_nonnegative_expected_return(bot, probability, payout, acce
 
 @pytest.mark.parametrize('probability,proposal_sent,economic', [(.45, False, False), (.450001, True, False), (.500001, True, True)])
 def test_confidence_must_be_strictly_above_approval_floor(bot, probability, proposal_sent, economic):
+    """Garante que a proposta só é enviada com confiança estritamente acima do piso de aprovação."""
     from model_contract import profitable_proposal
     ws = MagicMock()
     bot._send_proposal(ws, 'BUY', {'win_probability': probability,
@@ -289,6 +309,7 @@ def test_confidence_must_be_strictly_above_approval_floor(bot, probability, prop
 
 
 def test_delayed_buy_response_reconciles_only_matching_request(bot):
+    """Garante que a resposta de compra atrasada só reconcilia quando o req_id coincide e não inventa preço de entrada."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
@@ -301,6 +322,7 @@ def test_delayed_buy_response_reconciles_only_matching_request(bot):
 
 
 def test_open_contract_update_persists_entry_point(bot):
+    """Garante que a atualização do contrato aberto persiste preço e época de entrada no estado."""
     ws = MagicMock()
     buy(bot, ws)
     bot._handle_contract_update({
@@ -319,6 +341,7 @@ def test_open_contract_update_persists_entry_point(bot):
 
 @pytest.mark.parametrize('profit,result', [(2.5, 'WIN'), (-10, 'LOSS'), (0, 'VOID')])
 def test_settlement_updates_balance_once(bot, profit, result):
+    """Garante que a liquidação atualiza o saldo e o CSV uma única vez, mesmo com evento duplicado."""
     ws = MagicMock()
     buy(bot, ws)
     event = {'contract_id': 12345, 'is_sold': 1, 'profit': str(profit), 'entry_spot': '100',
@@ -340,6 +363,7 @@ def test_settlement_updates_balance_once(bot, profit, result):
     {'contract_id': 12345, 'is_sold': 1, 'profit': 'nan'},
 ])
 def test_invalid_or_unrelated_settlement_not_counted(bot, event):
+    """Garante que liquidação inválida ou de outro contrato não altera saldo nem encerra a operação."""
     ws = MagicMock()
     buy(bot, ws)
     bot._handle_contract_update(event)
@@ -347,6 +371,7 @@ def test_invalid_or_unrelated_settlement_not_counted(bot, event):
 
 
 def test_restart_restores_open_contract_and_prevents_new_order(bot):
+    """Garante que reiniciar restaura o contrato aberto e impede nova ordem."""
     ws = MagicMock()
     buy(bot, ws)
     restored = DerivBot(RiskManager(9000.))
@@ -357,6 +382,7 @@ def test_restart_restores_open_contract_and_prevents_new_order(bot):
 
 
 def test_restart_preserves_uncertain_buy(bot):
+    """Garante que reiniciar preserva uma compra incerta na fase buy sem contrato associado."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
@@ -365,6 +391,7 @@ def test_restart_preserves_uncertain_buy(bot):
 
 
 def test_wrong_account_mode_refused(bot):
+    """Garante que conta de modo incorreto (não virtual) é recusada com ValueError e fecha o websocket."""
     ws = MagicMock()
     with pytest.raises(ValueError):
         bot._handle_authorize(ws, {'is_virtual': 0, 'loginid': 'test', 'balance': 1000})
@@ -373,6 +400,7 @@ def test_wrong_account_mode_refused(bot):
 
 
 def test_history_is_merged_without_duplicates(bot):
+    """Garante que o histórico de velas é mesclado sem duplicatas e em ordem."""
     candles = [dict(epoch = i * 60, open = 100 + i, high = 101 + i, low = 99 + i, close = 100 + i) for i in range(200)]
     bot._merge_candles(candles)
     bot._merge_candles(candles[-99:])
@@ -381,12 +409,14 @@ def test_history_is_merged_without_duplicates(bot):
 
 
 def test_wrong_symbol_tick_does_not_contaminate_buffer(bot):
+    """Garante que tick de outro símbolo não altera o buffer de velas nem o último preço."""
     before = list(bot._candle_closes)
     bot._handle_tick(MagicMock(), {'symbol': 'wrong', 'epoch': int(time.time()) + 1, 'quote': 50})
     assert list(bot._candle_closes) == before and bot._last_tick_price == 100
 
 
 def test_reconnect_balance_does_not_double_count_settlement(bot):
+    """Garante que o saldo verificado na reconexão não duplica a liquidação pendente."""
     ws = MagicMock()
     buy(bot, ws)
     # A API já inclui +8; estado local ainda aguarda a liquidação.
@@ -396,6 +426,7 @@ def test_reconnect_balance_does_not_double_count_settlement(bot):
 
 
 def test_buy_error_does_not_authorize_retry(bot):
+    """Garante que erro na compra mantém a operação em reconciliação e não libera nova tentativa."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
@@ -404,6 +435,7 @@ def test_buy_error_does_not_authorize_retry(bot):
 
 
 def test_uncertain_buy_reconciles_open_contract_from_portfolio(bot):
+    """Garante que compra incerta encontrada no portfólio é reconciliada e passa a acompanhar o contrato aberto."""
     ws = MagicMock()
     rid = proposal(bot, ws, 'BUY')
     bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id=rid)
@@ -429,6 +461,7 @@ def test_uncertain_buy_reconciles_open_contract_from_portfolio(bot):
 
 
 def test_uncertain_buy_not_in_portfolio_releases_bot(bot):
+    """Garante que compra incerta ausente do portfólio libera o bot para novos sinais."""
     ws = MagicMock()
     rid = proposal(bot, ws, 'SELL')
     bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id=rid)
@@ -448,6 +481,7 @@ def test_uncertain_buy_not_in_portfolio_releases_bot(bot):
 
 
 def test_proposal_error_releases_bot_for_next_signal(bot):
+    """Garante que erro da API na proposta libera o bot e registra o motivo da rejeição."""
     ws = MagicMock()
     rid = proposal(bot, ws, 'SELL')
     bot._on_message(ws, json.dumps({
@@ -464,6 +498,7 @@ def test_proposal_error_releases_bot_for_next_signal(bot):
 
 
 def test_market_unavailable_proposal_error_requests_fallback(bot):
+    """Garante que erro MarketIsClosed na proposta aciona o callback de mercado indisponível e libera o bot."""
     ws = MagicMock()
     callback = MagicMock()
     bot.on_market_unavailable = callback
@@ -482,6 +517,7 @@ def test_market_unavailable_proposal_error_requests_fallback(bot):
 
 
 def test_unfavorable_symbol_streak_requests_fallback(bot, monkeypatch, tmp_path):
+    """Garante que a sequência de decisões desfavoráveis aciona o callback de troca só ao atingir o limite."""
     callback = MagicMock()
     monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
     monkeypatch.setattr(config, 'UNFAVORABLE_SYMBOL_SWITCH_DECISIONS', 3)
@@ -513,6 +549,7 @@ def test_unfavorable_symbol_streak_requests_fallback(bot, monkeypatch, tmp_path)
 
 
 def test_reconnection_refetches_bearer_account_balance(bot, monkeypatch):
+    """Garante que a reconexão com bearer rebusca o saldo da conta e preserva o lucro diário."""
     import hashlib
     bot.auth_mode = 'bearer'
     bot.account_id = 'virtual-test'
@@ -526,6 +563,7 @@ def test_reconnection_refetches_bearer_account_balance(bot, monkeypatch):
 
 
 def test_expired_open_contract_remains_tracked_on_tick(bot, monkeypatch):
+    """Garante que contrato aberto além do prazo continua rastreado e consultado no tick."""
     ws = MagicMock()
     buy(bot, ws)
     bot._buy_timestamp = time.time() - 10000
@@ -537,6 +575,7 @@ def test_expired_open_contract_remains_tracked_on_tick(bot, monkeypatch):
 
 
 def test_market_switch_blocks_new_proposals(bot):
+    """Garante que troca de mercado solicitada bloqueia novas propostas."""
     ws = MagicMock()
     bot.market_switch_requested = lambda: True
     proposal(bot, ws)
@@ -545,6 +584,7 @@ def test_market_switch_blocks_new_proposals(bot):
 
 
 def test_market_switch_cancels_unpurchased_proposal(bot):
+    """Garante que troca de mercado solicitada cancela proposta ainda não comprada."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     bot.market_switch_requested = lambda: True
@@ -555,6 +595,7 @@ def test_market_switch_cancels_unpurchased_proposal(bot):
 
 
 def test_market_switch_preserves_open_contract_until_settlement(bot):
+    """Garante que a troca de mercado espera a liquidação do contrato aberto antes de liberar."""
     ws = MagicMock()
     buy(bot, ws)
     bot.market_switch_requested = lambda: True
@@ -566,6 +607,7 @@ def test_market_switch_preserves_open_contract_until_settlement(bot):
 
 
 def test_market_switch_keeps_uncertain_purchase_for_reconciliation(bot):
+    """Garante que a troca de mercado não libera enquanto uma compra incerta está em reconciliação."""
     ws = MagicMock()
     rid = proposal(bot, ws)
     bot._handle_proposal(ws, {'id': 'quote', 'ask_price': 10, 'payout': 18.5}, req_id=rid)
@@ -578,6 +620,7 @@ def test_market_switch_keeps_uncertain_purchase_for_reconciliation(bot):
 @pytest.mark.parametrize('demo',[True,False])
 @pytest.mark.parametrize('payout,accepted',[(15.99,False),(16,True),(18.5,True)])
 def test_payout_floor_applies_to_demo_and_real(bot,demo,payout,accepted):
+    """Garante que o piso de payout vale igualmente para conta demo e real."""
     bot.demo=demo
     ws=MagicMock()
     rid=proposal(bot,ws)
@@ -589,6 +632,7 @@ def test_payout_floor_applies_to_demo_and_real(bot,demo,payout,accepted):
 
 @pytest.mark.parametrize('price,payout',[(.9,1.44),(10,16),(.5,.8)])
 def test_exact_sixty_percent_payout_not_lost_to_float_rounding(price,payout):
+    """Garante que payout de exatamente 60% é aceito sem perda por arredondamento de ponto flutuante."""
     from model_contract import profitable_proposal
     assert profitable_proposal(price,payout,.9)
     assert not profitable_proposal(price,payout-.00001,.9)

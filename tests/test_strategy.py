@@ -39,10 +39,12 @@ def _lateral(n=200, center=100.0, amp=0.02):
 # ──────────────────────────────────────────────────────────────────
 
 def _no_ai():
+    """Retorna patch que desliga USE_AI_MODEL na estratégia."""
     return patch.object(strategy, "USE_AI_MODEL", False)
 
 
 def _no_weighted():
+    """Retorna patch que desliga USE_WEIGHTED_SIGNAL na estratégia."""
     return patch.object(strategy, "USE_WEIGHTED_SIGNAL", False)
 
 
@@ -51,7 +53,10 @@ def _no_weighted():
 # ──────────────────────────────────────────────────────────────────
 
 class TestGetSignalBasic(unittest.TestCase):
+    """Verifica o formato básico do retorno de get_signal."""
+
     def test_returns_tuple(self):
+        """Garante que get_signal retorna uma tupla de dois elementos."""
         prices = _uptrend()
         result = strategy.get_signal(prices)
         self.assertIsInstance(result, tuple)
@@ -63,6 +68,7 @@ class TestGetSignalBasic(unittest.TestCase):
         self.assertIsNone(sig)
 
     def test_indicators_populated_on_valid_data(self):
+        """Garante que os indicadores ema9 e ema21 são retornados com dados válidos."""
         prices = _uptrend(200)
         sig, ind = strategy.get_signal(prices)
         # indicators devem conter pelo menos ema9
@@ -71,6 +77,8 @@ class TestGetSignalBasic(unittest.TestCase):
 
 
 class TestBuySignal(unittest.TestCase):
+    """Verifica que tendências de alta não geram SELL."""
+
     def test_buy_on_uptrend(self):
         """Tendência de alta bem formada → BUY ou None (nunca SELL)."""
         prices = _uptrend(300, step=0.15)
@@ -79,6 +87,7 @@ class TestBuySignal(unittest.TestCase):
         self.assertNotEqual(sig, "SELL")
 
     def test_no_sell_on_strong_uptrend(self):
+        """Garante que alta forte nunca gera SELL."""
         prices = _uptrend(300, step=0.20)
         with _no_ai(), _no_weighted():
             sig, _ = strategy.get_signal(prices, adx_min=0)
@@ -86,6 +95,8 @@ class TestBuySignal(unittest.TestCase):
 
 
 class TestSellSignal(unittest.TestCase):
+    """Verifica que tendências de baixa não geram BUY."""
+
     def test_sell_on_downtrend(self):
         """Tendência de baixa bem formada → SELL ou None (nunca BUY)."""
         prices = _downtrend(300, step=0.15)
@@ -94,6 +105,7 @@ class TestSellSignal(unittest.TestCase):
         self.assertNotEqual(sig, "BUY")
 
     def test_no_buy_on_strong_downtrend(self):
+        """Garante que baixa forte nunca gera BUY."""
         prices = _downtrend(300, step=0.20)
         with _no_ai(), _no_weighted():
             sig, _ = strategy.get_signal(prices, adx_min=0)
@@ -101,6 +113,8 @@ class TestSellSignal(unittest.TestCase):
 
 
 class TestNoSignalLateral(unittest.TestCase):
+    """Verifica que mercado lateral ou ADX alto demais não produzem sinal."""
+
     def test_no_signal_lateral_high_adx(self):
         """Mercado lateral com ADX mínimo alto → None."""
         prices = _lateral(300)
@@ -117,12 +131,16 @@ class TestNoSignalLateral(unittest.TestCase):
 
 
 class TestAdaptiveADX(unittest.TestCase):
+    """Verifica o ADX mínimo adaptativo."""
+
     def test_adaptive_adx_returns_float(self):
+        """Garante que get_adaptive_adx_min retorna float para um histórico válido."""
         history = [15.0, 20.0, 25.0, 30.0, 35.0]
         val = strategy.get_adaptive_adx_min(history)
         self.assertIsInstance(val, float)
 
     def test_adaptive_adx_empty_history_returns_adx_min(self):
+        """Garante que histórico vazio devolve o ADX_MIN configurado."""
         val = strategy.get_adaptive_adx_min([])
         self.assertEqual(val, config.ADX_MIN)
 
@@ -135,6 +153,8 @@ class TestAdaptiveADX(unittest.TestCase):
 
 
 class TestWeightedSignal(unittest.TestCase):
+    """Verifica o modo de sinal ponderado."""
+
     def test_weighted_mode_runs(self):
         """Modo ponderado não deve lançar exceção."""
         prices = _uptrend(300, step=0.10)
@@ -143,6 +163,7 @@ class TestWeightedSignal(unittest.TestCase):
         self.assertIsInstance(result, tuple)
 
     def test_weighted_result_valid_signal(self):
+        """Garante que o modo ponderado retorna apenas BUY, SELL ou None."""
         prices = _uptrend(300, step=0.10)
         with _no_ai(), patch.object(strategy, "USE_WEIGHTED_SIGNAL", True):
             sig, _ = strategy.get_signal(prices, adx_min=0)
@@ -150,6 +171,8 @@ class TestWeightedSignal(unittest.TestCase):
 
 
 class TestADXHistory(unittest.TestCase):
+    """Verifica o filtro que usa o histórico de ADX."""
+
     def test_falling_adx_blocks_signal(self):
         """ADX caindo → sinal bloqueado por filtro de tendência perdendo força."""
         prices = _uptrend(300, step=0.15)

@@ -18,20 +18,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _trend_up(n=200, start=100.0, step=0.05):
+    """Gera série de preços em alta linear."""
     return [start + i * step for i in range(n)]
 
 
 def _trend_down(n=200, start=100.0, step=0.05):
+    """Gera série de preços em baixa linear."""
     return [start - i * step for i in range(n)]
 
 
 def _flat(n=200, value=100.0):
+    """Gera série de preços constantes."""
     return [value] * n
 
 
 # ─── Entradas inválidas ───────────────────────────────────────────────────────
 
 def test_empty_list_returns_none():
+    """Garante que get_signal retorna (None, {}) para lista vazia."""
     from strategy import get_signal
     sig, ind = get_signal([])
     assert sig is None
@@ -39,12 +43,14 @@ def test_empty_list_returns_none():
 
 
 def test_single_price_returns_none():
+    """Garante que get_signal não gera sinal com um único preço."""
     from strategy import get_signal
     sig, ind = get_signal([100.0])
     assert sig is None
 
 
 def test_very_short_list_returns_none():
+    """Garante que get_signal não gera sinal com apenas três preços."""
     from strategy import get_signal
     sig, ind = get_signal([100.0, 101.0, 102.0])
     assert sig is None
@@ -365,6 +371,7 @@ def test_price_action_module_generates_fallback_signal():
 
 
 def test_weighted_signal_runs_without_ai_when_only_weighted_enabled(monkeypatch):
+    """Garante que o score ponderado decide sozinho sem consultar a IA quando ela está desligada."""
     import strategy as strat
 
     monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)
@@ -381,6 +388,7 @@ def test_weighted_signal_runs_without_ai_when_only_weighted_enabled(monkeypatch)
 
 
 def test_weighted_and_model_modules_require_agreement(monkeypatch):
+    """Garante bloqueio por discordância quando score ponderado e modelo apontam direções opostas."""
     import strategy as strat
 
     monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)
@@ -397,6 +405,7 @@ def test_weighted_and_model_modules_require_agreement(monkeypatch):
 
 
 def test_weighted_and_model_modules_open_only_on_matching_direction(monkeypatch):
+    """Garante que o sinal abre quando score ponderado e modelo concordam na direção."""
     import strategy as strat
 
     monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)
@@ -413,6 +422,7 @@ def test_weighted_and_model_modules_open_only_on_matching_direction(monkeypatch)
 
 
 def test_primary_abstention_blocks_without_fallback_override(monkeypatch):
+    """Garante bloqueio por abstenção quando o modelo se abstém e o fallback de PA contradiz o score."""
     import strategy as strat
 
     monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)

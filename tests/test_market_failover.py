@@ -17,6 +17,7 @@ from payout_quotes import ProposalRecorder
     ('AuthorizationRequired', 'Authorize first', False),
 ])
 def test_recorder_only_requests_switch_for_market_restriction(tmp_path, code, message, expected):
+    """Garante que o recorder só pede troca de mercado para erros de restrição de mercado e nunca compra nem grava cotação."""
     callback, ws = Mock(), Mock()
     recorder = ProposalRecorder(tmp_path/'quotes.csv', 'R_100', 15, 'm', on_unavailable=callback)
     recorder.sample(ws, bearer=True, now=100)
@@ -28,6 +29,7 @@ def test_recorder_only_requests_switch_for_market_restriction(tmp_path, code, me
 
 
 def test_stale_error_cannot_switch_market(tmp_path):
+    """Garante que erro de proposta recebido tarde demais não aciona a troca de mercado."""
     callback, ws = Mock(), Mock()
     recorder = ProposalRecorder(tmp_path/'quotes.csv', 'R_100', 15, 'm', on_unavailable=callback)
     recorder.sample(ws, bearer=True, now=100)
@@ -37,6 +39,7 @@ def test_stale_error_cannot_switch_market(tmp_path):
 
 
 def test_unfavorable_market_requests_switch(monkeypatch):
+    """Garante que mercado desfavorável sinaliza o evento de troca de mercado."""
     event = threading.Event()
     monkeypatch.setattr(pipeline, '_market_switch', event)
     monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'frxGBPJPY')
@@ -50,6 +53,7 @@ def test_unfavorable_market_requests_switch(monkeypatch):
 
 
 def test_initial_wait_observes_market_change(monkeypatch):
+    """Garante que as esperas iniciais por ticks e por modelo levantam MarketUnavailable quando há troca de mercado."""
     event = threading.Event(); event.set()
     monkeypatch.setattr(pipeline, '_market_switch', event)
     with pytest.raises(pipeline.MarketUnavailable):
@@ -59,9 +63,11 @@ def test_initial_wait_observes_market_change(monkeypatch):
 
 
 def test_compatible_model_fallback_uses_live_approved_symbol(monkeypatch):
+    """Garante que o fallback escolhe o primeiro símbolo ao vivo com modelo aprovado e compatível."""
     checked = []
 
     def load_model(_path, symbol):
+        """Simula bundle válido apenas para frxGBPUSD."""
         checked.append(symbol)
         if symbol != 'frxGBPUSD':
             raise ValueError('modelo sem validação compatível')
@@ -76,6 +82,7 @@ def test_compatible_model_fallback_uses_live_approved_symbol(monkeypatch):
 
 
 def test_compatible_model_fallback_rejects_closed_symbol(monkeypatch):
+    """Garante que o fallback não escolhe símbolo com mercado fechado, mesmo com modelo compatível."""
     monkeypatch.setattr(
         pipeline,
         'load_validated_bundle',
@@ -88,6 +95,7 @@ def test_compatible_model_fallback_rejects_closed_symbol(monkeypatch):
 
 
 def test_session_cleanup_precedes_symbol_change(monkeypatch):
+    """Garante que coletor e retreino são encerrados antes de o novo símbolo ser escolhido e iniciado."""
     order = []
     lock = Mock()
     monkeypatch.setattr(pipeline, 'acquire_execution_lock', lambda _: lock)
@@ -97,6 +105,7 @@ def test_session_cleanup_precedes_symbol_change(monkeypatch):
     monkeypatch.setattr(pipeline, '_retrain_state', {})
     monkeypatch.setattr(pipeline, '_reset_ai_predictor', lambda: None)
     def session(resources, symbol):
+        """Registra a sessão e, na primeira, cria recursos falsos e sinaliza MarketUnavailable."""
         order.append(('session', symbol))
         if symbol is None:
             resources['collector'] = Mock(stop=lambda: order.append('stop'), is_alive=Mock(side_effect=[True, False]),
@@ -105,10 +114,12 @@ def test_session_cleanup_precedes_symbol_change(monkeypatch):
                                        join=lambda timeout: order.append('train_finished'))
             raise pipeline.MarketUnavailable('OLD')
     def compatible(candidates):
+        """Verifica que a limpeza terminou e o símbolo antigo foi excluído; não acha compatível."""
         assert order[-1] == 'train_finished'
         assert 'OLD' not in candidates
         return ''
     def select(candidates):
+        """Verifica que a limpeza terminou e o símbolo antigo foi excluído; escolhe NEW."""
         assert order[-1] == 'train_finished'
         assert 'OLD' not in candidates
         return 'NEW'
@@ -122,6 +133,7 @@ def test_session_cleanup_precedes_symbol_change(monkeypatch):
 
 
 def test_market_change_prefers_symbol_with_compatible_model(monkeypatch):
+    """Garante que a troca de mercado prefere o símbolo com modelo compatível sem usar o fallback ao vivo."""
     order = []
     lock = Mock()
     monkeypatch.setattr(pipeline, 'acquire_execution_lock', lambda _: lock)
@@ -132,6 +144,7 @@ def test_market_change_prefers_symbol_with_compatible_model(monkeypatch):
     monkeypatch.setattr(pipeline, '_reset_ai_predictor', lambda: None)
 
     def session(_resources, symbol):
+        """Registra a sessão e sinaliza MarketUnavailable na primeira."""
         order.append(('session', symbol))
         if symbol is None:
             raise pipeline.MarketUnavailable('OLD')
@@ -150,6 +163,7 @@ def test_market_change_prefers_symbol_with_compatible_model(monkeypatch):
 
 
 def test_market_switch_budget_enters_degraded_state(monkeypatch):
+    """Garante que estourar o orçamento de trocas de mercado leva o pipeline ao estado degraded."""
     lock = Mock()
     writes = []
     monkeypatch.setattr(pipeline, 'acquire_execution_lock', lambda _: lock)
@@ -164,6 +178,7 @@ def test_market_switch_budget_enters_degraded_state(monkeypatch):
     monkeypatch.setattr(pipeline, '_write_pipeline_status', lambda **kwargs: writes.append(kwargs))
 
     def session(_resources, _symbol):
+        """Sempre sinaliza MarketUnavailable."""
         raise pipeline.MarketUnavailable('OLD')
 
     monkeypatch.setattr(pipeline, '_main_session', session)
@@ -176,6 +191,7 @@ def test_market_switch_budget_enters_degraded_state(monkeypatch):
 
 
 def test_top_trending_symbols_selects_best_live_markets(monkeypatch):
+    """Garante que a seleção dos mercados em tendência ordena por ADX e descarta os sem feed ao vivo."""
     monkeypatch.setattr(pipeline, '_SCAN_SYMBOLS_FOREX', ['A', 'B', 'C'])
     monkeypatch.setattr(pipeline, '_SCAN_SYMBOLS_PRIMARY', ['D', 'E', 'F'])
     monkeypatch.setattr(pipeline, '_SCAN_SYMBOLS_SECONDARY', ['G'])
@@ -189,6 +205,7 @@ def test_top_trending_symbols_selects_best_live_markets(monkeypatch):
 
 
 def test_training_rank_prefers_eligible_expected_return():
+    """Garante que o ranking de treino prefere candidato elegível com maior expectativa de retorno."""
     rejected = {'eligible': False, 'expectancy': 99, 'win_rate': 1, 'auc': 1, 'f1': 1, 'trades': 500}
     approved_low = {'eligible': True, 'expectancy': 0.02, 'win_rate': .55, 'auc': .6, 'f1': .5, 'trades': 20}
     approved_high = {'eligible': True, 'expectancy': 0.08, 'win_rate': .52, 'auc': .58, 'f1': .48, 'trades': 12}
@@ -197,6 +214,7 @@ def test_training_rank_prefers_eligible_expected_return():
 
 
 def test_initial_symbol_tournament_promotes_best_approved(monkeypatch, tmp_path):
+    """Garante que o torneio inicial promove o modelo do melhor símbolo aprovado e encerra todos os coletores."""
     active = {'symbol': 'R_100'}
     started = []
     stopped = []
@@ -204,22 +222,30 @@ def test_initial_symbol_tournament_promotes_best_approved(monkeypatch, tmp_path)
     model_path = tmp_path / 'model.pkl'
 
     class Collector:
+        """Coletor falso que registra início e parada por símbolo."""
         def __init__(self, symbol):
+            """Guarda o símbolo e inicia sem erro fatal."""
             self.symbol = symbol
             self.fatal_error = ''
         def start(self):
+            """Registra o início do coletor."""
             started.append(self.symbol)
         def stop(self):
+            """Registra a parada do coletor."""
             stopped.append(self.symbol)
         def is_alive(self):
+            """Informa que a thread já terminou."""
             return False
         def join(self, timeout=None):
+            """Não aguarda nada."""
             return None
 
     def set_symbol(symbol):
+        """Atualiza o símbolo ativo simulado."""
         active['symbol'] = symbol
 
     def run_training(*, dataset_path, model_path, **_kwargs):
+        """Simula o treino gravando modelo e metadados e devolvendo métricas do símbolo ativo."""
         symbol = active['symbol']
         trained.append((symbol, dataset_path, model_path))
         Path(model_path).write_text(f'model-{symbol}')
@@ -262,11 +288,13 @@ def test_initial_symbol_tournament_promotes_best_approved(monkeypatch, tmp_path)
 
 
 def test_main_session_passes_top_symbols_limit(monkeypatch, tmp_path):
+    """Garante que _main_session repassa --top-symbols como limite da detecção e inicia coletor e bot."""
     captured = {}
     monkeypatch.setattr(pipeline.sys, 'argv', ['pipeline.py', '--demo', '--top-symbols', '3'])
     monkeypatch.setattr(pipeline, '_validate_deriv_token', lambda demo: True)
 
     def detect_top(no_scan=False, limit=0):
+        """Captura o limite recebido e devolve um único símbolo."""
         captured['limit'] = limit
         return ['AAA']
 
@@ -283,16 +311,22 @@ def test_main_session_passes_top_symbols_limit(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, '_uses_bearer_auth', lambda: False)
 
     class Collector:
+        """Coletor falso que apenas registra o símbolo recebido."""
         fatal_error = ''
         def __init__(self, symbol):
+            """Registra o símbolo do coletor criado."""
             captured['collector'] = symbol
         def start(self):
+            """Não inicia nada."""
             return None
 
     class Bot:
+        """Bot falso que apenas registra a execução."""
         def __init__(self, **_kwargs):
+            """Inicializa sem execução registrada."""
             self.run_called = False
         def run(self):
+            """Registra que o bot foi executado."""
             captured['bot_run'] = True
 
     monkeypatch.setattr(pipeline, '_CollectorThread', Collector)
@@ -311,37 +345,50 @@ def test_main_session_passes_top_symbols_limit(monkeypatch, tmp_path):
 
 
 def test_main_session_rejects_invalid_top_symbols(monkeypatch):
+    """Garante que --top-symbols 0 encerra _main_session com SystemExit."""
     monkeypatch.setattr(pipeline.sys, 'argv', ['pipeline.py', '--demo', '--top-symbols', '0'])
     with pytest.raises(SystemExit):
         pipeline._main_session({'lock': Mock()})
 
 
 def test_initial_training_failure_starts_only_bootstrap_retrain(monkeypatch, tmp_path):
+    """Garante que falha no treino inicial inicia apenas o retreino de bootstrap e ainda executa o bot."""
     started_threads = []
     captured = {'symbol': 'R_100'}
 
     class FakeThread:
+        """Thread falsa que apenas registra as inicializações."""
         def __init__(self, *args, **kwargs):
+            """Guarda os kwargs e o nome da thread."""
             self.kwargs = kwargs
             self.name = kwargs.get('name')
         def start(self):
+            """Registra a thread iniciada."""
             started_threads.append(self)
 
     class Collector:
+        """Coletor falso sempre ativo e sem erro fatal."""
         fatal_error = ''
         def __init__(self, symbol):
+            """Guarda o símbolo recebido."""
             self.symbol = symbol
         def start(self):
+            """Não inicia nada."""
             return None
         def stop(self):
+            """Não para nada."""
             return None
         def is_alive(self):
+            """Informa que o coletor está ativo."""
             return True
 
     class Bot:
+        """Bot falso que apenas registra a execução."""
         def __init__(self, **_kwargs):
+            """Ignora os argumentos."""
             pass
         def run(self):
+            """Registra que o bot foi executado."""
             captured['bot_run'] = True
 
     monkeypatch.setattr(pipeline.sys, 'argv', ['pipeline.py', '--demo', '--top-symbols', '1'])
@@ -378,6 +425,7 @@ def test_initial_training_failure_starts_only_bootstrap_retrain(monkeypatch, tmp
 
 
 def test_bootstrap_retrain_requests_market_switch_after_repeated_rejections(monkeypatch, tmp_path):
+    """Garante que o retreino de bootstrap pede troca de mercado após rejeições repetidas do candidato."""
     calls = {"training": 0, "switch": []}
     event = threading.Event()
 
@@ -396,10 +444,12 @@ def test_bootstrap_retrain_requests_market_switch_after_repeated_rejections(monk
     monkeypatch.setattr(pipeline, "_request_market_switch_for_unfavorable", lambda *args: (calls["switch"].append(args), event.set()))
 
     def fake_sleep(_seconds):
+        """Encerra o pipeline quando a troca de mercado já foi sinalizada."""
         if event.is_set():
             pipeline._shutdown.set()
 
     def fake_run_training(**_kwargs):
+        """Conta o treino e devolve candidato inelegível."""
         calls["training"] += 1
         Path(str(tmp_path / "model.pkl.new")).write_text("candidate")
         return True, {"eligible": False, "rejection_reasons": ["reprovado"]}

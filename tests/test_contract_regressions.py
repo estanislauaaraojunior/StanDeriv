@@ -20,12 +20,14 @@ from risk_manager import RiskManager
 
 @pytest.mark.parametrize('direction,confidence', [('SELL', .9), (None, .53), (None, .7), ('BUY', .54), ('BUY', float('nan'))])
 def test_ai_disagreement_abstention_and_invalid_probability_block(direction, confidence):
+    """Garante que discordância, abstenção ou probabilidade inválida da IA bloqueiam o sinal."""
     with patch('strategy.ind.price_action_features', return_value = None), patch('ai_predictor.predict', return_value = (direction, confidence)):
         signal, values = strategy._apply_ai_filter('BUY', [100] * 100, {'tech_score': .8}, use_ai_model = True)
     assert signal is None and 'win_probability' not in values
 
 
 def test_ai_score_preserves_actual_technical_strength():
+    """Garante que o ai_score combina a força técnica real com a probabilidade do modelo."""
     with patch('strategy.ind.price_action_features', return_value = None), patch('ai_predictor.predict', return_value = ('BUY', .8)):
         _, weak = strategy._apply_ai_filter('BUY', [100] * 100, {'tech_score': .05}, use_ai_model = True)
         _, strong = strategy._apply_ai_filter('BUY', [100] * 100, {'tech_score': .9}, use_ai_model = True)
@@ -34,6 +36,7 @@ def test_ai_score_preserves_actual_technical_strength():
 
 
 def test_recovery_preserves_original_and_marks_unknown_provenance(tmp_path):
+    """Garante que a recuperação preserva o arquivo original, deduplica e marca proveniência desconhecida sem elegibilidade de treino."""
     p = tmp_path / 'legacy.csv'
     p.write_text('120,x,A,2\n60,x,A,1\n60,x,A,1\n90,x,B,5\nbad,x,A,nan\n')
     before = p.read_bytes()
@@ -47,6 +50,7 @@ def test_recovery_preserves_original_and_marks_unknown_provenance(tmp_path):
 
 
 def test_conflicting_prices_quarantined_instead_of_arbitrarily_selected(tmp_path):
+    """Garante que preços conflitantes no mesmo instante vão para quarentena em vez de serem escolhidos."""
     p = tmp_path / 'ticks.csv'
     p.write_text('60,x,A,1\n60,x,A,2\n120,x,A,3\n')
     records, _ = read_records(p)
@@ -55,6 +59,7 @@ def test_conflicting_prices_quarantined_instead_of_arbitrarily_selected(tmp_path
 
 
 def test_legacy_data_cannot_silently_train(tmp_path):
+    """Garante que dados legados sem proveniência fazem build_dataset levantar ValueError."""
     p = tmp_path / 'ticks.csv'
     p.write_text('60,x,R_100,1\n120,x,R_100,2\n')
     with pytest.raises(ValueError, match = 'proveniência'):
@@ -62,6 +67,7 @@ def test_legacy_data_cannot_silently_train(tmp_path):
 
 
 def write_ticks(path, minutes = 130, price_fn = None):
+    """Grava um CSV v2 de ticks sintéticos de R_100 a cada 2 segundos."""
     base = 1_800_000_000
     with path.open('w', newline = '') as f:
         w = csv.writer(f)
@@ -72,10 +78,12 @@ def write_ticks(path, minutes = 130, price_fn = None):
 
 
 def test_labels_use_entry_and_expiry_not_mean_next_two_prices(tmp_path):
+    """Garante que os rótulos usam preço de entrada e de vencimento, e não a média dos próximos preços."""
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
     # Primeira entrada ocorre no segundo 6000, após 100 candles completos.
     def price(t):
+        """Define preço 100 na entrada, 101 até o vencimento e 99 depois dele."""
         if t < 6000:
             return 100 + math.sin(t / 50)
         if t == 6000:
@@ -94,6 +102,7 @@ def test_labels_use_entry_and_expiry_not_mean_next_two_prices(tmp_path):
 
 
 def test_ties_kept_as_separate_outcome_without_future_noise_filter(tmp_path):
+    """Garante que empates são mantidos como resultado separado (alvo 2) sem filtro de ruído futuro."""
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
     write_ticks(source, price_fn = lambda t: 100.)
@@ -104,6 +113,7 @@ def test_ties_kept_as_separate_outcome_without_future_noise_filter(tmp_path):
 
 
 def test_train_and_inference_features_are_identical_and_pa_available(tmp_path):
+    """Garante que as features de treino e de inferência são idênticas e incluem Price Action."""
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
     write_ticks(source)
@@ -119,6 +129,7 @@ def test_train_and_inference_features_are_identical_and_pa_available(tmp_path):
 
 
 def test_historical_candles_can_warm_features_but_live_ticks_label_contracts(tmp_path):
+    """Garante que velas históricas aquecem as features, mas apenas ticks ao vivo rotulam contratos."""
     import dataset_builder
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
@@ -147,12 +158,14 @@ def test_historical_candles_can_warm_features_but_live_ticks_label_contracts(tmp
 
 
 def test_feature_window_ignores_older_prices():
+    """Garante que o mapa de features depende apenas da janela recente de preços e velas."""
     candles = [dict(epoch = i * 60, open = 100 + i * .1, high = 101 + i * .1, low = 99 + i * .1, close = 100 + i * .1) for i in range(200)]
     prices = [c['close'] for c in candles]
     assert feature_engine.compute_feature_map(prices, candles) == feature_engine.compute_feature_map(prices[-100:], candles[-100:])
 
 
 def test_gap_prevents_false_contiguous_training(tmp_path):
+    """Garante que uma lacuna nos dados impede treino como se fossem contínuos."""
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
     write_ticks(source)
@@ -165,17 +178,20 @@ def test_gap_prevents_false_contiguous_training(tmp_path):
 
 
 def test_duration_cannot_disagree_with_model_contract(tmp_path):
+    """Garante que lookforward divergente do contrato do modelo é rejeitado e a duração prevista é a configurada."""
     with pytest.raises(ValueError, match = 'vencimento'):
         build_dataset(tmp_path / 'missing', tmp_path / 'out', lookforward = 2)
     assert ai_predictor.predict_duration([]) == config.DURATION
 
 
 def test_old_model_or_wrong_symbol_is_incompatible():
+    """Garante que metadados vazios ou de outro símbolo são incompatíveis."""
     assert not compatible({}, 'R_100')
     assert not compatible(specification('R_25'), 'R_100')
 
 
 def test_sequence_targets_end_at_last_feature_and_gaps_fail():
+    """Garante que as sequências terminam na última feature e que lacunas de época levantam ValueError."""
     from train_model import _build_sequence_dataset
     X = np.arange(6).reshape(-1, 1)
     seq = _build_sequence_dataset(X, 3, epochs = np.arange(6) * 60)
@@ -185,6 +201,7 @@ def test_sequence_targets_end_at_last_feature_and_gaps_fail():
 
 
 def test_risk_restart_keeps_daily_limits_and_peak():
+    """Garante que reiniciar o RiskManager preserva limites diários, pausa, drawdown e ignora contrato repetido."""
     r = RiskManager(1000)
     r.record_result('R_100', 'BUY', 10, 15, - 10, {}, contract_id = '1')
     r.record_result('R_100', 'BUY', 10, 15, - 10, {}, contract_id = '2')
@@ -197,6 +214,7 @@ def test_risk_restart_keeps_daily_limits_and_peak():
 
 
 def test_zero_profit_does_not_reset_losses_or_become_win():
+    """Garante que lucro zero não zera as perdas consecutivas nem conta como vitória."""
     r = RiskManager(1000)
     r.record_result('R_100', 'BUY', 10, 15, - 10, {})
     r.record_result('R_100', 'BUY', 10, 15, 0, {})
@@ -204,10 +222,12 @@ def test_zero_profit_does_not_reset_losses_or_become_win():
 
 
 def test_outbox_recovers_csv_after_interrupted_append(monkeypatch):
+    """Garante que o outbox recupera a linha do CSV após uma gravação interrompida, sem duplicá-la."""
     r = RiskManager(1000)
     original = r._flush_outbox
     count = 0
     def interrupted():
+        """Simula falha de disco na segunda chamada de _flush_outbox."""
         nonlocal count
         count += 1
         if count == 2:
@@ -224,6 +244,7 @@ def test_outbox_recovers_csv_after_interrupted_append(monkeypatch):
 
 
 def test_training_partitions_purge_overlapping_labels_and_features():
+    """Garante que as partições temporais eliminam sobreposição entre rótulos e features posteriores."""
     from train_model import temporal_partitions
     epochs = np.arange(4000) * 60
     frame = pd.DataFrame(dict(signal_epoch = epochs, feature_start_epoch = epochs - 6000,
@@ -235,6 +256,7 @@ def test_training_partitions_purge_overlapping_labels_and_features():
 
 
 def test_model_gate_rejects_missing_quality_and_incomparable_periods():
+    """Garante que a promoção rejeita candidato sem qualidade ou com período de avaliação incomparável ao campeão."""
     from pipeline import _should_promote_model
     assert not _should_promote_model(None, {'auc': .9, 'accuracy': .9})[0]
     candidate = dict(eligible = True, auc = .7, accuracy = .65, f1 = .65, evaluation_start = 100, evaluation_end = 200, n_test = 40)
@@ -247,6 +269,7 @@ def test_model_gate_rejects_missing_quality_and_incomparable_periods():
 
 
 def test_model_loader_refuses_legacy_and_mismatching_contract(tmp_path, monkeypatch):
+    """Garante que o carregador recusa modelos legados ou com contrato divergente."""
     import joblib
     path = tmp_path / 'model.pkl'
     monkeypatch.setattr(config, 'AI_MODEL_PATH', str(path))
@@ -259,6 +282,7 @@ def test_model_loader_refuses_legacy_and_mismatching_contract(tmp_path, monkeypa
 
 
 def test_model_loader_checks_sidecar_before_pickle(tmp_path, monkeypatch):
+    """Garante que o metadado sidecar é verificado antes de abrir o pickle."""
     import joblib
     path = tmp_path / 'model.pkl'
     path.write_bytes(b'old pickle')
@@ -269,6 +293,7 @@ def test_model_loader_checks_sidecar_before_pickle(tmp_path, monkeypatch):
 
 
 def test_missing_model_sidecar_error_is_actionable(tmp_path):
+    """Garante que a ausência do sidecar gera FileNotFoundError com mensagem acionável."""
     from model_contract import load_validated_bundle
     path = tmp_path / 'model.pkl'
     path.write_bytes(b'old pickle')
@@ -279,12 +304,14 @@ def test_missing_model_sidecar_error_is_actionable(tmp_path):
 
 
 def test_one_minute_and_fifteen_minute_contracts_cannot_share_bundle(monkeypatch):
+    """Garante que um bundle de 15 minutos é incompatível quando a duração configurada é 1."""
     metadata = specification(config.get_active_symbol())
     monkeypatch.setattr(config, 'DURATION', 1)
     assert not compatible(metadata, config.get_active_symbol())
 
 
 def test_distinct_accounts_keep_distinct_risk_history():
+    """Garante que contas distintas mantêm saldo, lucro diário e drawdown separados."""
     r = RiskManager(1000)
     r.bind_account('account-a', 1000)
     r.record_result('R_100', 'BUY', 10, 15, - 10, {}, contract_id = 'a1')
@@ -297,6 +324,7 @@ def test_distinct_accounts_keep_distinct_risk_history():
 
 
 def test_writer_refuses_to_append_v2_rows_to_legacy_file(tmp_path):
+    """Garante que append_record recusa gravar linhas v2 em arquivo legado sem alterá-lo."""
     from market_data import append_record
     path = tmp_path / 'old.csv'
     path.write_text('60,x,R_100,100\n')
@@ -307,16 +335,21 @@ def test_writer_refuses_to_append_v2_rows_to_legacy_file(tmp_path):
 
 
 def test_scanner_requests_time_candles(monkeypatch):
+    """Garante que o scanner pede velas por tempo com a granularidade configurada."""
     import pipeline
     sent = []
     class FakeSocket:
+        """WebSocket falso que autentica e responde histórico de velas vazio."""
         def __init__(self, url, on_open, on_message, on_error, on_close):
+            """Guarda os callbacks de abertura, mensagem e fechamento."""
             self.on_open = on_open
             self.on_message = on_message
             self.on_close = on_close
         def run_forever(self):
+            """Simula a abertura da conexão."""
             self.on_open(self)
         def send(self, raw):
+            """Registra a requisição e responde com autorização ou velas vazias."""
             message = json.loads(raw)
             sent.append(message)
             if 'authorize' in message:
@@ -324,6 +357,7 @@ def test_scanner_requests_time_candles(monkeypatch):
             else:
                 self.on_message(self, json.dumps({'msg_type': 'candles', 'candles': []}))
         def close(self):
+            """Dispara o callback de fechamento."""
             self.on_close(self)
     monkeypatch.setattr(pipeline, '_get_ws_url', lambda: 'offline')
     monkeypatch.setattr(pipeline, '_uses_bearer_auth', lambda: False)
@@ -334,11 +368,13 @@ def test_scanner_requests_time_candles(monkeypatch):
 
 
 def test_history_fetch_paginates_and_counts_candles(tmp_path, monkeypatch):
+    """Garante que o histórico é buscado em páginas de até 1000 velas e gravado como velas sem erros."""
     import pipeline
     sent = []
     now = 1_800_200_000
 
     def candles(end, amount):
+        """Gera amount velas consecutivas terminando em end (ou na última vela fechada)."""
         latest = now - config.CANDLE_TIMEFRAME_SEC if end == 'latest' else int(end)
         start = latest - (amount - 1) * config.CANDLE_TIMEFRAME_SEC
         return [
@@ -347,13 +383,17 @@ def test_history_fetch_paginates_and_counts_candles(tmp_path, monkeypatch):
         ]
 
     class FakeSocket:
+        """WebSocket falso que autentica e responde páginas de velas conforme count e end."""
         def __init__(self, url, on_open, on_message, on_error, on_close):
+            """Guarda os callbacks de abertura, mensagem e fechamento."""
             self.on_open = on_open
             self.on_message = on_message
             self.on_close = on_close
         def run_forever(self):
+            """Simula a abertura da conexão."""
             self.on_open(self)
         def send(self, raw):
+            """Registra a requisição e responde com autorização ou com uma página de velas."""
             message = json.loads(raw)
             sent.append(message)
             if 'authorize' in message:
@@ -362,6 +402,7 @@ def test_history_fetch_paginates_and_counts_candles(tmp_path, monkeypatch):
             amount = min(int(message['count']), 1000)
             self.on_message(self, json.dumps({'msg_type': 'candles', 'candles': candles(message['end'], amount)}))
         def close(self):
+            """Dispara o callback de fechamento."""
             self.on_close(self, None, None)
 
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
@@ -381,12 +422,14 @@ def test_history_fetch_paginates_and_counts_candles(tmp_path, monkeypatch):
 
 
 def test_history_fetch_refuses_closed_market_before_request(tmp_path, monkeypatch):
+    """Garante que o histórico não abre WebSocket quando o mercado está fechado."""
     import pipeline
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
     monkeypatch.setattr(pipeline, 'SYMBOL', 'frxEURAUD')
     monkeypatch.setattr(pipeline, '_probe_symbol', lambda symbol: (False, 'market closed'))
 
     def unexpected_socket(*args, **kwargs):
+        """Falha o teste se um WebSocket de histórico for aberto."""
         pytest.fail('nao deve abrir WebSocket de historico para mercado fechado')
 
     monkeypatch.setattr(pipeline.websocket, 'WebSocketApp', unexpected_socket)
@@ -394,6 +437,7 @@ def test_history_fetch_refuses_closed_market_before_request(tmp_path, monkeypatc
 
 
 def test_scan_skips_locally_closed_market_before_fetch(monkeypatch):
+    """Garante que o scanner pontua com 0 e não busca preços de mercado fechado localmente."""
     import pipeline
     fetched = []
     monkeypatch.setattr(pipeline, '_local_market_open', lambda symbol: symbol != 'frxEURUSD')
@@ -405,6 +449,7 @@ def test_scan_skips_locally_closed_market_before_fetch(monkeypatch):
 
 
 def test_pipeline_training_wait_counts_only_live_ticks(tmp_path, monkeypatch):
+    """Garante que a espera de treino conta apenas ticks ao vivo, não as velas históricas."""
     import pipeline
     path = tmp_path / 'ticks.csv'
     base = 1_800_000_000
@@ -424,6 +469,7 @@ def test_pipeline_training_wait_counts_only_live_ticks(tmp_path, monkeypatch):
 
 
 def test_pipeline_counts_runtime_symbol_after_scan(tmp_path, monkeypatch):
+    """Garante que a contagem de ticks considera apenas o símbolo de runtime após o scan."""
     import pipeline
     path = tmp_path / 'ticks.csv'
     base = 1_800_000_000
@@ -439,10 +485,12 @@ def test_pipeline_counts_runtime_symbol_after_scan(tmp_path, monkeypatch):
 
 
 def test_pipeline_fallback_uses_open_synthetic_when_default_unavailable(monkeypatch):
+    """Garante que, sem mercado padrão disponível, o fallback escolhe um sintético aberto (R_25)."""
     import pipeline
     monkeypatch.setattr(pipeline, '_scan_group', lambda symbols: {s: 0.0 for s in symbols})
 
     def fake_probe(symbol):
+        """Considera aberto apenas o símbolo R_25."""
         return (symbol == 'R_25'), ('closed' if symbol != 'R_25' else '')
 
     monkeypatch.setattr(pipeline, '_probe_symbol', fake_probe)
@@ -450,6 +498,7 @@ def test_pipeline_fallback_uses_open_synthetic_when_default_unavailable(monkeypa
 
 
 def test_pipeline_raises_history_to_feature_warmup_minimum():
+    """Garante que a contagem efetiva de histórico é elevada ao mínimo de aquecimento das features."""
     import pipeline
     assert pipeline._minimum_history_candles() > FEATURE_WINDOW
     assert pipeline._effective_history_count(1) == pipeline._minimum_history_candles()
@@ -458,6 +507,7 @@ def test_pipeline_raises_history_to_feature_warmup_minimum():
 
 
 def test_startup_minimum_survives_temporal_embargo():
+    """Garante que o histórico mínimo de partida ainda deixa partições temporais com amostra suficiente após o embargo."""
     from model_contract import minimum_history_candles, duration_seconds
     from train_model import temporal_partitions
     horizon = duration_seconds(config.DURATION, config.DURATION_UNIT)
@@ -472,16 +522,19 @@ def test_startup_minimum_survives_temporal_embargo():
 
 
 def test_training_starts_with_2280_rows_after_market_gaps(monkeypatch):
+    """Garante que 2280 contratos rotuláveis bastam para iniciar o treino sem aguardar o orçamento de coleta."""
     import pipeline
     monkeypatch.setattr(pipeline, '_count_ticks', lambda: 150492)
     monkeypatch.setattr(pipeline, '_count_labelable_contracts_for_training', lambda: 2280)
     def unexpected_wait(*args):
+        """Falha o teste se o pipeline dormir aguardando coleta."""
         pytest.fail('Dados suficientes ficaram aguardando o orcamento de coleta')
     monkeypatch.setattr(pipeline.time, 'sleep', unexpected_wait)
     pipeline._wait_for_ticks(200)
 
 
 def test_new_training_start_archives_learning_only(tmp_path, monkeypatch):
+    """Garante que o início de um novo treino arquiva só artefatos de aprendizado e preserva os operacionais."""
     import pipeline
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(pipeline, 'TICKS_CSV', 'ticks_v2.csv')
@@ -508,6 +561,7 @@ def test_new_training_start_archives_learning_only(tmp_path, monkeypatch):
 @pytest.mark.parametrize('options', [dict(pending={'symbol': 'R_100'}),
                                      dict(reuse=True), dict(skip_collect=True)])
 def test_training_reset_preserves_reconciliation_and_reuse(tmp_path, monkeypatch, options):
+    """Garante que o reset de treino não arquiva o modelo quando há reconciliação pendente, reuso ou coleta pulada."""
     import pipeline
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'model.pkl').write_text('old model')
@@ -516,6 +570,7 @@ def test_training_reset_preserves_reconciliation_and_reuse(tmp_path, monkeypatch
 
 
 def test_pipeline_missing_sidecar_requests_new_training(tmp_path, monkeypatch, capsys):
+    """Garante que modelo sem sidecar não é carregado e o pipeline sinaliza treino inicial automático."""
     import pipeline
     model = tmp_path / 'model.pkl'
     model.write_bytes(b'legacy pickle must not be loaded')
@@ -525,6 +580,7 @@ def test_pipeline_missing_sidecar_requests_new_training(tmp_path, monkeypatch, c
 
 
 def test_collector_backfills_while_live_ticks_continue(tmp_path, monkeypatch):
+    """Garante que o coletor preenche o histórico anterior em páginas enquanto ticks ao vivo continuam, sem conflitos."""
     import pipeline
     from market_data import ensure_header
     from unittest.mock import Mock
@@ -536,8 +592,10 @@ def test_collector_backfills_while_live_ticks_continue(tmp_path, monkeypatch):
     collector = pipeline._CollectorThread('R_100')
     ws = Mock()
     def tick(epoch):
+        """Entrega um tick ao vivo ao coletor."""
         collector._on_message(ws, json.dumps({'tick': {'epoch': epoch, 'quote': 100, 'symbol': 'R_100'}}))
     def history(epochs):
+        """Entrega ao coletor uma resposta de histórico com as épocas dadas."""
         collector._on_message(ws, json.dumps({'msg_type': 'history',
                               'history': {'times': epochs, 'prices': [100] * len(epochs)}}))
     tick(base)
@@ -558,6 +616,7 @@ def test_collector_backfills_while_live_ticks_continue(tmp_path, monkeypatch):
 
 
 def test_complete_history_ohlc_survives_partial_live_overlap():
+    """Garante que o OHLC completo da vela histórica sobrevive à sobreposição parcial com ticks ao vivo."""
     from dataset_builder import _merge_feature_candles
     historical = dict(epoch=1_800_000_000, kind='candle', open=100, high=110, low=90, price=101)
     ticks = [dict(epoch=1_800_000_050, price=101), dict(epoch=1_800_000_060, price=102)]
@@ -566,6 +625,7 @@ def test_complete_history_ohlc_survives_partial_live_overlap():
 
 
 def test_dataset_training_does_not_apply_live_candle_blocker(tmp_path, monkeypatch):
+    """Garante que a construção do dataset não aplica alertas de vela ao vivo (candle_alerts vazio)."""
     import dataset_builder
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
@@ -580,6 +640,7 @@ def test_dataset_training_does_not_apply_live_candle_blocker(tmp_path, monkeypat
     original_get_signal = dataset_builder.strategy.get_signal
 
     def wrapped_get_signal(*args, **kwargs):
+        """Registra candle_alerts recebido e delega ao get_signal original."""
         calls.append(kwargs.get('candle_alerts'))
         return original_get_signal(*args, **kwargs)
 
@@ -590,10 +651,12 @@ def test_dataset_training_does_not_apply_live_candle_blocker(tmp_path, monkeypat
 
 
 def test_pipeline_waits_for_compatible_model_before_executor(monkeypatch):
+    """Garante que o pipeline aguarda um modelo compatível antes de liberar o executor."""
     import pipeline
     calls = {'count': 0}
 
     def fake_metrics():
+        """Retorna None na primeira consulta e métricas elegíveis nas seguintes."""
         calls['count'] += 1
         if calls['count'] == 1:
             return None
@@ -605,6 +668,7 @@ def test_pipeline_waits_for_compatible_model_before_executor(monkeypatch):
 
 
 def test_pipeline_refreshes_latest_history_even_when_old_candles_exist(tmp_path, monkeypatch):
+    """Garante que o pipeline busca o histórico mínimo recente mesmo havendo velas antigas no arquivo."""
     import pipeline
     path = tmp_path / 'ticks.csv'
     base = 1_800_000_000
@@ -623,10 +687,13 @@ def test_pipeline_refreshes_latest_history_even_when_old_candles_exist(tmp_path,
 
 
 def test_minimum_quality_gate_uses_nonoverlapping_contracts():
+    """Garante que o gate de qualidade conta apenas contratos sem sobreposição e reprova amostra pequena."""
     from train_model import _metrics
     class Model:
+        """Modelo falso que sempre prevê 0.9 para a classe 1."""
         classes_ = np.array([0, 1])
         def predict_proba(self, X):
+            """Retorna [0.1, 0.9] para todas as linhas."""
             return np.tile([.1, .9], (len(X), 1))
     frame = pd.DataFrame(np.zeros((100, len(feature_engine.FEATURES))), columns = feature_engine.FEATURES)
     frame['target'] = 1
@@ -639,6 +706,7 @@ def test_minimum_quality_gate_uses_nonoverlapping_contracts():
 
 
 def test_dataset_does_not_use_other_symbols(tmp_path):
+    """Garante que o dataset ignora ticks de outros símbolos presentes no CSV."""
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
     write_ticks(source)
@@ -689,12 +757,15 @@ def test_training_calibration_and_serialization_on_synthetic_data(tmp_path, monk
 
 
 def test_model_quality_gate_requires_technical_agreement():
+    """Garante que o gate de qualidade não aprova nem conta operações sem concordância do sinal técnico."""
     from train_model import _metrics
 
     class Model:
+        """Modelo falso com alta confiança na classe 1."""
         classes_ = np.array([0, 1])
 
         def predict_proba(self, X):
+            """Retorna [0.01, 0.99] para todas as linhas."""
             return np.tile([.01, .99], (len(X), 1))
 
     frame = pd.DataFrame(np.zeros((100, len(feature_engine.FEATURES))), columns=feature_engine.FEATURES)

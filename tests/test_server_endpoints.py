@@ -69,11 +69,13 @@ def client():
 # ─── Endpoints estáticos ──────────────────────────────────────────────────────
 
 def test_index_returns_200(client):
+    """Garante que a página inicial responde 200."""
     r = client.get("/")
     assert r.status_code == 200
 
 
 def test_index_contains_backtest_panel(client):
+    """Garante que o HTML da página inicial contém aba, formulário e gráfico de backtest."""
     html = client.get("/").get_data(as_text=True)
 
     assert 'data-tab="backtest"' in html
@@ -82,6 +84,7 @@ def test_index_contains_backtest_panel(client):
 
 
 def test_favicon_no_error(client):
+    """Garante que /favicon.ico não gera erro de servidor."""
     r = client.get("/favicon.ico")
     assert r.status_code in (200, 204, 404)  # qualquer coisa menos 500
 
@@ -89,11 +92,13 @@ def test_favicon_no_error(client):
 # ─── /api/summary ─────────────────────────────────────────────────────────────
 
 def test_summary_returns_200(client):
+    """Garante que /api/summary responde 200."""
     r = client.get("/api/summary")
     assert r.status_code == 200
 
 
 def test_summary_required_keys(client):
+    """Garante que /api/summary traz todas as chaves obrigatórias."""
     r = client.get("/api/summary")
     data = json.loads(r.data)
     required = {
@@ -106,6 +111,7 @@ def test_summary_required_keys(client):
 
 
 def test_summary_empty_data_returns_zeros(client):
+    """Garante que /api/summary sem dados retorna zeros e não pausado."""
     r = client.get("/api/summary")
     data = json.loads(r.data)
     assert data["total_trades"] == 0
@@ -114,6 +120,7 @@ def test_summary_empty_data_returns_zeros(client):
 
 
 def test_summary_uses_risk_state_when_operations_are_empty(tmp_path):
+    """Garante que /api/summary usa o estado de risco quando o CSV de operações está vazio."""
     import dashboard.server as srv
 
     empty_ops = tmp_path / "operacoes_v2.csv"
@@ -145,6 +152,7 @@ def test_summary_uses_risk_state_when_operations_are_empty(tmp_path):
 
 
 def test_summary_uses_deriv_contract_report_instead_of_local_operations(tmp_path, monkeypatch):
+    """Garante que /api/summary prefere o relatório de contratos da Deriv às operações locais."""
     import dashboard.server as srv
 
     empty_ops = tmp_path / "operacoes_v2.csv"
@@ -195,11 +203,13 @@ def test_summary_uses_deriv_contract_report_instead_of_local_operations(tmp_path
 # ─── /api/ticks ───────────────────────────────────────────────────────────────
 
 def test_ticks_returns_200(client):
+    """Garante que /api/ticks responde 200."""
     r = client.get("/api/ticks?n=10")
     assert r.status_code == 200
 
 
 def test_ticks_returns_list(client):
+    """Garante que /api/ticks retorna uma lista."""
     data = json.loads(client.get("/api/ticks?n=10").data)
     assert isinstance(data, list)
 
@@ -213,11 +223,13 @@ def test_ticks_n_capped_at_2000(client):
 # ─── /api/trades ──────────────────────────────────────────────────────────────
 
 def test_trades_returns_200(client):
+    """Garante que /api/trades responde 200."""
     r = client.get("/api/trades?n=5")
     assert r.status_code == 200
 
 
 def test_trades_returns_list(client):
+    """Garante que /api/trades retorna dict com lista de trades e fonte deriv_profit_table."""
     data = json.loads(client.get("/api/trades?n=5").data)
     assert isinstance(data, dict)
     assert isinstance(data["trades"], list)
@@ -225,6 +237,7 @@ def test_trades_returns_list(client):
 
 
 def test_trades_returns_deriv_contract_report(monkeypatch):
+    """Garante que /api/trades converte o relatório de contratos da Deriv em trades com lucro calculado."""
     import dashboard.server as srv
 
     monkeypatch.setattr(srv, "_deriv_contract_cache", {"ts": 0.0, "records": [], "error": ""})
@@ -251,11 +264,13 @@ def test_trades_returns_deriv_contract_report(monkeypatch):
 
 
 def test_trades_reports_deriv_error(monkeypatch):
+    """Garante que /api/trades devolve lista vazia e a mensagem de erro quando a Deriv falha."""
     import dashboard.server as srv
 
     monkeypatch.setattr(srv, "_deriv_contract_cache", {"ts": 0.0, "records": [], "error": ""})
 
     def fail(limit=100):
+        """Simula indisponibilidade da Deriv."""
         raise RuntimeError("Deriv indisponível")
 
     monkeypatch.setattr(srv, "_request_deriv_profit_table", fail)
@@ -271,11 +286,13 @@ def test_trades_reports_deriv_error(monkeypatch):
 # ─── /api/indicators ─────────────────────────────────────────────────────────
 
 def test_indicators_returns_200(client):
+    """Garante que /api/indicators responde 200."""
     r = client.get("/api/indicators")
     assert r.status_code == 200
 
 
 def test_indicators_returns_dict(client):
+    """Garante que /api/indicators retorna um dict."""
     data = json.loads(client.get("/api/indicators").data)
     assert isinstance(data, dict)
 
@@ -283,11 +300,13 @@ def test_indicators_returns_dict(client):
 # ─── /api/model ───────────────────────────────────────────────────────────────
 
 def test_model_returns_200(client):
+    """Garante que /api/model responde 200."""
     r = client.get("/api/model")
     assert r.status_code == 200
 
 
 def test_model_required_keys(client):
+    """Garante que /api/model traz as chaves obrigatórias."""
     data = json.loads(client.get("/api/model").data)
     required = {"model_exists", "tft_exists", "duration_exists", "ticks_count", "dataset_rows"}
     missing = required - data.keys()
@@ -297,16 +316,19 @@ def test_model_required_keys(client):
 # ─── /api/bot/status ─────────────────────────────────────────────────────────
 
 def test_bot_status_returns_200(client):
+    """Garante que /api/bot/status responde 200."""
     r = client.get("/api/bot/status")
     assert r.status_code == 200
 
 
 def test_bot_status_running_is_bool(client):
+    """Garante que o campo running de /api/bot/status é booleano."""
     data = json.loads(client.get("/api/bot/status").data)
     assert isinstance(data["running"], bool)
 
 
 def test_bot_status_not_running_without_pid(client):
+    """Garante que /api/bot/status informa running falso quando não há bot em execução."""
     import dashboard.server as srv
     # Mocka _bot_running para simular ausência de bot nos testes
     with patch.object(srv, "_bot_running", return_value=(False, None)):
@@ -315,6 +337,7 @@ def test_bot_status_not_running_without_pid(client):
 
 
 def test_bot_running_removes_stale_pid(client):
+    """Garante que _bot_running remove PID obsoleto e marca o status como crashed."""
     import dashboard.server as srv
     srv.PID_FILE.write_text("999999")
     srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "running", "running": True, "pid": 999999}))
@@ -327,6 +350,7 @@ def test_bot_running_removes_stale_pid(client):
 
 
 def test_bot_status_marks_missing_running_process_as_crashed(client):
+    """Garante que /api/bot/status marca como crashed um status running sem processo."""
     import dashboard.server as srv
     srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "running", "running": True, "pid": 999999}))
     with patch.object(srv, "_bot_running", return_value=(False, None)):
@@ -336,6 +360,7 @@ def test_bot_status_marks_missing_running_process_as_crashed(client):
 
 
 def test_bot_status_uses_status_pid_when_pid_file_is_missing(client):
+    """Garante que, sem arquivo de PID, o PID do status inexistente resulta em crashed e pid nulo."""
     import dashboard.server as srv
 
     try:
@@ -352,6 +377,7 @@ def test_bot_status_uses_status_pid_when_pid_file_is_missing(client):
 
 
 def test_bot_status_reconciles_waiting_model_with_dead_pid(client):
+    """Garante que status waiting_model com PID morto é reconciliado como crashed e persistido."""
     import dashboard.server as srv
 
     try:
@@ -375,6 +401,7 @@ def test_bot_status_reconciles_waiting_model_with_dead_pid(client):
 
 
 def test_bot_status_includes_last_decision_diagnostics(client):
+    """Garante que /api/bot/status inclui última decisão, contagens e tempo sem entrada."""
     import dashboard.server as srv
     srv.BOT_STATUS_JSON.write_text(json.dumps({
         "status": "running",
@@ -392,6 +419,7 @@ def test_bot_status_includes_last_decision_diagnostics(client):
 
 
 def test_state_includes_bot_crash_status(client):
+    """Garante que /api/state reflete o status crashed do bot."""
     import dashboard.server as srv
     srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "running", "running": True, "pid": 999999}))
     with patch.object(srv, "_bot_running", return_value=(False, None)), \
@@ -401,6 +429,7 @@ def test_state_includes_bot_crash_status(client):
 
 
 def test_state_includes_decision_diagnostics(client):
+    """Garante que /api/state inclui os diagnósticos de decisão do bot."""
     import dashboard.server as srv
     srv.BOT_STATUS_JSON.write_text(json.dumps({
         "status": "running",
@@ -479,11 +508,13 @@ def test_bot_start_refuses_while_backtest_is_running(client):
 # ─── /api/bot/logs ───────────────────────────────────────────────────────────
 
 def test_bot_logs_returns_200(client):
+    """Garante que /api/bot/logs responde 200."""
     r = client.get("/api/bot/logs")
     assert r.status_code == 200
 
 
 def test_bot_logs_has_lines_key(client):
+    """Garante que /api/bot/logs traz a chave lines com uma lista."""
     data = json.loads(client.get("/api/bot/logs").data)
     assert "lines" in data
     assert isinstance(data["lines"], list)
@@ -492,11 +523,13 @@ def test_bot_logs_has_lines_key(client):
 # ─── /api/equity ─────────────────────────────────────────────────────────────
 
 def test_equity_returns_200(client):
+    """Garante que /api/equity responde 200."""
     r = client.get("/api/equity")
     assert r.status_code == 200
 
 
 def test_equity_returns_list(client):
+    """Garante que /api/equity retorna uma lista."""
     data = json.loads(client.get("/api/equity").data)
     assert isinstance(data, list)
 
@@ -504,11 +537,13 @@ def test_equity_returns_list(client):
 # ─── /api/state ───────────────────────────────────────────────────────────────
 
 def test_state_returns_200(client):
+    """Garante que /api/state responde 200."""
     r = client.get("/api/state")
     assert r.status_code == 200
 
 
 def test_state_required_top_keys(client):
+    """Garante que /api/state traz as seções de nível superior obrigatórias."""
     data = json.loads(client.get("/api/state").data)
     required = {"bot", "summary", "indicators", "model", "risk_state", "active_contract"}
     missing = required - data.keys()
@@ -516,6 +551,7 @@ def test_state_required_top_keys(client):
 
 
 def test_state_bot_section_structure(client):
+    """Garante que a seção bot de /api/state tem running booleano e pid."""
     data = json.loads(client.get("/api/state").data)
     bot = data["bot"]
     assert "running" in bot
@@ -524,6 +560,7 @@ def test_state_bot_section_structure(client):
 
 
 def test_state_summary_section_structure(client):
+    """Garante que a seção summary de /api/state tem saldo, total de trades e win rate."""
     data = json.loads(client.get("/api/state").data)
     summary = data["summary"]
     assert "balance" in summary
@@ -532,6 +569,7 @@ def test_state_summary_section_structure(client):
 
 
 def test_state_summary_falls_back_to_risk_state_when_session_has_no_operations(tmp_path):
+    """Garante que o resumo de /api/state usa o estado de risco quando a sessão não tem operações."""
     import dashboard.server as srv
 
     ops = tmp_path / "operacoes_v2.csv"
@@ -572,6 +610,7 @@ def test_state_summary_falls_back_to_risk_state_when_session_has_no_operations(t
 
 
 def test_state_model_section_has_metrics(client):
+    """Garante que a seção model de /api/state traz model_exists e last_metrics como dict."""
     data = json.loads(client.get("/api/state").data)
     model = data["model"]
     assert "model_exists" in model
@@ -582,11 +621,13 @@ def test_state_model_section_has_metrics(client):
 # ─── /api/model-metrics ──────────────────────────────────────────────────────
 
 def test_model_metrics_returns_200(client):
+    """Garante que /api/model-metrics responde 200."""
     r = client.get("/api/model-metrics")
     assert r.status_code == 200
 
 
 def test_model_metrics_has_cache_control_header(client):
+    """Garante que /api/model-metrics envia Cache-Control com no-cache ou no-store."""
     r = client.get("/api/model-metrics")
     cc = r.headers.get("Cache-Control", "")
     assert "no-cache" in cc or "no-store" in cc, (
@@ -597,11 +638,13 @@ def test_model_metrics_has_cache_control_header(client):
 # ─── /api/model-history ──────────────────────────────────────────────────────
 
 def test_model_history_returns_200(client):
+    """Garante que /api/model-history responde 200."""
     r = client.get("/api/model-history")
     assert r.status_code == 200
 
 
 def test_model_history_returns_list(client):
+    """Garante que /api/model-history retorna uma lista."""
     data = json.loads(client.get("/api/model-history").data)
     assert isinstance(data, list)
 
@@ -609,11 +652,13 @@ def test_model_history_returns_list(client):
 # ─── /api/system ─────────────────────────────────────────────────────────────
 
 def test_system_returns_200(client):
+    """Garante que /api/system responde 200."""
     r = client.get("/api/system")
     assert r.status_code == 200
 
 
 def test_system_required_keys(client):
+    """Garante que /api/system traz as chaves de CPU, RAM e disco obrigatórias."""
     data = json.loads(client.get("/api/system").data)
     required = {"cpu_pct", "ram_pct", "ram_used_mb", "disk_pct", "bot_cpu_pct", "bot_ram_mb"}
     missing = required - data.keys()
@@ -623,16 +668,19 @@ def test_system_required_keys(client):
 # ─── /api/contract-active ────────────────────────────────────────────────────
 
 def test_contract_active_returns_200(client):
+    """Garante que /api/contract-active responde 200."""
     r = client.get("/api/contract-active")
     assert r.status_code == 200
 
 
 def test_contract_active_no_bot_returns_false(client):
+    """Garante que /api/contract-active informa has_active falso sem contrato ativo."""
     data = json.loads(client.get("/api/contract-active").data)
     assert data.get("has_active") is False
 
 
 def test_contract_active_returns_last_local_contract_when_idle(tmp_path):
+    """Garante que, sem contrato ativo, /api/contract-active devolve o último contrato local encerrado."""
     import dashboard.server as srv
 
     state = tmp_path / "state.json"
@@ -661,6 +709,7 @@ def test_contract_active_returns_last_local_contract_when_idle(tmp_path):
 
 
 def test_contract_active_uses_buy_timestamp_as_entry_epoch_fallback(tmp_path):
+    """Garante que o buy_timestamp vira entry_epoch quando o contrato ativo não tem época de entrada."""
     import dashboard.server as srv
 
     state = tmp_path / "state.json"
@@ -689,11 +738,13 @@ def test_contract_active_uses_buy_timestamp_as_entry_epoch_fallback(tmp_path):
 # ─── /api/stats ──────────────────────────────────────────────────────────────
 
 def test_stats_returns_200(client):
+    """Garante que /api/stats responde 200."""
     r = client.get("/api/stats")
     assert r.status_code == 200
 
 
 def test_stats_empty_data_returns_empty_dict(client):
+    """Garante que /api/stats retorna um dict sem dados."""
     data = json.loads(client.get("/api/stats").data)
     assert isinstance(data, dict)
 
@@ -701,6 +752,7 @@ def test_stats_empty_data_returns_empty_dict(client):
 # ─── /api/backtest ───────────────────────────────────────────────────────────
 
 def test_backtest_status_is_idle_without_execution(client):
+    """Garante que o status do backtest é idle, sem execução e com lista de logs."""
     import dashboard.server as srv
 
     srv._backtest_state = {}
@@ -713,6 +765,7 @@ def test_backtest_status_is_idle_without_execution(client):
 
 
 def test_backtest_result_returns_404_without_report(client):
+    """Garante que /api/backtest/result retorna 404 sem relatório."""
     import dashboard.server as srv
 
     srv._backtest_state = {}
@@ -723,6 +776,7 @@ def test_backtest_result_returns_404_without_report(client):
 
 
 def test_backtest_start_requires_token_when_configured(client):
+    """Garante que iniciar backtest sem token retorna 401 quando o token está configurado."""
     import dashboard.server as srv
 
     with patch.object(srv, "_DASHBOARD_TOKEN", "secret123"):
@@ -732,6 +786,7 @@ def test_backtest_start_requires_token_when_configured(client):
 
 
 def test_backtest_start_refuses_when_live_bot_is_running(client):
+    """Garante que iniciar backtest com o bot ao vivo rodando retorna 409."""
     import dashboard.server as srv
 
     with patch.object(srv, "_bot_running", return_value=(True, 123)):
@@ -742,6 +797,7 @@ def test_backtest_start_refuses_when_live_bot_is_running(client):
 
 
 def test_backtest_start_validates_parameters(client):
+    """Garante que payout negativo no início do backtest retorna 400."""
     import dashboard.server as srv
 
     with patch.object(srv, "_bot_running", return_value=(False, None)), \
@@ -753,6 +809,7 @@ def test_backtest_start_validates_parameters(client):
 
 
 def test_backtest_start_rejects_non_boolean_flags(client):
+    """Garante que with_ai não booleano no início do backtest retorna 400."""
     import dashboard.server as srv
 
     with patch.object(srv, "_bot_running", return_value=(False, None)), \
@@ -767,6 +824,7 @@ def test_backtest_start_rejects_non_boolean_flags(client):
 
 
 def test_backtest_start_builds_safe_subprocess_command(client):
+    """Garante que o backtest inicia um subprocesso com lista de argumentos, sem shell e sem --with-ai."""
     import dashboard.server as srv
 
     fake_process = MagicMock()
@@ -803,6 +861,7 @@ def test_backtest_start_builds_safe_subprocess_command(client):
 
 
 def test_backtest_result_returns_metrics_curve_and_limited_trades(client):
+    """Garante que o resultado do backtest traz métricas, curva de equity e trades limitados por n."""
     import dashboard.server as srv
 
     run_dir = srv.BACKTEST_ROOT / "test-run"
@@ -834,6 +893,7 @@ def test_backtest_result_returns_metrics_curve_and_limited_trades(client):
 
 
 def test_start_does_not_reset_risk_or_pending_contract(client):
+    """Garante que iniciar o bot não zera o estado de risco nem o contrato pendente."""
     import dashboard.server as srv
     risk={'date':'2026-09-08','daily_pnl':-30,'consec_losses':3,'balance':970,'pause_until_epoch':9999999999}
     active={'has_active':True,'contract_id':'12345','phase':'open'}
@@ -849,6 +909,7 @@ def test_start_does_not_reset_risk_or_pending_contract(client):
 
 
 def test_start_uses_minimum_history_candles_by_default(client):
+    """Garante que o início do bot usa MIN_HISTORY_CANDLES como --history-count por padrão."""
     import dashboard.server as srv
     proc=MagicMock()
     proc.pid=99999999
@@ -860,6 +921,7 @@ def test_start_uses_minimum_history_candles_by_default(client):
 
 
 def test_start_passes_decision_switches_to_pipeline_env(client):
+    """Garante que os interruptores de decisão do início do bot chegam ao pipeline via variáveis de ambiente."""
     import dashboard.server as srv
     proc = MagicMock()
     proc.pid = 99999999
@@ -888,6 +950,7 @@ def test_start_passes_decision_switches_to_pipeline_env(client):
 
 
 def test_start_rejects_all_decision_switches_off(client):
+    """Garante que desligar todos os módulos de decisão no início do bot retorna 400."""
     import dashboard.server as srv
     with patch.object(srv, '_bot_running', return_value=(False, None)), \
          patch.object(srv, '_backtest_running', return_value=(False, None)):
@@ -904,6 +967,7 @@ def test_start_rejects_all_decision_switches_off(client):
 
 
 def test_clear_cannot_remove_active_contract(client):
+    """Garante que limpar operações e estado recusa remover contrato ativo."""
     import dashboard.server as srv
     srv.STATE_JSON.write_text(json.dumps({'active_contract':{'has_active':True,'contract_id':'1'}}))
     with patch.object(srv,'_bot_running',return_value=(False,None)):
@@ -912,6 +976,7 @@ def test_clear_cannot_remove_active_contract(client):
 
 
 def test_model_metrics_does_not_present_candidate_as_active(client, monkeypatch, tmp_path):
+    """Garante que métricas de candidato sem modelo ativo não aparecem em /api/model-metrics, apenas no histórico."""
     import dashboard.server as srv
     candidate = tmp_path / 'candidate_metrics.json'
     candidate.write_text(json.dumps([{'stage': 'final', 'auc': .99}]))

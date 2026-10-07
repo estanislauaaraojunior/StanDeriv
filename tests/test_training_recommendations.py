@@ -14,11 +14,13 @@ from tests.test_training_evaluation import frame, FixedModel
 
 
 def small_candidates(search_trials=0):
+    """Substitui training_candidates por dois modelos pequenos e rápidos."""
     return [('RandomForest', RandomForestClassifier(n_estimators=4, max_depth=2, random_state=42)),
             ('ClassFrequency', DummyClassifier(strategy='prior'))]
 
 
 def dataset(tmp_path, n=2400):
+    """Grava um dataset sintético com metadados e retorna (DataFrame, caminho)."""
     df = frame(n)
     df['target'] = np.arange(n) % 2
     df['ema9'] = df.target
@@ -30,6 +32,7 @@ def dataset(tmp_path, n=2400):
 
 
 def test_prior_uses_only_training_labels():
+    """Garante que o prior do modelo calibrado vem apenas dos rótulos de treino."""
     X = np.zeros((10, 2))
     model = tm.CalibratedDirectionModel(DummyClassifier(strategy='prior'), 'raw').fit(X, [0]*7+[1]*3)
     model.calibrate(X, [1]*10)
@@ -37,6 +40,7 @@ def test_prior_uses_only_training_labels():
 
 
 def test_temperature_preserves_ranking_and_serializes(tmp_path):
+    """Garante que a calibração por temperatura preserva o ranking das classes e gera probabilidades válidas."""
     import joblib
     X = np.arange(40).reshape(-1, 1)
     y = np.array([0]*20+[1]*20)
@@ -58,6 +62,7 @@ def test_temperature_preserves_ranking_and_serializes(tmp_path):
 
 
 def test_temperature_keeps_ties_seen_only_in_calibration():
+    """Garante que classes vistas só na calibração permanecem com probabilidade positiva."""
     X = np.arange(20).reshape(-1, 1)
     model = tm.CalibratedDirectionModel(DummyClassifier(strategy='prior'), 'temperature').fit(X, [0, 1]*10)
     model.calibrate(X, [0, 1, 2, 1]*5)
@@ -68,6 +73,7 @@ def test_temperature_keeps_ties_seen_only_in_calibration():
 
 
 def test_old_multinomial_bundles_remain_readable():
+    """Garante que bundles antigos sem o atributo method continuam gerando as mesmas probabilidades."""
     X = np.arange(20).reshape(-1, 1)
     model = tm.CalibratedDirectionModel(DummyClassifier(strategy='prior')).fit(X, [0, 1]*10)
     model.calibrate(X, [0, 1]*10)
@@ -77,6 +83,7 @@ def test_old_multinomial_bundles_remain_readable():
 
 
 def test_search_budget_is_bounded_and_deterministic():
+    """Garante que training_candidates é determinístico, limitado a 12 modelos e rejeita search_trials inválido."""
     first, second = tm.training_candidates(4), tm.training_candidates(4)
     assert [n for n, _ in first] == [n for n, _ in second]
     assert len(first) == 12
@@ -87,6 +94,7 @@ def test_search_budget_is_bounded_and_deterministic():
 
 
 def test_diagnostic_raw_recipe_cannot_win_selection():
+    """Garante que receita diagnóstica bruta não é escolhida por choose_candidate."""
     base = dict(trades=40, worst_expectancy=.1, mean_expectancy=.2,
                 max_drawdown_pct=2, mean_log_loss=.6, mean_auc=.58)
     raw = dict(base, diagnostic_only=True, name='raw', worst_expectancy=100)
@@ -95,6 +103,7 @@ def test_diagnostic_raw_recipe_cannot_win_selection():
 
 
 def test_decision_curve_keeps_floors_and_no_trade_precision_is_undefined():
+    """Garante que a curva de decisão respeita os pisos de confiança e deixa a precisão indefinida sem operações."""
     before = config.AI_CONFIDENCE_MIN
     df = frame()
     curve = decision_curve(FixedModel(), df)
@@ -107,6 +116,7 @@ def test_decision_curve_keeps_floors_and_no_trade_precision_is_undefined():
 
 
 def test_offline_training_preserves_source_and_operational_artifacts(tmp_path, monkeypatch):
+    """Garante que o treino offline não altera a fonte nem o modelo operacional nem o carrega."""
     monkeypatch.setattr(tm, 'training_candidates', small_candidates)
     df, source = dataset(tmp_path)
     original = source.read_bytes()
@@ -114,6 +124,7 @@ def test_offline_training_preserves_source_and_operational_artifacts(tmp_path, m
     champion.write_bytes(b'operational sentinel')
     monkeypatch.setattr(config, 'AI_MODEL_PATH', str(champion))
     def forbidden(*args, **kwargs):
+        """Falha o teste se o experimento tentar carregar o modelo campeão."""
         raise AssertionError('experimento tentou carregar champion')
     monkeypatch.setattr(tm, 'load_validated_bundle', forbidden)
     result = compare_training(source, tmp_path/'experiment', search_trials=0)
@@ -136,6 +147,7 @@ def test_offline_training_preserves_source_and_operational_artifacts(tmp_path, m
 
 
 def test_holdout_changes_do_not_change_recipe_or_calibration(tmp_path, monkeypatch):
+    """Garante que alterar rótulos do holdout não muda receita nem walk-forward, apenas a acurácia."""
     monkeypatch.setattr(tm, 'training_candidates', small_candidates)
     df, source = dataset(tmp_path)
     a = compare_training(source, tmp_path/'first', search_trials=0)
@@ -149,6 +161,7 @@ def test_holdout_changes_do_not_change_recipe_or_calibration(tmp_path, monkeypat
 
 
 def test_feature_ablation_profiles_are_offline_and_development_only(tmp_path, monkeypatch):
+    """Garante que a ablação de features gera os perfis esperados sem avaliar o holdout."""
     monkeypatch.setattr(tm, 'training_candidates', small_candidates)
     df, source = dataset(tmp_path)
     for column in ('rsi', 'adx', 'bb_position', 'return_1', 'return_3', 'return_5',
@@ -169,6 +182,7 @@ def test_feature_ablation_profiles_are_offline_and_development_only(tmp_path, mo
 
 
 def test_invalid_timestamps_rejected_before_fitting(tmp_path, monkeypatch):
+    """Garante que timestamps fora de ordem cronológica fazem train levantar ValueError antes do ajuste."""
     df, source = dataset(tmp_path)
     df.loc[0, 'expiry_epoch'] = df.loc[0, 'entry_epoch']-1
     df.to_csv(source, index=False)

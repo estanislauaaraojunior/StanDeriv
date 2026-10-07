@@ -24,6 +24,7 @@ from backtest import (
 
 
 def _ticks(prices, start=1_700_000_040, step=60, symbol="R_TEST"):
+    """Converte uma sequência de preços em Ticks espaçados por step segundos."""
     return [
         Tick(epoch=start + index * step, price=float(price), symbol=symbol)
         for index, price in enumerate(prices)
@@ -31,6 +32,7 @@ def _ticks(prices, start=1_700_000_040, step=60, symbol="R_TEST"):
 
 
 def _settings(**overrides):
+    """Cria BacktestSettings determinísticas (sem IA) com sobrescritas opcionais."""
     values = {
         "initial_balance": 1000.0,
         "payout_ratio": 0.8,
@@ -50,9 +52,11 @@ def _settings(**overrides):
 
 
 def _first_buy_then_none():
+    """Cria um provedor de sinal que retorna BUY uma vez e depois None."""
     used = False
 
     def provider(_context: SignalContext):
+        """Retorna BUY na primeira chamada e None nas seguintes."""
         nonlocal used
         if used:
             return None, {"adx": 20.0}
@@ -63,6 +67,7 @@ def _first_buy_then_none():
 
 
 def test_load_ticks_accepts_headerless_csv_and_isolates_symbol(tmp_path):
+    """Garante que load_ticks lê CSV sem cabeçalho e filtra apenas o símbolo pedido."""
     source = tmp_path / "ticks.csv"
     source.write_text(
         "1700000000,2023-11-14T00:00:00,R_10,100.0\n"
@@ -79,6 +84,7 @@ def test_load_ticks_accepts_headerless_csv_and_isolates_symbol(tmp_path):
 
 
 def test_load_ticks_rejects_unknown_symbol(tmp_path):
+    """Garante que load_ticks levanta ValueError para símbolo ausente no CSV."""
     source = tmp_path / "ticks.csv"
     source.write_text(
         "epoch,datetime,symbol,price\n"
@@ -91,6 +97,7 @@ def test_load_ticks_rejects_unknown_symbol(tmp_path):
 
 
 def test_payout_and_costs_are_applied_to_balance():
+    """Garante que payout e custos hipotéticos são refletidos no lucro líquido e no saldo final."""
     settings = _settings(cost_rate=0.01, fixed_cost=1.0)
     engine = BacktestEngine(
         _ticks([100, 101, 102, 104, 105, 106, 107, 108]),
@@ -111,6 +118,7 @@ def test_payout_and_costs_are_applied_to_balance():
 
 
 def test_tie_is_a_contract_loss():
+    """Garante que empate de preço é contabilizado como perda do stake."""
     engine = BacktestEngine(
         _ticks([100, 101, 102, 102, 103, 104, 105, 106]),
         "R_TEST",
@@ -127,6 +135,7 @@ def test_tie_is_a_contract_loss():
 
 
 def test_tick_duration_uses_exact_future_tick_offset():
+    """Garante que contrato em ticks expira exatamente no tick futuro indicado pela duração."""
     engine = BacktestEngine(
         _ticks([100, 101, 102, 99, 105, 106, 107, 108], step=1),
         "R_TEST",
@@ -142,7 +151,9 @@ def test_tick_duration_uses_exact_future_tick_offset():
 
 
 def test_daily_stop_blocks_new_entries_after_loss():
+    """Garante que o stop loss diário bloqueia novas entradas após a perda."""
     def always_buy(_context):
+        """Sempre retorna BUY."""
         return "BUY", {"adx": 20.0}
 
     engine = BacktestEngine(
@@ -160,7 +171,9 @@ def test_daily_stop_blocks_new_entries_after_loss():
 
 
 def test_pause_uses_historical_clock_after_consecutive_losses():
+    """Garante que a pausa por perdas consecutivas usa o relógio histórico dos ticks."""
     def always_buy(_context):
+        """Sempre retorna BUY."""
         return "BUY", {"adx": 20.0}
 
     prices = list(range(130, 100, -1))
@@ -183,13 +196,16 @@ def test_pause_uses_historical_clock_after_consecutive_losses():
 
 
 def test_signal_context_never_contains_future_prices():
+    """Garante que o contexto do sinal não contém preços futuros: séries com mesmo prefixo geram a mesma entrada."""
     seen_a = []
     seen_b = []
 
     def provider_for(target):
+        """Cria provedor que registra os preços vistos em target e compra uma vez."""
         used = False
 
         def provider(context):
+            """Registra os preços do contexto e retorna BUY apenas na primeira chamada."""
             nonlocal used
             target.append(list(context.prices))
             if not used:
@@ -220,6 +236,7 @@ def test_signal_context_never_contains_future_prices():
 
 
 def test_technical_mode_does_not_call_ai_predictor():
+    """Garante que get_signal com use_ai_model=False não consulta o preditor de IA."""
     prices = [100.0 + index * 0.05 for index in range(200)]
     with patch.object(strategy.ai_predictor, "predict") as predict:
         strategy.get_signal(prices, adx_min=0, use_ai_model=False)
@@ -227,6 +244,7 @@ def test_technical_mode_does_not_call_ai_predictor():
 
 
 def test_candle_filter_uses_historical_evaluation_time():
+    """Garante que o filtro de padrões de vela usa o horário de avaliação e expira alertas antigos."""
     alert = {
         "name": "Bearish Engulfing",
         "direction": "bearish",
@@ -250,6 +268,7 @@ def test_candle_filter_uses_historical_evaluation_time():
 
 
 def test_report_is_written_as_valid_json_and_csv(tmp_path):
+    """Garante que write_report grava JSON válido com artefatos do modelo e um CSV de trades."""
     report = BacktestEngine(
         _ticks([100, 101, 102, 103, 104, 105, 106, 107]),
         "R_TEST",
@@ -269,6 +288,7 @@ def test_report_is_written_as_valid_json_and_csv(tmp_path):
 
 @pytest.mark.parametrize('ratio,expected',[(.5999,0),(.60,1)])
 def test_backtest_respects_payout_floor(ratio,expected):
+    """Garante que o backtest não opera com payout abaixo de 0.60."""
     engine=BacktestEngine(_ticks([100,101,102,104,105,106,107,108]),'R_TEST',
                          _settings(payout_ratio=ratio),signal_provider=_first_buy_then_none())
     result=engine.run()
@@ -276,11 +296,13 @@ def test_backtest_respects_payout_floor(ratio,expected):
 
 
 def _epoch(value):
+    """Converte data ISO em epoch UTC."""
     return int(datetime.fromisoformat(value).replace(tzinfo=timezone.utc).timestamp())
 
 
 @pytest.mark.parametrize("profit,reason", [(-100, "daily_stop_loss"), (100, "daily_take_profit")])
 def test_daily_limits_reset_at_explicit_timezone_midnight(profit, reason):
+    """Garante que stop e take profit diários bloqueiam e são zerados na meia-noite do fuso configurado."""
     risk = HistoricalRiskManager(_settings(
         risk_timezone="America/Sao_Paulo", stop_loss_pct=.05, take_profit_pct=.05,
     ))
@@ -295,6 +317,7 @@ def test_daily_limits_reset_at_explicit_timezone_midnight(profit, reason):
 
 
 def test_midnight_preserves_pending_pause():
+    """Garante que a virada do dia preserva a pausa pendente por perdas consecutivas."""
     risk = HistoricalRiskManager(_settings(max_consecutive_losses=1, pause_base_sec=180))
     before = _epoch("2024-01-01T23:59:00")
     risk.settle(before, -100)
@@ -305,6 +328,7 @@ def test_midnight_preserves_pending_pause():
 
 
 def test_zero_net_result_preserves_loss_streak():
+    """Garante que resultado líquido zero não zera a sequência de perdas."""
     risk = HistoricalRiskManager(_settings())
     risk.settle(1_700_000_040, -10)
     risk.settle(1_700_000_041, 0)
@@ -312,6 +336,7 @@ def test_zero_net_result_preserves_loss_streak():
 
 
 def test_contract_crossing_midnight_is_charged_to_settlement_day():
+    """Garante que contrato que atravessa a meia-noite é contabilizado no dia da liquidação."""
     report = BacktestEngine(
         _ticks([110, 109, 108, 107, 106, 105, 104, 103],
                start=_epoch("2024-01-01T23:57:00")),
@@ -328,6 +353,7 @@ def test_contract_crossing_midnight_is_charged_to_settlement_day():
 
 
 def test_global_loss_streak_survives_daily_reset():
+    """Garante que a maior sequência de perdas é global e sobrevive à virada diária."""
     report = BacktestEngine(
         _ticks(list(range(120, 108, -1)), start=_epoch("2024-01-01T23:55:00")),
         "R_TEST", _settings(stop_loss_pct=1, max_consecutive_losses=100),
@@ -339,6 +365,7 @@ def test_global_loss_streak_survives_daily_reset():
 
 @pytest.mark.parametrize("zone", ["Invalid/Timezone", "", "../UTC"])
 def test_invalid_risk_timezone_is_rejected(zone):
+    """Garante que fuso de risco inválido faz validate levantar ValueError."""
     with pytest.raises(ValueError, match="risk_timezone"):
         _settings(risk_timezone=zone).validate()
 
@@ -346,6 +373,7 @@ def test_invalid_risk_timezone_is_rejected(zone):
 @pytest.mark.parametrize("direction,prices", [("BUY", [100, 101, 102, 104, 105]),
                                              ("SELL", [105, 104, 103, 102, 101])])
 def test_seconds_duration_and_winning_directions(direction, prices):
+    """Garante que contratos de 1 segundo vencem em BUY e SELL com expiração um segundo após a entrada."""
     report = BacktestEngine(
         _ticks(prices, step=1), "R_TEST",
         _settings(timeframe_sec=1, duration=1, duration_unit="s"),
@@ -357,6 +385,7 @@ def test_seconds_duration_and_winning_directions(direction, prices):
 
 
 def test_missing_file_and_insufficient_candles(tmp_path):
+    """Garante erros claros para arquivo inexistente e para velas insuficientes."""
     with pytest.raises(FileNotFoundError):
         load_ticks(tmp_path / "missing.csv")
     with pytest.raises(ValueError, match="candles insuficientes"):
@@ -364,12 +393,14 @@ def test_missing_file_and_insufficient_candles(tmp_path):
 
 
 def test_last_incomplete_candle_is_not_used():
+    """Garante que build_candles descarta a última vela incompleta."""
     ticks = _ticks([100, 101, 102, 999])
     candles = build_candles(ticks, 60)
     assert [c.close for c in candles] == [100, 101, 102]
 
 
 def test_repeated_runs_are_deterministic_and_do_not_touch_operational_files(tmp_path, monkeypatch):
+    """Garante que execuções repetidas são idênticas e não tocam arquivos, rede, IA ou risco operacionais."""
     import config
     import socket
     import ai_predictor
@@ -385,6 +416,7 @@ def test_repeated_runs_are_deterministic_and_do_not_touch_operational_files(tmp_
     before = {p: p.read_bytes() for p in paths}
     config_before = (config.get_active_symbol(), config.DURATION, config.USE_AI_MODEL)
     def forbidden(*args, **kwargs):
+        """Falha o teste se o backtest acessar recursos operacionais."""
         raise AssertionError("backtest accessed operational resources")
     monkeypatch.setattr(socket, "socket", forbidden)
     monkeypatch.setattr(ai_predictor, "predict", forbidden)
@@ -405,6 +437,7 @@ def test_repeated_runs_are_deterministic_and_do_not_touch_operational_files(tmp_
 
 
 def test_cli_help_without_credentials_or_dotenv(tmp_path):
+    """Garante que backtest.py --help funciona sem credenciais nem .env."""
     import shutil
     import subprocess
     import sys
@@ -431,6 +464,7 @@ def test_cli_help_without_credentials_or_dotenv(tmp_path):
     (None, .85, False), (float('nan'), .85, False),
 ])
 def test_ai_backtest_shares_executor_economic_gate(monkeypatch, probability, payout, accepted):
+    """Garante que o backtest com IA aceita ou bloqueia propostas pelo mesmo gate econômico do executor."""
     import ai_predictor
     import config
     from model_contract import profitable_proposal
@@ -450,6 +484,7 @@ def test_ai_backtest_shares_executor_economic_gate(monkeypatch, probability, pay
 
 
 def test_ai_backtest_deducts_hypothetical_costs_before_accepting(monkeypatch):
+    """Garante que custos hipotéticos são deduzidos antes de aceitar a proposta no backtest com IA."""
     import ai_predictor
     import config
     symbol = config.get_active_symbol()

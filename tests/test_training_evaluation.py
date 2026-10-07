@@ -1,3 +1,4 @@
+"""Testes de métricas, validação temporal, seleção e gates de aprovação do treino."""
 import csv
 import json
 from unittest.mock import Mock
@@ -12,12 +13,15 @@ from train_model import _metrics, walk_forward_partitions, selection_key, tempor
 
 
 class FixedModel:
+    """Modelo falso que sempre prevê probabilidade 0.9 para a classe 1."""
     classes_ = np.array([0, 1])
     def predict_proba(self, X):
+        """Retorna [0.1, 0.9] para todas as linhas."""
         return np.tile([.1, .9], (len(X), 1))
 
 
 def frame(n=100, spacing=60):
+    """Monta um DataFrame sintético de features, alvo e épocas com n linhas espaçadas."""
     df = pd.DataFrame(np.zeros((n, len(FEATURES))), columns=FEATURES)
     df['target'] = 1
     df['technical_signal'] = 1
@@ -31,6 +35,7 @@ def frame(n=100, spacing=60):
 
 
 def test_components_explain_disagreement_without_changing_combined_gate():
+    """Garante que as métricas detalham componentes e bloqueios por divergência sem alterar o gate combinado."""
     df = frame()
     df['technical_signal'] = 0
     m = _metrics(FixedModel(), df)
@@ -43,6 +48,7 @@ def test_components_explain_disagreement_without_changing_combined_gate():
 
 
 def test_calibration_penalizes_confident_wrong_predictions_and_missing_ties():
+    """Garante que a calibração piora log loss e Brier para previsões confiantes e erradas."""
     good = _metrics(FixedModel(), frame())
     df = frame()
     df['target'] = 2
@@ -54,6 +60,7 @@ def test_calibration_penalizes_confident_wrong_predictions_and_missing_ties():
 
 
 def test_segments_and_drawdown_use_selected_nonoverlapping_trades():
+    """Garante que segmentos e drawdown usam apenas as operações selecionadas sem sobreposição."""
     df = frame()
     m = _metrics(FixedModel(), df)
     assert m['segments']['direction:BUY']['trades'] == m['trades'] == 7
@@ -63,6 +70,7 @@ def test_segments_and_drawdown_use_selected_nonoverlapping_trades():
 
 
 def test_walk_forward_never_crosses_final_holdout_or_feature_embargo():
+    """Garante que as janelas walk-forward respeitam embargo de features e não tocam o holdout final."""
     df = frame(6000)
     df['target'] = np.arange(len(df)) % 2
     test = temporal_partitions(df)[-1]
@@ -78,6 +86,7 @@ def test_walk_forward_never_crosses_final_holdout_or_feature_embargo():
 
 
 def test_selection_prefers_supported_stability_over_auc_alone():
+    """Garante que selection_key prioriza estabilidade com amostra suficiente em vez de AUC isolada."""
     stable = dict(trades=40, worst_expectancy=.1, mean_expectancy=.2,
                   max_drawdown_pct=2, mean_log_loss=.6, mean_auc=.58)
     unstable = dict(stable, worst_expectancy=-.2, mean_auc=.8)
@@ -87,6 +96,7 @@ def test_selection_prefers_supported_stability_over_auc_alone():
 
 
 def test_horizon_features_are_relative_causal_and_do_not_replace_baseline():
+    """Garante que as features de horizonte são relativas à escala e não alteram as 27 features base."""
     prices = list(np.linspace(100, 110, 100))
     a = compute_experimental_features(prices, 1_800_000_000, 60)
     b = compute_experimental_features([p*10 for p in prices], 1_800_000_000, 60)
@@ -98,6 +108,7 @@ def test_horizon_features_are_relative_causal_and_do_not_replace_baseline():
 
 
 def test_proposal_sampling_is_rate_limited_correlated_and_never_buys(tmp_path):
+    """Garante que a amostragem de propostas é limitada, correlaciona respostas, nunca compra e alimenta o histórico de cotações."""
     path = tmp_path/'quotes.csv'
     recorder = ProposalRecorder(path, 'R_100', 15, 'm')
     ws = Mock()
@@ -118,6 +129,7 @@ def test_proposal_sampling_is_rate_limited_correlated_and_never_buys(tmp_path):
 
 
 def test_sampling_errors_do_not_escape_into_collector_reconnection(tmp_path):
+    """Garante que erro de proposta é absorvido pelo recorder e não grava cotação."""
     recorder = ProposalRecorder(tmp_path/'q.csv', 'R_100', 15, 'm')
     ws = Mock()
     recorder.sample(ws, bearer=False, now=100)
@@ -127,6 +139,7 @@ def test_sampling_errors_do_not_escape_into_collector_reconnection(tmp_path):
 
 
 def test_observed_evaluation_does_not_fill_missing_historical_payout(tmp_path):
+    """Garante que a avaliação observada não inventa payout histórico ausente e bloqueia as operações."""
     from payout_quotes import FIELDS
     path = tmp_path/'quotes.csv'
     with path.open('w') as f:
@@ -137,6 +150,7 @@ def test_observed_evaluation_does_not_fill_missing_historical_payout(tmp_path):
 
 
 def test_retraining_requires_new_matured_labels_even_after_time_backstop(monkeypatch):
+    """Garante que o retreino só dispara quando há rótulos maduros novos suficientes."""
     import pipeline
     monkeypatch.setattr(pipeline, '_retrain_state', {'last_epoch': 0, 'last_label_count': 1000})
     monkeypatch.setattr(pipeline, '_count_labelable_contracts_for_training', lambda: 1001)
@@ -146,6 +160,7 @@ def test_retraining_requires_new_matured_labels_even_after_time_backstop(monkeyp
 
 
 def test_changing_final_targets_cannot_change_walk_forward_selection(tmp_path, monkeypatch):
+    """Garante que alterar os alvos finais não muda o modelo escolhido nem o walk-forward."""
     import train_model, xgboost
     from model_contract import specification, fingerprint, write_json_atomic
     rf, xgb = train_model.RandomForestClassifier, xgboost.XGBClassifier
@@ -169,6 +184,7 @@ def test_changing_final_targets_cannot_change_walk_forward_selection(tmp_path, m
 
 
 def test_xgboost_training_writes_json_report_with_missing_marker(tmp_path, monkeypatch):
+    """Garante que o treino com XGBoost grava relatório JSON com missing igual a 'nan'."""
     import train_model
     from xgboost import XGBClassifier
     from model_contract import specification, fingerprint, write_json_atomic
@@ -187,6 +203,7 @@ def test_xgboost_training_writes_json_report_with_missing_marker(tmp_path, monke
 
 
 def test_payout_telemetry_failure_does_not_discard_live_tick(tmp_path, monkeypatch):
+    """Garante que falha na telemetria de payout não descarta o tick ao vivo recebido."""
     import pipeline
     from market_data import ensure_header, read_records
     path = tmp_path/'ticks.csv'
@@ -201,12 +218,15 @@ def test_payout_telemetry_failure_does_not_discard_live_tick(tmp_path, monkeypat
 
 @pytest.mark.parametrize('total,wins,expected', [(5,3,True),(30,14,True),(100,45,True),(200,90,True),(100,44,False),(0,0,False)])
 def test_fixed_forty_five_percent_gate_for_any_sample(monkeypatch,total,wins,expected):
+    """Garante que o gate de aprovação exige win rate mínimo de 45% com ao menos uma operação, qualquer que seja a amostra."""
     import training_evaluation as evaluation
     df = frame(10)
     df['target'] = [0,1]*5
     class RankedModel:
+        """Modelo falso que ordena corretamente as classes alternadas."""
         classes_ = np.array([0,1])
         def predict_proba(self,X):
+            """Retorna probabilidades alternadas coerentes com o alvo."""
             return np.array([[.9,.1],[.1,.9]]*5)
     result = dict(trades=total,wins=wins,win_rate=wins/total if total else 0,
                   win_rate_lower95=.1,break_even=.625)
@@ -215,14 +235,17 @@ def test_fixed_forty_five_percent_gate_for_any_sample(monkeypatch,total,wins,exp
 
 
 def test_low_auc_is_warning_not_approval_blocker(monkeypatch):
+    """Garante que AUC baixa gera apenas aviso e não impede a elegibilidade."""
     import training_evaluation as evaluation
     df = frame(10)
     df['target'] = [0, 1] * 5
 
     class InvertedModel:
+        """Modelo falso com ranking invertido em relação ao alvo."""
         classes_ = np.array([0, 1])
 
         def predict_proba(self, X):
+            """Retorna probabilidades alternadas opostas ao alvo."""
             return np.array([[.1, .9], [.9, .1]] * 5)
 
     result = dict(trades=100, wins=45, win_rate=.45,
@@ -237,6 +260,7 @@ def test_low_auc_is_warning_not_approval_blocker(monkeypatch):
 @pytest.mark.parametrize('ratio,blocked',[(.5999,True),(.60,False),(.85,False)])
 @pytest.mark.parametrize('mode',['ai_only','technical_only','combined'])
 def test_training_simulation_payout_floor(ratio,blocked,mode):
+    """Garante que a simulação bloqueia operações com payout abaixo de 0.60 em todos os modos."""
     from training_evaluation import simulate
     df=frame(100)
     result=simulate(df,np.ones(len(df),dtype=int),np.full(len(df),.9),mode=mode,payout=ratio)
@@ -247,6 +271,7 @@ def test_training_simulation_payout_floor(ratio,blocked,mode):
     (.60, .68, True), (.625, .60, True), (.6249, .60, False), (.56, .70, False),
 ])
 def test_simulation_nonnegative_return_matches_executor(probability, ratio, accepted):
+    """Garante que a simulação aceita a mesma proposta que profitable_proposal do executor."""
     from training_evaluation import simulate
     from model_contract import profitable_proposal
     df = frame(100)
