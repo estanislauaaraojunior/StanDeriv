@@ -481,7 +481,7 @@ Dataset split:
   ├─ Treino: 0 a 80% (sem shuffle, preserva série)
   ├─ Gap: 80% a 85% (5% de amostras ignoradas)
   └─ Teste: 85% a 100%
-  
+
 Propósito: evita data leakage (informação do futuro vazando no treino)
 ```
 
