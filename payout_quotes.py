@@ -18,6 +18,13 @@ def market_unavailable(error):
     """Only market restrictions, never an arbitrary validation/authentication error."""
     code = error.get('code', '')
     message = str(error.get('message', '')).lower()
+    duration_or_contract_mismatch = (
+        'not offered for this duration' in message
+        or 'trading is not offered for this duration' in message
+        or 'duration' in message and 'not offered' in message
+    )
+    if duration_or_contract_mismatch:
+        return True
     return code in {'MarketIsClosed', 'MarketClosed', 'TradingDisabled', 'InvalidSymbol'} or (
         code == 'ContractBuyValidationError' and
         ('trading is not available' in message or

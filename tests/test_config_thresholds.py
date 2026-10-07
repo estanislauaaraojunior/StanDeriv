@@ -34,6 +34,13 @@ def test_ai_score_min_range():
     )
 
 
+def test_execution_signal_mode_valid():
+    assert config.EXECUTION_SIGNAL_MODE in config.VALID_EXECUTION_SIGNAL_MODES
+    assert config.VALID_EXECUTION_SIGNAL_MODES == {
+        "trained_model",
+    }
+
+
 # ─── RSI ─────────────────────────────────────────────────────────────────────
 
 def test_rsi_bounds_logical():
@@ -74,6 +81,13 @@ def test_signal_score_min_range():
     assert 0.0 < config.SIGNAL_SCORE_MIN < 1.0, (
         f"SIGNAL_SCORE_MIN deve estar em (0, 1): {config.SIGNAL_SCORE_MIN}"
     )
+
+
+def test_entry_mode_opportunity_configuration():
+    assert config.ENTRY_MODE in {"balanced", "opportunity", "conservative"}
+    assert config.ENTRY_MODE == "opportunity"
+    assert 0 < config.OPPORTUNITY_SIGNAL_SCORE_MIN <= config.SIGNAL_SCORE_MIN
+    assert 0 <= config.OPPORTUNITY_ADX_WEIGHT_FLOOR <= 1
 
 
 def test_signal_score_min_not_too_low():

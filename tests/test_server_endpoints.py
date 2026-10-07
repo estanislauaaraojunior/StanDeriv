@@ -317,8 +317,13 @@ def test_bot_status_not_running_without_pid(client):
 def test_bot_running_removes_stale_pid(client):
     import dashboard.server as srv
     srv.PID_FILE.write_text("999999")
+    srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "running", "running": True, "pid": 999999}))
     assert srv._bot_running() == (False, None)
     assert not srv.PID_FILE.exists()
+    status = json.loads(srv.BOT_STATUS_JSON.read_text())
+    assert status["running"] is False
+    assert status["status"] == "crashed"
+    assert status["last_error"] == "processo ausente"
 
 
 def test_bot_status_marks_missing_running_process_as_crashed(client):
@@ -328,6 +333,45 @@ def test_bot_status_marks_missing_running_process_as_crashed(client):
         data = client.get("/api/bot/status").get_json()
     assert data["status"] == "crashed"
     assert data["last_error"]
+
+
+def test_bot_status_uses_status_pid_when_pid_file_is_missing(client):
+    import dashboard.server as srv
+
+    try:
+        srv.PID_FILE.unlink()
+    except FileNotFoundError:
+        pass
+    srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "running", "running": True, "pid": 999999}))
+
+    data = client.get("/api/bot/status").get_json()
+
+    assert data["running"] is False
+    assert data["status"] == "crashed"
+    assert data["pid"] is None
+
+
+def test_bot_status_reconciles_waiting_model_with_dead_pid(client):
+    import dashboard.server as srv
+
+    try:
+        srv.PID_FILE.unlink()
+    except FileNotFoundError:
+        pass
+    srv.BOT_STATUS_JSON.write_text(json.dumps({
+        "status": "waiting_model",
+        "running": True,
+        "pid": 999999,
+    }))
+
+    data = client.get("/api/bot/status").get_json()
+    persisted = json.loads(srv.BOT_STATUS_JSON.read_text())
+
+    assert data["running"] is False
+    assert data["status"] == "crashed"
+    assert persisted["running"] is False
+    assert persisted["status"] == "crashed"
+    assert persisted["last_error"] == "processo ausente"
 
 
 def test_bot_status_includes_last_decision_diagnostics(client):
@@ -588,6 +632,34 @@ def test_contract_active_no_bot_returns_false(client):
     assert data.get("has_active") is False
 
 
+def test_contract_active_returns_last_local_contract_when_idle(tmp_path):
+    import dashboard.server as srv
+
+    state = tmp_path / "state.json"
+    ops = tmp_path / "operacoes_v2.csv"
+    state.write_text(json.dumps({"active_contract": None}))
+    ops.write_text(
+        "timestamp,symbol,direction,stake,duration,result,profit,balance_before,balance_after,"
+        "ema9,ema21,rsi,adx,macd_hist,ai_confidence,ai_score,consec_losses,drawdown_pct,"
+        "win_rate_recent,market_condition,contract_id,duration_unit,entry_price,exit_price,"
+        "entry_epoch,exit_epoch,payout,buy_price,model_id,ai_direction,tech_score,account_key\n"
+        "2026-09-21T09:30:00,frxAUDJPY,SELL,10,15,WIN,8,100,108,"
+        "1,1,50,20,0,0.7,0.5,0,0,100,trending,abc123,m,112.3,112.1,"
+        "1789993000,1789993900,18,10,model,SELL,0.5,acct\n"
+    )
+
+    with patch.object(srv, "STATE_JSON", state), patch.object(srv, "OPERATIONS_CSV", ops):
+        srv.app.config["TESTING"] = True
+        with srv.app.test_client() as c:
+            data = c.get("/api/contract-active").get_json()
+
+    assert data["has_active"] is False
+    assert data["last_contract"]["contract_id"] == "abc123"
+    assert data["last_contract"]["closed"] is True
+    assert data["last_contract"]["symbol"] == "frxAUDJPY"
+    assert data["last_contract"]["profit"] == 8
+
+
 def test_contract_active_uses_buy_timestamp_as_entry_epoch_fallback(tmp_path):
     import dashboard.server as srv
 
@@ -785,6 +857,50 @@ def test_start_uses_minimum_history_candles_by_default(client):
     assert response.status_code==200
     cmd = popen.call_args.args[0]
     assert cmd[cmd.index('--history-count') + 1] == str(srv.MIN_HISTORY_CANDLES)
+
+
+def test_start_passes_decision_switches_to_pipeline_env(client):
+    import dashboard.server as srv
+    proc = MagicMock()
+    proc.pid = 99999999
+    with patch.object(srv, '_bot_running', return_value=(False, None)), \
+         patch.object(srv, '_backtest_running', return_value=(False, None)), \
+         patch.object(srv.subprocess, 'Popen', return_value=proc) as popen, \
+         patch.object(srv, 'PID_FILE', srv.STATE_JSON.parent / 'bot.pid'), \
+         patch.object(srv, 'PIPELINE_LOG_TXT', srv.STATE_JSON.parent / 'pipeline.log'), \
+         patch.object(srv, 'BOT_STATUS_JSON', srv.STATE_JSON.parent / 'bot_status.json'), \
+         patch.object(srv.threading, 'Thread'):
+        response = client.post('/api/bot/start', json={
+            'mode': 'demo',
+            'balance': 1000,
+            'use_trained_model': True,
+            'use_weighted_signal': False,
+            'use_price_action_filter': True,
+            'use_candle_pattern_filter': True,
+        })
+    assert response.status_code == 200
+    env = popen.call_args.kwargs['env']
+    assert env['STANDERIV_USE_AI_MODEL'] == '1'
+    assert env['STANDERIV_EXECUTION_SIGNAL_MODE'] == 'trained_model'
+    assert env['STANDERIV_USE_WEIGHTED_SIGNAL'] == '0'
+    assert env['STANDERIV_PRICE_ACTION_FILTER'] == '1'
+    assert env['STANDERIV_CANDLE_PATTERN_FILTER'] == '1'
+
+
+def test_start_rejects_all_decision_switches_off(client):
+    import dashboard.server as srv
+    with patch.object(srv, '_bot_running', return_value=(False, None)), \
+         patch.object(srv, '_backtest_running', return_value=(False, None)):
+        response = client.post('/api/bot/start', json={
+            'mode': 'demo',
+            'balance': 1000,
+            'use_trained_model': False,
+            'use_weighted_signal': False,
+            'use_price_action_filter': False,
+            'use_candle_pattern_filter': False,
+        })
+    assert response.status_code == 400
+    assert 'módulo de decisão' in response.get_json()['msg']
 
 
 def test_clear_cannot_remove_active_contract(client):

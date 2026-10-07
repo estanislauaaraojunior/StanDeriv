@@ -17,6 +17,7 @@ Fluxo de uma operação:
 
 import json
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -55,7 +56,9 @@ import config
 import math
 import hashlib
 import secrets
-from model_contract import FEATURE_WINDOW, MAX_TICK_GAP_SEC, duration_seconds, profitable_proposal, write_json_atomic, acquire_execution_lock
+from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, duration_seconds,
+                            profitable_proposal, valid_payout_proposal,
+                            write_json_atomic, acquire_execution_lock)
 from market_data import read_records, canonicalize
 import indicators as ind
 
@@ -113,6 +116,7 @@ class DerivBot:
 
         # Sinaliza que uma nova vela acabou de ser fechada neste tick.
         self._new_candle_closed: bool = False
+        self._last_waiting_candle_epoch: int = -1
 
         # Contador de velas fechadas desde a última entrada.
         self._candles_since_last_entry: int = ENTRY_CANDLE_INTERVAL
@@ -140,6 +144,8 @@ class DerivBot:
         self._last_tick_epoch: int = 0
         self._last_contract_attempt_epoch: int = 0
         self._decision_history: deque = deque(maxlen=120)
+        self._unfavorable_decision_streak: int = 0
+        self._unfavorable_switch_requested: bool = False
 
         # P1: Timestamp da última proposal enviada.
         self._pending_timestamp: float = 0.0
@@ -163,10 +169,13 @@ class DerivBot:
         self._phase = 'idle'
         self._proposal_req_id = None
         self._buy_req_id = None
+        self._portfolio_req_id = None
         self._request_counter = secrets.randbelow(1_000_000_000)
         self._pending_payout = None
         self._pending_buy_price = None
         self._proposal_id = None
+        self._proposal_retry_count = 0
+        self._proposal_api_error_streak = 0
         self._auth_verified = False
         self._state_lock = threading.RLock()
         self._restore_active_contract()
@@ -297,10 +306,16 @@ class DerivBot:
                     "model_id",
                     "candle_pattern_block",
                     "ai_block",
+                    "decision_source",
+                    "decision_modules",
+                    "enabled_decision_modules",
+                    "decision_block",
+                    "pa_score",
                 )
                 if key in indicators
             }
         self._decision_history.append(event)
+        self._update_unfavorable_market_streak(reason, event, indicators)
         no_entry_for = 0
         if self._last_contract_attempt_epoch:
             no_entry_for = max(0, event["epoch"] - self._last_contract_attempt_epoch)
@@ -314,6 +329,47 @@ class DerivBot:
             decision_counts=self._decision_counts(),
             no_entry_for_sec=no_entry_for,
         )
+
+    def _update_unfavorable_market_streak(
+        self,
+        reason: str,
+        event: dict,
+        indicators: Optional[dict],
+    ) -> None:
+        unfavorable = set(
+            getattr(config, "UNFAVORABLE_SYMBOL_SWITCH_REASONS", ())
+        )
+        threshold = int(
+            getattr(config, "UNFAVORABLE_SYMBOL_SWITCH_DECISIONS", 0) or 0
+        )
+
+        if threshold <= 0 or reason not in unfavorable:
+            if reason in ("signal_ready", "proposal_sent", "active_contract", "risk_block"):
+                self._unfavorable_decision_streak = 0
+                self._unfavorable_switch_requested = False
+            return
+
+        self._unfavorable_decision_streak += 1
+        if (
+            self._unfavorable_switch_requested
+            or self._unfavorable_decision_streak < threshold
+            or self._in_trade
+            or self._market_switch_pending()
+        ):
+            return
+
+        self._unfavorable_switch_requested = True
+        callback = getattr(self, "on_market_unfavorable", None)
+        if callback:
+            callback(
+                self.symbol,
+                reason,
+                self._unfavorable_decision_streak,
+                indicators or {},
+            )
+
+    def _risk_allows_trade(self):
+        return (not getattr(config, "ENFORCE_RISK_GATE", True)) or self.risk_manager.can_trade()
 
     def _record_api_error(
         self,
@@ -345,6 +401,84 @@ class DerivBot:
             last_api_error=details,
         )
 
+    def _proposal_error_switch_threshold(self) -> int:
+        return int(getattr(config, "PROPOSAL_API_ERROR_SWITCH_THRESHOLD", 3) or 0)
+
+    def _request_switch_after_repeated_proposal_errors(self, reason: str) -> None:
+        threshold = self._proposal_error_switch_threshold()
+        if threshold <= 0:
+            return
+        self._proposal_api_error_streak += 1
+        if (
+            self._proposal_api_error_streak < threshold
+            or self._market_switch_pending()
+            or self._open_contract_id
+        ):
+            return
+        callback = getattr(self, "on_market_unfavorable", None)
+        if callback:
+            callback(
+                self.symbol,
+                reason,
+                self._proposal_api_error_streak,
+                self._pending_indicators or {},
+            )
+
+    @staticmethod
+    def _payout_limit_from_error(error: dict) -> Optional[tuple[float, float]]:
+        message = str(error.get("message") or "")
+        match = re.search(
+            r"maximum payout of\s+([0-9]+(?:\.[0-9]+)?).*?"
+            r"Current payout is\s+([0-9]+(?:\.[0-9]+)?)",
+            message,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        maximum, current = (float(match.group(1)), float(match.group(2)))
+        if not (math.isfinite(maximum) and math.isfinite(current)) or maximum <= 0 or current <= 0:
+            return None
+        return maximum, current
+
+    def _retry_proposal_with_payout_cap(self, error: dict) -> bool:
+        parsed = self._payout_limit_from_error(error)
+        if (
+            parsed is None
+            or self._proposal_retry_count >= 1
+            or self._pending_stake <= 0
+            or self._ws is None
+            or self._phase != "proposal"
+        ):
+            return False
+        maximum, current = parsed
+        adjusted = math.floor(self._pending_stake * maximum / current * 0.98 * 100) / 100
+        if adjusted < 0.35 or adjusted >= self._pending_stake:
+            return False
+        self._proposal_retry_count += 1
+        self._pending_stake = adjusted
+        self._pending_timestamp = time.time()
+        self._proposal_req_id = self._next_request_id()
+        self._set_active_contract_state()
+        proposal = dict(
+            proposal=1,
+            amount=self._pending_stake,
+            basis=BASIS,
+            contract_type="CALL" if self._pending_direction == "BUY" else "PUT",
+            currency=CURRENCY,
+            duration=self._pending_duration,
+            duration_unit=DURATION_UNIT,
+            req_id=self._proposal_req_id,
+        )
+        proposal["underlying_symbol" if self._uses_bearer_auth() else "symbol"] = self.symbol
+        self._ws.send(json.dumps(proposal))
+        self._record_decision(
+            reason="proposal_retry_payout_cap",
+            signal=self._pending_direction or None,
+            indicators=self._pending_indicators,
+            tick_epoch=self._last_tick_epoch,
+        )
+        return True
+
     def _handle_api_error(self, data: dict) -> None:
         error = data.get("error") or {}
         req_id = data.get("req_id")
@@ -358,6 +492,10 @@ class DerivBot:
                 callback = getattr(self, "on_market_unavailable", None)
                 if callback:
                     callback(self.symbol)
+            if self._retry_proposal_with_payout_cap(error):
+                return
+            if self._payout_limit_from_error(error) is not None:
+                self._request_switch_after_repeated_proposal_errors("proposal_payout_cap_rejected")
             self._record_decision(
                 reason="proposal_rejected_by_api",
                 signal=self._pending_direction or None,
@@ -387,6 +525,8 @@ class DerivBot:
     def _decision_reason(self, signal: Optional[str], indicators: dict) -> str:
         if signal in ("BUY", "SELL"):
             return "signal_ready"
+        if indicators.get("decision_block"):
+            return str(indicators["decision_block"])
         if indicators.get("candle_pattern_block"):
             return "candle_conflict"
         if indicators.get("ai_block"):
@@ -404,6 +544,7 @@ class DerivBot:
         self._phase='idle'
         self._open_contract_id=None
         self._proposal_req_id=self._buy_req_id=None
+        self._proposal_retry_count=0
         self._pending_timestamp=self._buy_timestamp=0.
         self._entry_price=0.
         self._entry_epoch=0
@@ -582,6 +723,13 @@ class DerivBot:
                 data["proposal_open_contract"]
             )
 
+        elif msg_type == "portfolio":
+            self._handle_portfolio(
+                ws,
+                data.get("portfolio", {}),
+                req_id=data.get("req_id"),
+            )
+
     def _on_error(self, ws, error) -> None:
         print(f"[BOT] Erro WebSocket: {error}")
 
@@ -618,6 +766,7 @@ class DerivBot:
             return
         if self._in_trade and not self._open_contract_id:
             print('[BOT] Compra sem confirmação: entradas bloqueadas até reconciliação')
+            self._request_portfolio_reconciliation(ws)
         # Re-subscrever ao contrato ativo em caso de reconexão.
         if (
             self._in_trade
@@ -658,6 +807,76 @@ class DerivBot:
                 }
             )
         )
+
+    def _request_portfolio_reconciliation(self, ws) -> None:
+        self._portfolio_req_id = self._next_request_id()
+        ws.send(json.dumps({"portfolio": 1, "req_id": self._portfolio_req_id}))
+
+    def _handle_portfolio(self, ws, portfolio, req_id=None) -> None:
+        if not self._in_trade or self._open_contract_id:
+            return
+        if self._portfolio_req_id is not None and req_id != self._portfolio_req_id:
+            return
+
+        contracts = portfolio.get("contracts")
+        if contracts is None:
+            contracts = portfolio.get("open_contracts")
+        if not isinstance(contracts, list):
+            contracts = []
+
+        expected_symbol = getattr(self, "_contract_symbol", self.symbol)
+        expected_type = "CALL" if self._pending_direction == "BUY" else "PUT"
+        matched = None
+        for contract in contracts:
+            if not isinstance(contract, dict):
+                continue
+            contract_id = str(contract.get("contract_id") or "")
+            if not contract_id.isdigit():
+                continue
+            symbol = str(
+                contract.get("symbol")
+                or contract.get("underlying")
+                or contract.get("underlying_symbol")
+                or ""
+            )
+            contract_type = str(contract.get("contract_type") or "")
+            if symbol and symbol != expected_symbol:
+                continue
+            if contract_type and contract_type != expected_type:
+                continue
+            matched = contract
+            break
+
+        if matched:
+            self._open_contract_id = str(matched["contract_id"])
+            self._phase = "open"
+            self._in_trade = True
+            self._buy_timestamp = self._buy_timestamp or time.time()
+            self._set_active_contract_state()
+            ws.send(
+                json.dumps(
+                    {
+                        "proposal_open_contract": 1,
+                        "contract_id": int(self._open_contract_id),
+                        "subscribe": 1,
+                    }
+                )
+            )
+            self._record_decision(
+                reason="buy_reconciled_from_portfolio",
+                signal=self._pending_direction or None,
+                indicators=self._pending_indicators,
+                tick_epoch=self._last_tick_epoch,
+            )
+            return
+
+        self._record_decision(
+            reason="uncertain_buy_not_in_portfolio",
+            signal=self._pending_direction or None,
+            indicators=self._pending_indicators,
+            tick_epoch=self._last_tick_epoch,
+        )
+        self._clear_pending()
 
     def _handle_api_candles(self, ws, candles):
         cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
@@ -801,7 +1020,7 @@ class DerivBot:
                 )
             return
 
-        if not self.risk_manager.can_trade():
+        if not self._risk_allows_trade():
             if self._new_candle_closed:
                 self._record_decision(
                     reason="risk_block",
@@ -827,9 +1046,11 @@ class DerivBot:
 
         # Só avaliar depois do intervalo e de uma vela fechada.
         if (
-            self._candles_since_last_entry
-            < adaptive_interval
-            or not self._new_candle_closed
+            getattr(config, "ENFORCE_ENTRY_CADENCE", True)
+            and (
+                self._candles_since_last_entry < adaptive_interval
+                or not self._new_candle_closed
+            )
         ):
             remain = max(
                 0,
@@ -838,13 +1059,15 @@ class DerivBot:
             )
 
             if not self._new_candle_closed:
-                print(
-                    f"\r[BOT] {price:.4f} | "
-                    f"Aguardando fechamento da vela... "
-                    f"(candles ok: {n_candles})   ",
-                    end="",
-                    flush=True,
-                )
+                if self._last_waiting_candle_epoch != self._cur_candle_epoch:
+                    self._last_waiting_candle_epoch = self._cur_candle_epoch
+                    print(
+                        f"\r[BOT] {price:.4f} | "
+                        f"Aguardando fechamento da vela... "
+                        f"(candles ok: {n_candles})   ",
+                        end="",
+                        flush=True,
+                    )
             else:
                 self._record_decision(
                     reason="cadence",
@@ -900,7 +1123,7 @@ class DerivBot:
                 self._candles_since_last_entry = 0
 
     def _send_proposal(self,ws,direction,indicators):
-        if self._market_switch_pending() or self._in_trade or not self._auth_verified or not self.risk_manager.can_trade():
+        if self._market_switch_pending() or self._in_trade or not self._auth_verified or not self._risk_allows_trade():
             self._record_decision(reason="proposal_precheck_block", signal=direction, indicators=indicators)
             return False
         if direction not in ('BUY','SELL'):
@@ -913,15 +1136,23 @@ class DerivBot:
         if duration!=config.DURATION or DURATION_UNIT!=config.DURATION_UNIT:
             self._record_decision(reason="duration_mismatch", signal=direction, indicators=indicators)
             return False
-        if not indicators.get('model_id'):
+        model_selected = (
+            'trained_model' in indicators.get('decision_modules', [])
+            or ('decision_modules' not in indicators and bool(indicators.get('model_id')))
+        )
+        if model_selected and not indicators.get('model_id'):
             self._record_decision(reason="missing_model_id", signal=direction, indicators=indicators)
             return False
         probability=indicators.get('win_probability')
-        # Sem probabilidade calibrada não existe justificativa de compra pelo payout.
-        if probability is None or not math.isfinite(probability) or not config.AI_CONFIDENCE_MIN<probability<=1:
+        if model_selected and (
+            probability is None
+            or not math.isfinite(probability)
+            or not config.AI_CONFIDENCE_MIN < probability <= 1
+        ):
             self._record_decision(reason="invalid_win_probability", signal=direction, indicators=indicators)
             return False
         self._pending_payout=self._pending_buy_price=None
+        self._proposal_retry_count=0
         self._pending_direction=direction
         self._pending_stake=self.risk_manager.get_stake()
         self._pending_duration=duration
@@ -949,8 +1180,18 @@ class DerivBot:
             return
         probability=self._pending_indicators.get('win_probability')
         price,payout=proposal.get('ask_price'),proposal.get('payout')
-        if (not profitable_proposal(price,payout,probability) or float(price)>self._pending_stake
-                or not proposal.get('id') or not self.risk_manager.can_trade()):
+        model_selected = (
+            'trained_model' in self._pending_indicators.get('decision_modules', [])
+            or ('decision_modules' not in self._pending_indicators
+                and bool(self._pending_indicators.get('model_id')))
+        )
+        proposal_valid = (
+            profitable_proposal(price, payout, probability)
+            if model_selected
+            else valid_payout_proposal(price, payout)
+        )
+        if (not proposal_valid or float(price)>self._pending_stake
+                or not proposal.get('id') or not self._risk_allows_trade()):
             self._clear_pending()
             return
         self._pending_buy_price=float(price)
@@ -973,6 +1214,7 @@ class DerivBot:
         self._pending_stake=self._pending_buy_price or self._pending_stake
         self._phase='open'
         self._in_trade=True
+        self._proposal_api_error_streak = 0
         self._buy_timestamp=time.time()
         self._pending_timestamp=0.
         self._entry_price=0.
@@ -1051,8 +1293,19 @@ class DerivBot:
             f"\n[SAÚDE] Nenhum tick recebido por "
             f"{HEARTBEAT_TIMEOUT_SEC}s "
             "— WebSocket pode estar morto "
-            "ou mercado fechado"
+            "ou mercado fechado; forçando reconexão"
         )
+        self._write_runtime_status(
+            tick_epoch=self._last_tick_epoch,
+            force=True,
+            event="heartbeat_timeout",
+        )
+        ws = self._ws
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception as exc:
+                print(f"[SAÚDE] Falha ao fechar WebSocket morto: {exc}")
 
     # ─────────────────────────────────────────────────────────
     # Detecção de padrões de vela

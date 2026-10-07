@@ -180,6 +180,7 @@ def test_weighted_signal_high_score_min_blocks_entry():
     with patch.object(strat, "USE_WEIGHTED_SIGNAL", True), \
          patch.object(strat, "SIGNAL_SCORE_MIN", 0.99), \
          patch.object(strat, "USE_AI_MODEL", False), \
+         patch.object(__import__("config"), "ENTRY_MODE", "balanced", create=True), \
          patch.object(ind, "price_action_features", return_value=None):
         sig, _ = strat.get_signal(prices, adx_min=1)
         assert sig is None, "Score impossível de atingir deveria bloquear sinal"
@@ -206,6 +207,229 @@ def test_weighted_signal_zero_score_min_allows_entry():
 
 
 # ─── ADX adaptativo ──────────────────────────────────────────────────────────
+
+def test_opportunity_mode_turns_low_adx_into_penalty_not_block():
+    """ENTRY_MODE=opportunity permite candidato técnico mesmo com ADX abaixo do piso."""
+    import strategy as strat
+    import config as cfg
+    import indicators as ind
+
+    prices = _trend_up(220, step=0.2)
+    with patch.object(cfg, "ENTRY_MODE", "opportunity", create=True), \
+         patch.object(strat, "USE_WEIGHTED_SIGNAL", True), \
+         patch.object(strat, "USE_AI_MODEL", False), \
+         patch.object(ind, "adx", return_value=1.0), \
+         patch.object(ind, "price_action_features", return_value=None):
+        sig, ind_dict = strat.get_signal(prices, adx_min=999)
+
+    assert sig == "BUY"
+    assert ind_dict["adx_below_min"] is True
+
+
+def test_balanced_mode_keeps_low_adx_as_block():
+    """ENTRY_MODE fora de opportunity preserva o bloqueio duro de ADX."""
+    import strategy as strat
+    import config as cfg
+    import indicators as ind
+
+    prices = _trend_up(220, step=0.2)
+    with patch.object(cfg, "ENTRY_MODE", "balanced", create=True), \
+         patch.object(strat, "USE_WEIGHTED_SIGNAL", True), \
+         patch.object(strat, "USE_AI_MODEL", False), \
+         patch.object(ind, "adx", return_value=1.0):
+        sig, ind_dict = strat.get_signal(prices, adx_min=999)
+
+    assert sig is None
+    assert ind_dict["adx_below_min"] is True
+
+
+def test_trained_model_mode_allows_ai_direction_override():
+    """Modo trained_model usa o bundle aprovado sem exigir voto direcional ao vivo."""
+    import strategy as strat
+    import config as cfg
+
+    with patch.object(cfg, "EXECUTION_SIGNAL_MODE", "trained_model", create=True), \
+         patch("strategy.ind.price_action_features", return_value=None), \
+         patch("ai_predictor.predict", return_value=("SELL", .54)), \
+         patch("ai_predictor.prediction_model_id", return_value="offline"):
+        signal, values = strat._apply_ai_filter(
+            "BUY",
+            [100] * 100,
+            {"tech_score": .8},
+            use_ai_model=True,
+        )
+
+    assert signal == "BUY"
+    assert values["execution_signal_mode"] == "trained_model"
+    assert values["ai_direction_override"] == "trained_model"
+    assert values["win_probability"] == pytest.approx(.46)
+
+
+def test_disabled_candle_pattern_module_does_not_generate_signal():
+    """Padrões desligados não participam da decisão nem geram direção."""
+    import strategy as strat
+    import indicators as ind
+
+    prices = _trend_up(220, step=0.2)
+    bearish_alert = {
+        "timestamp": 1700000000,
+        "strength": 1.0,
+        "direction": "bearish",
+        "name": "bearish-test",
+    }
+
+    with patch.object(strat, "USE_WEIGHTED_SIGNAL", False), \
+         patch.object(strat, "USE_AI_MODEL", False), \
+         patch.object(strat, "CANDLE_PATTERN_FILTER", False), \
+         patch.object(ind, "price_action_features", return_value=None):
+        sig, ind_dict = strat.get_signal(
+            prices,
+            adx_min=0,
+            candle_alerts=[bearish_alert],
+            evaluation_time=1700000001,
+        )
+
+    assert sig is None
+    assert "candle_pattern" not in ind_dict.get("decision_modules", [])
+
+
+def test_candle_pattern_module_generates_fallback_signal():
+    """Padrão recente habilitado pode decidir quando não há gerador primário."""
+    import strategy as strat
+    import indicators as ind
+
+    prices = _trend_up(220, step=0.2)
+    bearish_alert = {
+        "timestamp": 1700000000,
+        "strength": 1.0,
+        "direction": "bearish",
+        "name": "bearish-test",
+    }
+
+    with patch.object(strat, "USE_WEIGHTED_SIGNAL", False), \
+         patch.object(strat, "USE_AI_MODEL", False), \
+         patch.object(strat, "CANDLE_PATTERN_FILTER", True), \
+         patch.object(ind, "price_action_features", return_value=None):
+        sig, ind_dict = strat.get_signal(
+            prices,
+            adx_min=0,
+            candle_alerts=[bearish_alert],
+            evaluation_time=1700000001,
+        )
+
+    assert sig == "SELL"
+    assert ind_dict["decision_source"] == "candle_pattern"
+
+
+def test_disabled_price_action_module_does_not_generate_signal():
+    """Price Action desligado não participa da decisão."""
+    import strategy as strat
+    import indicators as ind
+
+    prices = _trend_up(220, step=0.2)
+    pa_blocking_buy = {
+        "pa_sr_position": 0.95,
+        "pa_market_structure": 1.0,
+        "pa_bos_strength": 0.0,
+    }
+
+    with patch.object(strat, "USE_WEIGHTED_SIGNAL", False), \
+         patch.object(strat, "USE_AI_MODEL", False), \
+         patch.object(strat, "PRICE_ACTION_FILTER", False), \
+         patch.object(ind, "price_action_features", return_value=pa_blocking_buy):
+        sig, ind_dict = strat.get_signal(prices, adx_min=0)
+
+    assert sig is None
+    assert "price_action" not in ind_dict.get("decision_modules", [])
+
+
+def test_price_action_module_generates_fallback_signal():
+    """Estrutura de mercado habilitada pode gerar a direção no fallback."""
+    import strategy as strat
+    import indicators as ind
+
+    prices = _trend_up(220, step=0.2)
+    pa_blocking_buy = {
+        "pa_sr_position": 0.95,
+        "pa_market_structure": 1.0,
+        "pa_bos_strength": 0.0,
+    }
+
+    with patch.object(strat, "USE_WEIGHTED_SIGNAL", False), \
+         patch.object(strat, "USE_AI_MODEL", False), \
+         patch.object(strat, "PRICE_ACTION_FILTER", True), \
+         patch.object(ind, "price_action_features", return_value=pa_blocking_buy):
+        sig, _ = strat.get_signal(prices, adx_min=0)
+
+    assert sig == "BUY"
+
+
+def test_weighted_signal_runs_without_ai_when_only_weighted_enabled(monkeypatch):
+    import strategy as strat
+
+    monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)
+    monkeypatch.setattr(strat, "USE_AI_MODEL", False)
+    monkeypatch.setattr(strat, "PRICE_ACTION_FILTER", False)
+    monkeypatch.setattr(strat, "CANDLE_PATTERN_FILTER", False)
+    monkeypatch.setattr(strat, "_weighted_signal", lambda *args, **kwargs: ("BUY", {"tech_score": .7}))
+    monkeypatch.setattr(strat.ai_predictor, "predict", lambda *args, **kwargs: pytest.fail("IA desligada foi consultada"))
+
+    signal, values = strat.get_signal(_trend_up(220, step=.2), use_ai_model=False)
+
+    assert signal == "BUY"
+    assert values["decision_source"] == "weighted_score"
+
+
+def test_weighted_and_model_modules_require_agreement(monkeypatch):
+    import strategy as strat
+
+    monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)
+    monkeypatch.setattr(strat, "USE_AI_MODEL", True)
+    monkeypatch.setattr(strat, "PRICE_ACTION_FILTER", True)
+    monkeypatch.setattr(strat, "CANDLE_PATTERN_FILTER", True)
+    monkeypatch.setattr(strat, "_weighted_signal", lambda *args, **kwargs: ("BUY", {"tech_score": .7}))
+    monkeypatch.setattr(strat, "_trained_model_signal", lambda *args, **kwargs: ("SELL", {"model_id": "offline", "win_probability": .8}))
+
+    signal, values = strat.get_signal(_trend_up(220, step=.2))
+
+    assert signal is None
+    assert values["decision_block"] == "primary_module_disagreement"
+
+
+def test_weighted_and_model_modules_open_only_on_matching_direction(monkeypatch):
+    import strategy as strat
+
+    monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)
+    monkeypatch.setattr(strat, "USE_AI_MODEL", True)
+    monkeypatch.setattr(strat, "PRICE_ACTION_FILTER", False)
+    monkeypatch.setattr(strat, "CANDLE_PATTERN_FILTER", False)
+    monkeypatch.setattr(strat, "_weighted_signal", lambda *args, **kwargs: ("BUY", {"tech_score": .7}))
+    monkeypatch.setattr(strat, "_trained_model_signal", lambda *args, **kwargs: ("BUY", {"model_id": "offline", "win_probability": .8}))
+
+    signal, values = strat.get_signal(_trend_up(220, step=.2))
+
+    assert signal == "BUY"
+    assert values["decision_modules"] == ["weighted_score", "trained_model"]
+
+
+def test_primary_abstention_blocks_without_fallback_override(monkeypatch):
+    import strategy as strat
+
+    monkeypatch.setattr(strat, "USE_WEIGHTED_SIGNAL", True)
+    monkeypatch.setattr(strat, "USE_AI_MODEL", True)
+    monkeypatch.setattr(strat, "PRICE_ACTION_FILTER", True)
+    monkeypatch.setattr(strat, "CANDLE_PATTERN_FILTER", False)
+    monkeypatch.setattr(strat, "_weighted_signal", lambda *args, **kwargs: ("BUY", {"tech_score": .7}))
+    monkeypatch.setattr(strat, "_trained_model_signal", lambda *args, **kwargs: (None, {"ai_block": "model_abstention"}))
+    monkeypatch.setattr(strat.ind, "price_action_features", lambda *args, **kwargs: {
+        "pa_market_structure": -1.0, "pa_trend_consistency": -1.0,
+    })
+
+    signal, values = strat.get_signal(_trend_up(220, step=.2))
+
+    assert signal is None
+    assert values["decision_block"] == "primary_module_abstention"
+
 
 def test_adaptive_adx_min_respects_floor():
     """ADX mínimo adaptativo nunca deve cair abaixo de 15."""

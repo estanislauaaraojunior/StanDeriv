@@ -644,6 +644,34 @@ html, body {
   font-family: var(--font-mono);
 }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: 10px !important; }
+.execution-mode-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.execution-mode-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.switch-row {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px !important;
+}
+.switch-row input { flex: 0 0 auto; }
+.switch-row span { min-width: 0; color: var(--text-secondary); }
+.execution-mode-status {
+  font-size: 12px;
+  color: var(--green);
+  line-height: 1.4;
+}
+.execution-mode-status.invalid { color: var(--red); }
 .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
 .advanced-details { margin-top: 8px; }
 .advanced-details summary { cursor: pointer; font-size: 12px; color: var(--text-muted); padding: 4px 0; user-select: none; }

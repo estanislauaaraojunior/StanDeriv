@@ -16,7 +16,7 @@ from scipy.optimize import minimize_scalar
 from scipy.special import softmax
 from sklearn.base import clone
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import make_pipeline
@@ -112,7 +112,14 @@ def temporal_partitions(df, test_ratio = .2):
 
 def _metrics(model, df, payout=.85, *, features=None, quotes=None):
     from training_evaluation import evaluate
-    return evaluate(model, df, payout, features=features, quotes=quotes)
+    result = evaluate(model, df, payout, features=features, quotes=quotes)
+    min_trades = 30
+    if 0 < result.get('trades', 0) < min_trades:
+        result['eligible'] = False
+        result.setdefault('rejection_reasons', []).append(
+            f"amostra final insuficiente ({result['trades']} < {min_trades} contratos)"
+        )
+    return result
 
 
 def walk_forward_partitions(development, folds=3):
@@ -137,32 +144,55 @@ def candidate_estimators():
     from xgboost import XGBClassifier
     return [('RandomForest', RandomForestClassifier(n_estimators=300, max_depth=10,
                 min_samples_leaf=10, random_state=42, n_jobs=1)),
+            ('BalancedRandomForest', RandomForestClassifier(n_estimators=300, max_depth=8,
+                min_samples_leaf=20, class_weight='balanced_subsample', random_state=42, n_jobs=1)),
+            ('ExtraTrees', ExtraTreesClassifier(n_estimators=300, max_depth=10,
+                min_samples_leaf=10, max_features=.7, random_state=42, n_jobs=1)),
+            ('HistGradientBoosting', HistGradientBoostingClassifier(max_iter=250,
+                learning_rate=.04, max_leaf_nodes=15, l2_regularization=1.,
+                random_state=42)),
             ('XGBoost', XGBClassifier(n_estimators=300, max_depth=5, learning_rate=.05,
-                random_state=42, n_jobs=1))]
+                min_child_weight=10, subsample=.9, colsample_bytree=.9,
+                reg_lambda=5., random_state=42, n_jobs=1))]
 
 
-def training_candidates(search_trials=4):
-    """Orçamento fechado: dois baselines e até 12 configurações de árvores."""
-    if isinstance(search_trials, bool) or not isinstance(search_trials, int) or not 0 <= search_trials <= 10:
-        raise ValueError('search_trials deve ser inteiro entre 0 e 10')
+def training_candidates(search_trials=6):
+    """Orçamento fechado: baselines simples e variantes tabulares regularizadas."""
+    if isinstance(search_trials, bool) or not isinstance(search_trials, int) or not 0 <= search_trials <= 12:
+        raise ValueError('search_trials deve ser inteiro entre 0 e 12')
     candidates = candidate_estimators()
     candidates += [('LogisticRegression', make_pipeline(StandardScaler(),
                     LogisticRegression(C=1., max_iter=2000, random_state=42))),
+                   ('BalancedLogisticRegression', make_pipeline(StandardScaler(),
+                    LogisticRegression(C=.5, class_weight='balanced', max_iter=2000, random_state=42))),
                    ('ClassFrequency', DummyClassifier(strategy='prior'))]
     rng = np.random.default_rng(42)
-    trees = [(name, model) for name, model in candidates if name in ('RandomForest', 'XGBoost')]
+    trees = [(name, model) for name, model in candidates
+             if name in ('RandomForest', 'BalancedRandomForest', 'ExtraTrees', 'HistGradientBoosting', 'XGBoost')]
     for i in range(search_trials):
         if not trees:
             break
         name, template = trees[i % len(trees)]
         estimator = clone(template)
-        if name == 'RandomForest':
-            params = dict(max_depth=int(rng.choice([3, 5, 8])),
-                          min_samples_leaf=int(rng.choice([20, 40, 80])), max_features=.7)
+        if name in ('RandomForest', 'BalancedRandomForest', 'ExtraTrees'):
+            max_feature_options = [.5, .7, 'sqrt']
+            max_features = max_feature_options[int(rng.integers(0, len(max_feature_options)))]
+            params = dict(n_estimators=int(rng.choice([200, 300, 500])),
+                          max_depth=int(rng.choice([3, 5, 8, 12])),
+                          min_samples_leaf=int(rng.choice([10, 20, 40, 80])),
+                          max_features=max_features if isinstance(max_features, str) else float(max_features))
+        elif name == 'HistGradientBoosting':
+            params = dict(max_iter=int(rng.choice([150, 250, 400])),
+                          learning_rate=float(rng.choice([.02, .04, .07])),
+                          max_leaf_nodes=int(rng.choice([7, 15, 31])),
+                          l2_regularization=float(rng.choice([.1, 1., 5., 10.])))
         else:
             params = dict(max_depth=int(rng.integers(2, 6)),
                           min_child_weight=int(rng.choice([5, 10, 20, 30])),
+                          learning_rate=float(rng.choice([.02, .04, .07])),
+                          n_estimators=int(rng.choice([200, 300, 500])),
                           subsample=float(rng.uniform(.7, 1)), colsample_bytree=float(rng.uniform(.7, 1)),
+                          reg_alpha=float(rng.choice([0., .1, .5, 1.])),
                           reg_lambda=float(rng.uniform(1, 20)))
         candidates.append((f'{name}_regularized_{i+1}', estimator.set_params(**params)))
     return candidates
@@ -234,7 +264,7 @@ def selection_key(result):
 
 
 def train(dataset_path, output_path, test_ratio = .2, gap_ratio = .02,
-          tft_output_path = None, duration_output_path = None, payout_quotes_path = None, search_trials=4,
+          tft_output_path = None, duration_output_path = None, payout_quotes_path = None, search_trials=6,
           compare_champion=True):
     metadata = json.loads(Path(str(dataset_path) + '.metadata.json').read_text())
     if not compatible(metadata, config.get_active_symbol()) or metadata.get('dataset_sha256') != fingerprint(dataset_path):
@@ -375,7 +405,7 @@ def main():
     p.add_argument('--test-ratio', type = float, default = .2)
     p.add_argument('--symbol', default = None)
     p.add_argument('--payout-quotes', default=None)
-    p.add_argument('--search-trials', type=int, default=4, help='configurações adicionais, de 0 a 10')
+    p.add_argument('--search-trials', type=int, default=6, help='configurações adicionais, de 0 a 12')
     a = p.parse_args()
     if a.symbol:
         config.set_active_symbol(a.symbol)

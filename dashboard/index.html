@@ -711,6 +711,27 @@
         <input type="checkbox" id="skipCollect" /> Pular coleta (usar ticks.csv existente)
       </label>
 
+      <div class="execution-mode-box">
+        <div class="execution-mode-title">Modo de Decisão</div>
+        <label class="switch-row">
+          <input type="checkbox" id="useTrainedModel" checked />
+          <span>Ligar Modelo de Treino</span>
+        </label>
+        <label class="switch-row">
+          <input type="checkbox" id="useWeightedSignal" checked />
+          <span>Ligar Score Ponderado</span>
+        </label>
+        <label class="switch-row">
+          <input type="checkbox" id="usePriceActionFilter" />
+          <span>Ativar Price Action</span>
+        </label>
+        <label class="switch-row">
+          <input type="checkbox" id="useCandlePatternFilter" />
+          <span>Ativar Padrões de Vela</span>
+        </label>
+        <div class="execution-mode-status" id="executionModeStatus">Modelo de treino + score ponderado</div>
+      </div>
+
       <details class="advanced-details">
         <summary>Opções Avançadas</summary>
         <div class="advanced-body">

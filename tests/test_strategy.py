@@ -111,7 +111,7 @@ class TestNoSignalLateral(unittest.TestCase):
     def test_adx_filter_blocks_signal(self):
         """ADX forçado a zero filtra qualquer sinal."""
         prices = _uptrend(300, step=0.20)
-        with _no_ai(), _no_weighted():
+        with _no_ai(), _no_weighted(), patch.object(config, "ENTRY_MODE", "balanced", create=True):
             sig, ind = strategy.get_signal(prices, adx_min=9999)
         self.assertIsNone(sig)
 
@@ -155,7 +155,7 @@ class TestADXHistory(unittest.TestCase):
         prices = _uptrend(300, step=0.15)
         # Histórico de ADX muito alto para que o valor atual pareça cair
         adx_history = [1000.0] * 15
-        with _no_ai(), _no_weighted():
+        with _no_ai(), _no_weighted(), patch.object(config, "ENTRY_MODE", "balanced", create=True):
             sig, ind = strategy.get_signal(prices, adx_min=0, adx_history=adx_history)
         self.assertIsNone(sig)
         self.assertTrue(ind.get("adx_falling", False))

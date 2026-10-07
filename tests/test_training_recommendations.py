@@ -9,7 +9,7 @@ import config
 import train_model as tm
 from model_contract import specification, fingerprint, write_json_atomic
 from training_evaluation import decision_curve
-from training_experiments import compare_training
+from training_experiments import compare_ablation, compare_training
 from tests.test_training_evaluation import frame, FixedModel
 
 
@@ -79,9 +79,9 @@ def test_old_multinomial_bundles_remain_readable():
 def test_search_budget_is_bounded_and_deterministic():
     first, second = tm.training_candidates(4), tm.training_candidates(4)
     assert [n for n, _ in first] == [n for n, _ in second]
-    assert len(first) == 8
+    assert len(first) == 12
     assert [tm.json_parameters(m) for _, m in first] == [tm.json_parameters(m) for _, m in second]
-    for invalid in (-1, 11, 1.5, True):
+    for invalid in (-1, 13, 1.5, True):
         with pytest.raises(ValueError, match='search_trials'):
             tm.training_candidates(invalid)
 
@@ -146,6 +146,26 @@ def test_holdout_changes_do_not_change_recipe_or_calibration(tmp_path, monkeypat
     assert a['selected_recipe'] == b['selected_recipe']
     assert a['walk_forward'] == b['walk_forward']
     assert a['accuracy'] != b['accuracy']
+
+
+def test_feature_ablation_profiles_are_offline_and_development_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(tm, 'training_candidates', small_candidates)
+    df, source = dataset(tmp_path)
+    for column in ('rsi', 'adx', 'bb_position', 'return_1', 'return_3', 'return_5',
+                   'volatility_10', 'volatility_20', 'high_low_5'):
+        df[column] = df['target']
+    df.to_csv(source, index=False)
+    write_json_atomic(str(source)+'.metadata.json', dict(specification('R_100'), dataset_sha256=fingerprint(source)))
+    report = compare_ablation(source, tmp_path/'ablation.json', search_trials=0)
+    assert report['holdout_evaluated'] is False
+    assert set(['baseline_27', 'without_price_action', 'price_action_only',
+                'lean_technical', 'without_trend', 'without_volatility']).issubset(report['profiles'])
+    assert report['profiles']['baseline_27']['n_features'] == len(tm.FEATURES)
+    assert report['profiles']['without_price_action']['n_features'] < len(tm.FEATURES)
+    assert report['profiles']['lean_technical']['n_features'] == 9
+    assert report['development_last_expiry'] < report['holdout_feature_start']
+    assert not (tmp_path/'model.candidate').exists()
+    json.dumps(report, allow_nan=False)
 
 
 def test_invalid_timestamps_rejected_before_fitting(tmp_path, monkeypatch):

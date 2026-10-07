@@ -361,26 +361,35 @@ function _setRtContractStatus(contract, entryTick, lastTick) {
   }
 
   const isBuy   = contract.direction === 'BUY' || contract.direction === 'CALL';
+  const isClosed = !!contract.closed;
   const side    = isBuy ? '▲ CALL / BUY' : '▼ PUT / SELL';
   const dirColor = isBuy ? '#00ff88' : '#ff4757';
   const dirBg    = isBuy ? 'rgba(0,255,136,0.12)' : 'rgba(255,71,87,0.12)';
 
-  if (statusEl) { statusEl.textContent = `${contract.symbol || '—'} • ${isBuy ? 'CALL/BUY' : 'PUT/SELL'}`; statusEl.style.color = dirColor; }
+  if (statusEl) {
+    statusEl.textContent = `${isClosed ? 'Último contrato' : (contract.phase || 'Ativo')} • ${contract.symbol || '—'} • ${isBuy ? 'CALL/BUY' : 'PUT/SELL'}`;
+    statusEl.style.color = dirColor;
+  }
   if (dirEl)    { dirEl.textContent = side; dirEl.style.background = dirBg; dirEl.style.color = dirColor; }
 
   const entryTxt   = entryTick ? fmt(entryTick.price, 5) : fmt(contract.entry_price, 5);
   const durationSec = (Number(contract.duration) || 0) * 60;
   const startEpoch  = Number(contract.buy_timestamp) || Number(contract.entry_epoch) || 0;
+  const endEpoch    = Number(contract.exit_epoch) || 0;
 
   function _tick() {
-    const now       = Date.now() / 1000;
+    const now       = isClosed && endEpoch > 0 ? endEpoch : Date.now() / 1000;
     const elapsed   = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
     const remaining = durationSec > 0 ? Math.max(0, durationSec - elapsed) : null;
     const pct       = durationSec > 0 ? Math.min(100, (elapsed / durationSec) * 100) : 0;
     const currentTxt = lastTick ? fmt(lastTick.price, 5) : '—';
 
     let timerTxt = '';
-    if (remaining !== null) {
+    if (isClosed) {
+      const profit = Number(contract.profit);
+      const result = contract.result || 'ENCERRADO';
+      timerTxt = `${result}${Number.isFinite(profit) ? ` ${profit >= 0 ? '+' : ''}${fmt(profit, 2)} USD` : ''}`;
+    } else if (remaining !== null) {
       const rm = Math.ceil(remaining);
       timerTxt = `⏱ ${Math.floor(rm / 60)}m ${rm % 60}s restantes de ${durationSec}s`;
     } else if (elapsed > 0) {
@@ -957,6 +966,17 @@ async function pollContractRealtime() {
     const c = await resp.json();
 
     if (!c || !c.has_active) {
+      if (c?.last_contract?.contract_id) {
+        state.activeContract = null;
+        const last = c.last_contract;
+        const params = new URLSearchParams({ n: '600' });
+        if (last.symbol) params.set('symbol', last.symbol);
+        if (last.entry_epoch && last.entry_epoch > 0) params.set('from_epoch', String(last.entry_epoch));
+        const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
+        const ticks = await rTicks.json();
+        updateRtContractChart(Array.isArray(ticks) ? ticks : [], last);
+        return;
+      }
       // Sem contrato ativo: mostra últimos 150 ticks do símbolo atual (modo monitor)
       state.activeContract = null;
       const activeSymbol = el('activeSymbol')?.textContent?.trim();
@@ -1069,7 +1089,7 @@ async function pollIndicators() {
     el('aiScoreVal').textContent = fmt(score, 3);
 
     // Adiciona ao histórico de séries para RSI/MACD chart
-    const now = Date.now();
+    const now = Date.now() / 1000;
     state.rsiSeries.push({ x: now, y: d.rsi });
     state.macdSeries.push({ x: now, y: d.macd_hist });
     if (state.rsiSeries.length > 60) state.rsiSeries.shift();
@@ -1238,6 +1258,53 @@ function closeStartupPanel() {
   stopStartupPolling();
 }
 
+function getExecutionSignalSelection() {
+  const trained = el('useTrainedModel') ? el('useTrainedModel').checked : true;
+  const weighted = el('useWeightedSignal') ? el('useWeightedSignal').checked : true;
+  const priceAction = el('usePriceActionFilter') ? el('usePriceActionFilter').checked : false;
+  const candlePattern = el('useCandlePatternFilter') ? el('useCandlePatternFilter').checked : false;
+  return {
+    use_trained_model: trained,
+    use_weighted_signal: weighted,
+    use_price_action_filter: priceAction,
+    use_candle_pattern_filter: candlePattern,
+  };
+}
+
+function executionSignalLabel(selection = getExecutionSignalSelection()) {
+  const active = [];
+  if (selection.use_trained_model) {
+    active.push('Modelo de treino');
+  }
+  if (selection.use_weighted_signal) active.push('score ponderado');
+  if (selection.use_price_action_filter) active.push('Price Action');
+  if (selection.use_candle_pattern_filter) active.push('padrões de vela');
+  return active.length ? active.join(' + ') : 'Nenhum módulo ativo';
+}
+
+function hasExecutionDecisionModule(selection = getExecutionSignalSelection()) {
+  return Boolean(
+    selection.use_trained_model ||
+    selection.use_weighted_signal ||
+    selection.use_price_action_filter ||
+    selection.use_candle_pattern_filter
+  );
+}
+
+function updateExecutionModeStatus() {
+  const status = el('executionModeStatus');
+  if (!status) return;
+  const selection = getExecutionSignalSelection();
+  status.textContent = executionSignalLabel(selection);
+  status.classList.toggle('invalid', !hasExecutionDecisionModule(selection));
+}
+
+['useTrainedModel', 'useWeightedSignal', 'usePriceActionFilter', 'useCandlePatternFilter'].forEach(id => {
+  document.addEventListener('change', event => {
+    if (event.target?.id === id) updateExecutionModeStatus();
+  });
+});
+
 // ─── Startup panel: fases do pipeline ─────────────────────────────────
 
 // Keywords presentes no stdout do pipeline.py para cada fase
@@ -1352,15 +1419,25 @@ function _authHeaders(extra = {}) {
 
 async function quickStart() {
   closeStartModal();
+  const executionSelection = getExecutionSignalSelection();
+  if (!hasExecutionDecisionModule(executionSelection)) {
+    showToast('Ative pelo menos um módulo de decisão.', 'err');
+    return;
+  }
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/start', {
       method: 'POST',
       headers: _authHeaders(),
-      body: JSON.stringify({ mode: 'demo', balance: 1000, skip_collect: false }),
+      body: JSON.stringify({
+        mode: 'demo',
+        balance: 1000,
+        skip_collect: false,
+        ...executionSelection,
+      }),
     });
     const d = await r.json();
     if (d.ok) {
-      showToast(`Bot iniciado (PID ${d.pid}) \u2014 Demo $1000`, 'ok');
+      showToast(`Bot iniciado (PID ${d.pid}) \u2014 ${executionSignalLabel(executionSelection)}`, 'ok');
       startStartupPolling();
       pollState();
     } else {
@@ -1380,9 +1457,14 @@ async function confirmStart() {
   const minTicks        = el('minTicks') ? (parseInt(el('minTicks').value) || 500) : 500;
   const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 2520) : 2520;
   const forceRetrain    = el('forceRetrain') ? el('forceRetrain').checked : false;
+  const executionSelection = getExecutionSignalSelection();
 
   if (mode === 'real') {
     if (!confirm('⚠ Modo REAL usa dinheiro real. Confirma?')) return;
+  }
+  if (!hasExecutionDecisionModule(executionSelection)) {
+    showToast('Ative pelo menos um módulo de decisão.', 'err');
+    return;
   }
 
   try {
@@ -1392,11 +1474,11 @@ async function confirmStart() {
       body: JSON.stringify({ mode, balance, skip_collect: skipCollect,
         no_scan: noScan, retrain_interval: retrainInterval,
         min_ticks: minTicks, history_count: historyCount,
-        force_retrain: forceRetrain }),
+        force_retrain: forceRetrain, ...executionSelection }),
     });
     const d = await r.json();
     if (d.ok) {
-      showToast(`Bot iniciado (PID ${d.pid}) — modo ${mode}`, 'ok');
+      showToast(`Bot iniciado (PID ${d.pid}) — ${executionSignalLabel(executionSelection)}`, 'ok');
       startStartupPolling();
       pollState();
     } else {
@@ -1483,8 +1565,8 @@ async function _loadIndicatorSeries() {
     const r = await fetch(API_BASE_URL + '/api/indicator-series?n=60', { cache: 'no-store' });
     const series = await r.json();
     if (!Array.isArray(series) || !series.length) return;
-    state.rsiSeries  = series.map(s => ({ x: s.epoch * 1000, y: s.rsi }));
-    state.macdSeries = series.map(s => ({ x: s.epoch * 1000, y: s.macd_hist }));
+    state.rsiSeries  = series.map(s => ({ x: Number(s.epoch), y: s.rsi }));
+    state.macdSeries = series.map(s => ({ x: Number(s.epoch), y: s.macd_hist }));
     if (state.charts.rsi) {
       state.charts.rsi.data.datasets[0].data = [...state.rsiSeries];
       state.charts.rsi.update('none');
@@ -1905,6 +1987,7 @@ function init() {
   _initProfitDistChart();
   initBacktestChart();
   _loadIndicatorSeries();
+  updateExecutionModeStatus();
 
   // Primeira carga (estado consolidado + outros)
   pollState();

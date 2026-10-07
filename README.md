@@ -225,7 +225,7 @@ Cada padrão inclui `strength` (0-1) e notificação em tempo real no terminal e
 
 ## Modelos e contrato temporal
 
-O treino atual compara RandomForest e XGBoost em três janelas walk-forward com calibração e embargo temporal. A seleção considera amostra, estabilidade do resultado, drawdown, qualidade das probabilidades e AUC, usando somente o período de desenvolvimento. O candidato escolhido é avaliado no teste final reservado. O bundle registra ativo, janela de 100 candles OHLC, features, versões de dependências e vencimento.
+O treino atual compara RandomForest, variantes balanceadas, ExtraTrees, HistGradientBoosting e XGBoost em três janelas walk-forward com calibração e embargo temporal. A seleção considera amostra, estabilidade do resultado, drawdown, qualidade das probabilidades e AUC, usando somente o período de desenvolvimento. O candidato escolhido é avaliado no teste final reservado. O bundle registra ativo, janela de 100 candles OHLC, features, versões de dependências e vencimento.
 
 O target representa alta, queda ou empate entre o primeiro tick após o sinal e o primeiro tick no vencimento. Empate perde tanto CALL quanto PUT. A duração atual é fixa em 15 minutos (`DURATION=15`, `DURATION_UNIT="m"`). As duas próximas observações e sua média não são usadas como target.
 
@@ -244,11 +244,11 @@ O conjunto operacional continua com 27 features. O experimento de contexto tempo
 
 O dataset deve ser reconstruído com `dataset_builder.py` para conter as novas colunas. Relatórios de treino ficam em `training_reports/`. Veja [a implementação e a avaliação de 10/09](docs/MELHORIAS_AVALIACAO_2026-09-10.md).
 
-O treinador também compara regressão logística e frequência de classes, além de
-RandomForest/XGBoost. Cada estimador é avaliado com calibração multinomial e
+O treinador também compara regressão logística, versão balanceada e frequência de classes, além das árvores
+RandomForest/ExtraTrees/HistGradientBoosting/XGBoost. Cada estimador é avaliado com calibração multinomial e
 temperature scaling; probabilidades brutas e frequência de classes são controles
-diagnósticos, sem seleção para publicação. A busca usa seed 42 e quatro
-configurações adicionais de árvores por padrão (`--search-trials`, de 0 a 10).
+diagnósticos, sem seleção para publicação. A busca usa seed 42 e seis
+configurações adicionais de árvores por padrão (`--search-trials`, de 0 a 12).
 A receita é escolhida apenas no development e o ajuste final usa seus 80% iniciais,
 seguido por calibração temporal separada, com embargo antes do teste final.
 
@@ -270,6 +270,18 @@ cobertura e retorno para payouts fixos de 60%, 70% e 85%. Essas curvas não ajus
 limiares no teste. O fuso da avaliação é registrado separadamente como
 `evaluation_risk_timezone=UTC`; `risk_timezone` continua descrevendo o calendário
 local da operação. Veja [a aplicação e seus resultados](docs/APLICACAO_TREINO_2026-09-11.md).
+
+Para medir se as 27 features ajudam ou se alguma família atrapalha, use a
+ablação offline. Ela compara baseline, remoção de Price Action, Price Action
+isolado, técnicas enxutas, remoção de tendência/volatilidade e contexto temporal
+quando o dataset tiver essas colunas. O relatório usa somente o development,
+preserva o holdout e não publica bundle:
+
+```bash
+.venv/bin/python training_experiments.py --study ablation \
+  --input dataset_v2.csv --symbol frxUSDCAD \
+  --output /tmp/standeriv-feature-ablation.json --search-trials 0
+```
 
 ### Preparação e treino offline
 
@@ -347,6 +359,13 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `AI_MODEL_WEIGHT` | 0.45 | Peso do sinal da IA no score final |
 | `AI_SCORE_MIN` | 0.30 | Score mínimo ponderado (IA + técnico) para abrir operação |
 | `SIGNAL_SCORE_MIN` | 0.05 | Limiar mínimo do score técnico ponderado |
+| `ENTRY_MODE` | `opportunity` | Modo de entrada; em `opportunity`, ADX fraco penaliza score em vez de bloquear |
+| `OPPORTUNITY_SIGNAL_SCORE_MIN` | 0.02 | Limiar técnico usado no modo `opportunity` |
+| `OPPORTUNITY_ADX_WEIGHT_FLOOR` | 0.35 | Piso do peso de ADX no modo `opportunity`, evitando zerar o score por ADX baixo |
+| `PRICE_ACTION_FILTER` | `False` | Controla se Price Action pode bloquear sinais operacionais; as features continuam calculadas para telemetria e treino |
+| `CANDLE_PATTERN_FILTER` | `False` | Controla se padrões de vela conflitantes podem bloquear sinais; desligado, viram apenas telemetria/alerta |
+| `ENFORCE_ENTRY_CADENCE` | `False` | Controla se o executor deve aguardar fechamento/intervalo de vela antes de reavaliar entrada |
+| `ENFORCE_RISK_GATE` | `False` | Controla se `RiskManager.can_trade()` bloqueia envio/compra; desligado, risco ainda calcula stake e registra resultado |
 | `UNFAVORABLE_SYMBOL_SWITCH_DECISIONS` | 5 | Quantidade de avaliações desfavoráveis antes de trocar ativo; `0` desativa a troca automática |
 | `CANDLE_TIMEFRAME_SEC` | 60 | Duração de cada vela de tempo em segundos |
 | `PRICE_BUFFER_SIZE` | 500 | Ticks mantidos em memória para indicadores |

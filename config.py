@@ -12,6 +12,13 @@ from dotenv import load_dotenv
 load_dotenv()  # carrega variáveis de .env (ignorado se não existir)
 
 
+def _env_bool(name, default):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "sim"}
+
+
 # ----- Conta -----
 # True  → opera na conta DEMO (seguro — dinheiro virtual)
 # False → opera na conta REAL (requer TOKEN de conta real + confirmação no terminal)
@@ -231,6 +238,13 @@ CANDLE_LOOKBACK = 5
 
 PA_SR_TOLERANCE = 0.001
 
+ENTRY_MODE = "opportunity"
+
+OPPORTUNITY_SIGNAL_SCORE_MIN = 0.02
+OPPORTUNITY_ADX_WEIGHT_FLOOR = 0.35
+
+PRICE_ACTION_FILTER = _env_bool("STANDERIV_PRICE_ACTION_FILTER", False)
+
 TARGET_NOISE_THRESHOLD = 0.0001
 
 # Horizonte do target no dataset em candles.
@@ -243,7 +257,7 @@ CANDLE_NOTIFY = True
 # ----- Filtro de padrões de vela -----
 # True  = bloqueia entradas quando o padrão contradiz o sinal técnico
 # False = padrões apenas geram alertas visuais
-CANDLE_PATTERN_FILTER = True
+CANDLE_PATTERN_FILTER = _env_bool("STANDERIV_CANDLE_PATTERN_FILTER", False)
 
 CANDLE_PATTERN_MIN_STRENGTH = 0.55
 
@@ -281,6 +295,8 @@ PAUSE_SCALE_FACTOR = 2
 
 RESUME_ON_WIN = True
 
+ENFORCE_RISK_GATE = False
+
 
 # ----- Aquecimento -----
 MIN_TICKS = 50
@@ -302,6 +318,8 @@ ENTRY_TICK_INTERVAL = 100
 
 ENTRY_CANDLE_INTERVAL = 1
 
+ENFORCE_ENTRY_CADENCE = False
+
 
 # ----- Troca de ativo por falta de oportunidade -----
 # Se > 0, troca o ativo após N avaliações fechadas sem condição de entrada.
@@ -316,9 +334,15 @@ UNFAVORABLE_SYMBOL_SWITCH_REASONS = {
     "missing_ai_confidence",
 }
 
+MARKET_SWITCH_COOLDOWN_SEC = 900
+MARKET_SWITCH_MAX_PER_WINDOW = 4
+MARKET_SWITCH_WINDOW_SEC = 3600
+
 
 # ----- Timeout de operações -----
 PROPOSAL_TIMEOUT_SEC = 10
+
+PROPOSAL_API_ERROR_SWITCH_THRESHOLD = 3
 
 
 # ----- Heartbeat / watchdog -----
@@ -330,9 +354,27 @@ TICK_SPIKE_THRESHOLD = 0.05
 
 
 # ----- Inteligência Artificial -----
+# EXECUTION_SIGNAL_MODE mantém um único caminho operacional:
+# "trained_model" → bundle aprovado libera execução e fornece probabilidade/payout.
+EXECUTION_SIGNAL_MODE = os.environ.get(
+    "STANDERIV_EXECUTION_SIGNAL_MODE",
+    "trained_model",
+).strip().lower()
+
+VALID_EXECUTION_SIGNAL_MODES = {
+    "trained_model",
+}
+
+if EXECUTION_SIGNAL_MODE not in VALID_EXECUTION_SIGNAL_MODES:
+    print(
+        "[CONFIG] Aviso: STANDERIV_EXECUTION_SIGNAL_MODE inválido; "
+        "usando 'trained_model'."
+    )
+    EXECUTION_SIGNAL_MODE = "trained_model"
+
 # USE_AI_MODEL = False → análise técnica offline; execução exige probabilidade calibrada
-# USE_AI_MODEL = True  → IA deve concordar com o sinal e estar validada
-USE_AI_MODEL = True
+# USE_AI_MODEL = True  → usa bundle treinado aprovado na decisão
+USE_AI_MODEL = _env_bool("STANDERIV_USE_AI_MODEL", True)
 
 AI_MODEL_PATH = "model.pkl"
 
@@ -349,7 +391,7 @@ AI_SCORE_MIN = 0.30
 # ----- Sinal ponderado -----
 # False = comportamento original, AND rígido
 # True  = score ponderado por indicador
-USE_WEIGHTED_SIGNAL = True
+USE_WEIGHTED_SIGNAL = _env_bool("STANDERIV_USE_WEIGHTED_SIGNAL", True)
 
 SIGNAL_SCORE_MIN = 0.05
 
@@ -446,3 +488,9 @@ TRANSFORMER_PATIENCE = 10
 
 # Retreino exige informação nova, não apenas mais ticks do mesmo candle.
 RETRAIN_NEW_LABELS_TRIGGER = 120
+
+
+# ----- Bootstrap sem modelo aprovado -----
+# Evita que o pipeline fique indefinidamente preso em um único ativo quando
+# sucessivos treinos não geram bundle elegível para execução.
+BOOTSTRAP_MAX_FAILED_PROMOTIONS = 3

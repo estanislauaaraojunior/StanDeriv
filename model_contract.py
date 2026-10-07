@@ -19,8 +19,12 @@ def minimum_training_rows():
     # 15% calibration/validation partitions lose a feature window plus expiry.
     embargo = FEATURE_WINDOW + horizon
     # Menor calibração do walk-forward: 20% dos primeiros 55% do development.
-    return max(math.ceil((embargo + 31) / .15),
-               math.ceil(((embargo + 32) / (.55 * .2) + embargo) / .8))
+    theoretical = max(math.ceil((embargo + 31) / .15),
+                      math.ceil(((embargo + 32) / (.55 * .2) + embargo) / .8))
+    # Na prática, gaps de mercado e a separação temporal final podem remover
+    # mais linhas que o embargo idealizado. Com 15m/1m, 1.853 contratos
+    # rotuláveis já produziram só 2 amostras de calibração no primeiro fold.
+    return max(theoretical, 2280)
 
 
 def minimum_history_candles():
@@ -148,6 +152,20 @@ def meets_payout_floor(net_payout):
     return math.isfinite(ratio) and ratio >= config.MIN_NET_PAYOUT
 
 
+def valid_payout_proposal(price, payout):
+    """Valida preço e payout mínimo sem inferir probabilidade não calibrada."""
+    try:
+        price, payout = map(float, (price, payout))
+    except (TypeError, ValueError):
+        return False
+    return (
+        math.isfinite(price)
+        and math.isfinite(payout)
+        and 0 < price < payout
+        and meets_payout_floor(net_payout_ratio(price, payout))
+    )
+
+
 def profitable_proposal(price, payout, probability, margin = MIN_EXPECTED_RETURN):
     import config
     try:
@@ -155,8 +173,8 @@ def profitable_proposal(price, payout, probability, margin = MIN_EXPECTED_RETURN
     except (TypeError, ValueError):
         return False
     return (all(math.isfinite(v) for v in (price, payout, probability))
-            and 0 < price < payout and config.AI_CONFIDENCE_MIN < probability <= 1
-            and meets_payout_floor(net_payout_ratio(price, payout))
+            and valid_payout_proposal(price, payout)
+            and config.AI_CONFIDENCE_MIN < probability <= 1
             and probability * payout / price - 1 >= margin)
 
 

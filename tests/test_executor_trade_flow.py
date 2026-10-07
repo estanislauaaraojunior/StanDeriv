@@ -59,11 +59,165 @@ def test_forex_symbol_can_open_contract_after_valid_signal(bot):
     assert bot._phase == 'open'
 
 
+def test_non_model_decision_can_reach_buy_without_ai_metadata(bot):
+    ws = MagicMock()
+    indicators = {
+        'decision_modules': ['weighted_score'],
+        'decision_source': 'weighted_score',
+        'tech_score': .7,
+    }
+
+    sent = bot._send_proposal(ws, 'BUY', indicators)
+    proposal_req_id = bot._proposal_req_id
+    bot._handle_proposal(
+        ws,
+        {'id': 'technical-proposal', 'ask_price': 10, 'payout': 18.5},
+        req_id=proposal_req_id,
+    )
+
+    assert sent is True
+    assert bot._phase == 'buy'
+    assert json.loads(ws.send.call_args.args[0])['buy'] == 'technical-proposal'
+
+
+def test_non_model_decision_still_obeys_minimum_payout(bot):
+    ws = MagicMock()
+    indicators = {
+        'decision_modules': ['price_action'],
+        'decision_source': 'price_action',
+    }
+
+    sent = bot._send_proposal(ws, 'SELL', indicators)
+    bot._handle_proposal(
+        ws,
+        {'id': 'low-payout', 'ask_price': 10, 'payout': 15.99},
+        req_id=bot._proposal_req_id,
+    )
+
+    assert sent is True
+    assert ws.send.call_count == 1
+    assert not bot._in_trade
+
+
 def test_no_second_proposal_while_first_pending(bot):
     ws = MagicMock()
     proposal(bot, ws)
     proposal(bot, ws)
     assert ws.send.call_count == 1
+
+
+def test_heartbeat_timeout_closes_stale_websocket(bot, tmp_path, monkeypatch):
+    monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
+    ws = MagicMock()
+    bot._ws = ws
+    bot._last_tick_epoch = 123456
+
+    bot._on_heartbeat_fail()
+
+    ws.close.assert_called_once()
+    status = json.loads((tmp_path/'bot_status.json').read_text())
+    assert status['event'] == 'heartbeat_timeout'
+    assert status['last_tick_epoch'] == 123456
+
+
+def test_proposal_retries_once_with_lower_stake_when_payout_exceeds_api_cap(bot, tmp_path, monkeypatch):
+    monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
+    ws = MagicMock()
+    bot.risk_manager.balance = 7566.79
+    bot._ws = ws
+    rid = proposal(bot, ws, 'SELL')
+    first = json.loads(ws.send.call_args.args[0])
+    assert first['amount'] == pytest.approx(75.67)
+    bot._handle_api_error({'req_id': rid, 'error': {
+        'code': 'ContractBuyValidationError',
+        'message': 'Minimum stake of 0.50 and maximum payout of 100.00. Current payout is 142.26.',
+    }})
+    assert bot._phase == 'proposal'
+    assert bot._proposal_retry_count == 1
+    assert ws.send.call_count == 2
+    second = json.loads(ws.send.call_args.args[0])
+    assert second['amount'] == pytest.approx(52.12)
+    assert second['amount'] < first['amount']
+    assert second['req_id'] == bot._proposal_req_id != rid
+    assert bot._decision_history[-1]['reason'] == 'proposal_retry_payout_cap'
+
+
+def test_repeated_payout_cap_rejections_request_market_switch(bot, monkeypatch):
+    callback = MagicMock()
+    monkeypatch.setattr(config, "PROPOSAL_API_ERROR_SWITCH_THRESHOLD", 3, raising=False)
+    bot.on_market_unfavorable = callback
+    bot.risk_manager.balance = 7566.79
+    error = {
+        'code': 'ContractBuyValidationError',
+        'message': 'Minimum stake of 0.50 and maximum payout of 100.00. Current payout is 142.26.',
+    }
+
+    for _ in range(3):
+        ws = MagicMock()
+        bot._ws = ws
+        rid = proposal(bot, ws, 'SELL')
+        bot._handle_api_error({'req_id': rid, 'error': error})
+        retry_req_id = bot._proposal_req_id
+        bot._handle_api_error({'req_id': retry_req_id, 'error': error})
+
+    callback.assert_called_once()
+    assert callback.call_args.args[:3] == (bot.symbol, "proposal_payout_cap_rejected", 3)
+
+
+def test_entry_cadence_disabled_evaluates_without_new_closed_candle(bot, monkeypatch):
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_CADENCE", False, raising=False)
+    monkeypatch.setattr(config, "ENFORCE_RISK_GATE", False, raising=False)
+    bot._api_history_loaded = True
+    bot._cur_candle_epoch = 1700000000
+    bot._cur_candle_open = 100.0
+    bot._cur_candle_high = 100.0
+    bot._cur_candle_low = 100.0
+    bot._cur_candle_close = 100.0
+    bot._last_tick_epoch = 1700000000
+    bot._candle_closes.extend([100.0 + i * 0.01 for i in range(config.MIN_CANDLES)])
+    bot._candles.extend([
+        {"epoch": 1699990000 + i * 60, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0}
+        for i in range(config.MIN_CANDLES)
+    ])
+    send = MagicMock(return_value=True)
+    monkeypatch.setattr(bot, "_send_proposal", send)
+    monkeypatch.setattr(executor, "get_signal", MagicMock(return_value=("BUY", {"model_id": "offline", "win_probability": .8})))
+
+    bot._handle_tick(MagicMock(), {"symbol": bot.symbol, "epoch": 1700000001, "quote": 100.1})
+
+    assert bot._new_candle_closed is False
+    send.assert_called_once()
+
+
+def test_risk_gate_disabled_allows_proposal_when_risk_manager_blocks(bot, monkeypatch):
+    ws = MagicMock()
+    monkeypatch.setattr(config, "ENFORCE_RISK_GATE", False, raising=False)
+    bot.risk_manager.can_trade = MagicMock(return_value=False)
+
+    sent = bot._send_proposal(
+        ws,
+        "BUY",
+        {"win_probability": .8, "ai_confidence": .8, "model_id": "offline"},
+    )
+
+    assert sent is True
+    assert ws.send.call_count == 1
+
+
+def test_risk_gate_enabled_blocks_proposal_when_risk_manager_blocks(bot, monkeypatch):
+    ws = MagicMock()
+    monkeypatch.setattr(config, "ENFORCE_RISK_GATE", True, raising=False)
+    bot.risk_manager.can_trade = MagicMock(return_value=False)
+
+    sent = bot._send_proposal(
+        ws,
+        "BUY",
+        {"win_probability": .8, "ai_confidence": .8, "model_id": "offline"},
+    )
+
+    assert sent is False
+    ws.send.assert_not_called()
+    assert bot._decision_history[-1]["reason"] == "proposal_precheck_block"
 
 
 @pytest.mark.parametrize('rid', [None, - 1])
@@ -249,6 +403,50 @@ def test_buy_error_does_not_authorize_retry(bot):
     assert bot._in_trade and bot._phase == 'reconciling'
 
 
+def test_uncertain_buy_reconciles_open_contract_from_portfolio(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws, 'BUY')
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id=rid)
+    bot._phase = 'reconciling'
+    bot._portfolio_req_id = 777
+    ws.reset_mock()
+
+    bot._on_message(ws, json.dumps({
+        'msg_type': 'portfolio',
+        'req_id': 777,
+        'portfolio': {
+            'contracts': [
+                {'contract_id': 55555, 'symbol': bot.symbol, 'contract_type': 'CALL'},
+            ],
+        },
+    }))
+
+    assert bot._open_contract_id == '55555'
+    assert bot._phase == 'open'
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent == {'proposal_open_contract': 1, 'contract_id': 55555, 'subscribe': 1}
+    assert bot._decision_history[-1]['reason'] == 'buy_reconciled_from_portfolio'
+
+
+def test_uncertain_buy_not_in_portfolio_releases_bot(bot):
+    ws = MagicMock()
+    rid = proposal(bot, ws, 'SELL')
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id=rid)
+    bot._phase = 'reconciling'
+    bot._portfolio_req_id = 778
+
+    bot._on_message(ws, json.dumps({
+        'msg_type': 'portfolio',
+        'req_id': 778,
+        'portfolio': {'contracts': []},
+    }))
+
+    assert not bot._in_trade
+    assert bot._phase == 'idle'
+    assert bot._open_contract_id is None
+    assert bot._decision_history[-1]['reason'] == 'uncertain_buy_not_in_portfolio'
+
+
 def test_proposal_error_releases_bot_for_next_signal(bot):
     ws = MagicMock()
     rid = proposal(bot, ws, 'SELL')
@@ -281,6 +479,37 @@ def test_market_unavailable_proposal_error_requests_fallback(bot):
     callback.assert_called_once_with('frxEURGBP')
     assert not bot._in_trade
     assert bot._phase == 'idle'
+
+
+def test_unfavorable_symbol_streak_requests_fallback(bot, monkeypatch, tmp_path):
+    callback = MagicMock()
+    monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
+    monkeypatch.setattr(config, 'UNFAVORABLE_SYMBOL_SWITCH_DECISIONS', 3)
+    monkeypatch.setattr(config, 'UNFAVORABLE_SYMBOL_SWITCH_REASONS', {'no_technical_signal'})
+    bot.on_market_unfavorable = callback
+    bot.symbol = 'frxGBPJPY'
+
+    for epoch in (100, 160):
+        bot._record_decision(
+            reason='no_technical_signal',
+            tick_epoch=epoch,
+            indicators={'adx': 12.5},
+        )
+
+    callback.assert_not_called()
+
+    bot._record_decision(
+        reason='no_technical_signal',
+        tick_epoch=220,
+        indicators={'adx': 12.7},
+    )
+
+    callback.assert_called_once_with(
+        'frxGBPJPY',
+        'no_technical_signal',
+        3,
+        {'adx': 12.7},
+    )
 
 
 def test_reconnection_refetches_bearer_account_balance(bot, monkeypatch):

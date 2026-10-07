@@ -180,6 +180,18 @@ class TestModelMetricsInApiState:
         assert "coleta apenas, sem contratos ou retreino automático" not in source
         assert '_run_training(model_path=AI_MODEL_PATH+".new")' in source
 
+    def test_pipeline_skips_model_gates_when_model_module_is_disabled(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+
+        assert "model_required = bool(_cfg.USE_AI_MODEL)" in source
+        assert "if model_required and tournament_candidates" in source
+        assert "if model_required:\n        _prepare_training_start" in source
+        assert "model_exists = not model_required or (" in source
+        assert "IA desligada; retreino e promoção de modelo não bloqueiam a execução." in source
+
 
 class TestRecommendedConfig:
     """Verifica que config.py segue as configurações recomendadas pela estratégia atual."""
@@ -220,3 +232,24 @@ class TestRecommendedConfig:
         assert config.MIN_CANDLES >= 35, (
             f"Estratégia recomenda MIN_CANDLES >= 35 (MACD precisa de 35 preços), atual: {config.MIN_CANDLES}"
         )
+
+
+def test_pipeline_status_writes_are_thread_safe(tmp_path, monkeypatch):
+    import json
+    from concurrent.futures import ThreadPoolExecutor
+    import pipeline
+
+    status_path = tmp_path / "bot_status.json"
+    monkeypatch.setattr(pipeline, "_BOT_STATUS_JSON", status_path)
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = [
+            executor.submit(pipeline._write_pipeline_status, **{f"writer_{index}": index})
+            for index in range(48)
+        ]
+        for future in futures:
+            future.result()
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert all(status[f"writer_{index}"] == index for index in range(48))
+    assert list(tmp_path.glob(".bot_status.json.*.tmp")) == []

@@ -71,6 +71,8 @@ from config import (
     AI_MODEL_PATH,
     TRANSFORMER_MODEL_PATH,
     DURATION_MODEL_PATH,
+    DURATION,
+    DURATION_UNIT,
     TARGET_LOOKFORWARD,
     MODEL_PROMOTION_MIN_AUC_DELTA,
     MODEL_PROMOTION_MAX_ACC_DROP,
@@ -87,14 +89,19 @@ from config import (
     RETRAIN_MIN_INTERVAL_SEC,
     RETRAIN_MAX_INTERVAL_SEC,
     OPERATIONS_LOG,
+    BOOTSTRAP_MAX_FAILED_PROMOTIONS,
+    MARKET_SWITCH_COOLDOWN_SEC,
+    MARKET_SWITCH_MAX_PER_WINDOW,
+    MARKET_SWITCH_WINDOW_SEC,
 )
 
 from executor import DerivBot
 from risk_manager import RiskManager
 from market_data import ensure_header, append_record, read_records, canonicalize
 from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, compatible, usable,
-                            write_json_atomic, acquire_execution_lock,
-                            minimum_history_candles, minimum_training_rows)
+                            load_validated_bundle, write_json_atomic,
+                            acquire_execution_lock, minimum_history_candles,
+                            minimum_training_rows)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -104,6 +111,8 @@ from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, compatible, usable
 _DEFAULT_HISTORY_COUNT = minimum_history_candles()
 _DEFAULT_MIN_TICKS = 100
 _MIN_LABELABLE_CONTRACTS = minimum_training_rows()
+_TICK_LOG_INTERVAL = 200
+_HISTORY_LOG_INTERVAL = 10_000
 
 _WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
@@ -111,6 +120,9 @@ _AUTH_MODE = "legacy"
 _PAT_ACCOUNT_ID: Optional[str] = None
 _PAT_ACCOUNT: dict = {}
 _PAT_WS_URL: Optional[str] = None
+_BOT_STATUS_JSON = Path(__file__).resolve().parent / "bot_status.json"
+_market_failure_until: dict[str, float] = {}
+_market_switch_times: list[float] = []
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -184,7 +196,6 @@ def _symbol_display(symbol: str) -> str:
 def _runtime_symbol() -> str:
     """Símbolo efetivamente selecionado para o processo atual."""
     import config as _cfg
-
     return str(globals().get("SYMBOL") or _cfg.get_active_symbol() or _cfg.SYMBOL)
 
 
@@ -216,10 +227,90 @@ def _request_market_switch(symbol):
         _market_switch.set()
 
 
+def _request_market_switch_for_unfavorable(symbol, reason, streak, indicators=None):
+    if symbol == _runtime_symbol():
+        if not _market_switch.is_set():
+            adx = ""
+            if indicators and indicators.get("adx") is not None:
+                adx = f" | ADX={indicators.get('adx')}"
+            print(
+                f"\n[MERCADO] {symbol}: {streak} avaliações sem condição favorável "
+                f"({reason}{adx}); buscando outro ativo após concluir pendências."
+            )
+        _market_switch.set()
+
+
 def _check_market_switch():
     if _market_switch.is_set():
         raise MarketUnavailable(_runtime_symbol())
 
+
+_pipeline_status_lock = threading.Lock()
+
+
+def _write_pipeline_status(**updates):
+    import tempfile
+
+    with _pipeline_status_lock:
+        try:
+            status = json.loads(_BOT_STATUS_JSON.read_text()) if _BOT_STATUS_JSON.exists() else {}
+        except Exception:
+            status = {}
+        status.update(updates)
+        status.setdefault("pid", os.getpid())
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=_BOT_STATUS_JSON.parent,
+                prefix=f".{_BOT_STATUS_JSON.name}.{os.getpid()}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                temp_file.write(json.dumps(status, ensure_ascii=False))
+            os.replace(temp_path, _BOT_STATUS_JSON)
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
+def _pipeline_heartbeat(stage: str, **updates):
+    _write_pipeline_status(
+        status=stage,
+        running=True,
+        last_seen_at=datetime.utcnow().isoformat() + "+00:00",
+        symbol=_runtime_symbol(),
+        **updates,
+    )
+
+
+def _mark_market_failure(symbol: str, reason: str = "") -> None:
+    if not symbol:
+        return
+    _market_failure_until[str(symbol)] = time.time() + max(0, int(MARKET_SWITCH_COOLDOWN_SEC or 0))
+    _market_switch_times.append(time.time())
+    cutoff = time.time() - max(1, int(MARKET_SWITCH_WINDOW_SEC or 1))
+    del _market_switch_times[: len([t for t in _market_switch_times if t < cutoff])]
+    if reason:
+        _pipeline_heartbeat("switching_market", last_error=reason)
+
+
+def _market_available_for_switch(symbol: str) -> bool:
+    until = float(_market_failure_until.get(str(symbol), 0.0) or 0.0)
+    return until <= time.time()
+
+
+def _switch_budget_exhausted() -> bool:
+    cutoff = time.time() - max(1, int(MARKET_SWITCH_WINDOW_SEC or 1))
+    recent = [t for t in _market_switch_times if t >= cutoff]
+    _market_switch_times[:] = recent
+    limit = int(MARKET_SWITCH_MAX_PER_WINDOW or 0)
+    return limit > 0 and len(recent) >= limit
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -408,6 +499,7 @@ _SCAN_SYMBOLS_SECONDARY = [
 _SCAN_TICKS = 200
 _SCAN_TIMEOUT = 15
 _ADX_TREND_MIN = 15.0
+_TOP_TRENDING_SYMBOLS = 5
 
 
 def _fetch_prices_for_symbol(
@@ -702,8 +794,13 @@ def _probe_symbol(symbol, timeout=20):
     """Check the actual account feed and contract catalogue without placing orders."""
     import config as cfg
     done = threading.Event()
-    result = {'tick': False, 'contracts': False, 'quotes': set(),
-              'reason': 'tempo limite sem tick/catalogo/propostas validos'}
+    result = {
+        'tick': False,
+        'contracts': False,
+        'quotes': set(),
+        'proposal_errors': {},
+        'reason': 'tempo limite sem tick/catalogo/propostas validos',
+    }
 
     def request(ws):
         ws.send(json.dumps({'ticks': symbol, 'subscribe': 1}))
@@ -725,7 +822,18 @@ def _probe_symbol(symbol, timeout=20):
         try:
             data = json.loads(raw)
             if 'error' in data:
-                result['reason'] = data['error'].get('message', 'erro API')
+                error = data['error']
+                req_id = data.get('req_id')
+                message = str(error.get('message') or 'erro API')
+                code = str(error.get('code') or '')
+                if req_id in (910001, 910002):
+                    result['proposal_errors'][req_id] = message
+                    result['reason'] = f'{code}: {message}' if code else message
+                    if len(result['proposal_errors']) == 2:
+                        done.set()
+                        ws.close()
+                    return
+                result['reason'] = f'{code}: {message}' if code else message
                 done.set()
                 ws.close()
                 return
@@ -787,6 +895,23 @@ def _best_live_from(results):
     return '', 0.0
 
 
+def _top_live_from(results, limit=_TOP_TRENDING_SYMBOLS):
+    """Retorna os melhores símbolos operáveis acima do piso de tendência."""
+    selected = []
+    for symbol in sorted(results, key=results.get, reverse=True):
+        if len(selected) >= limit:
+            break
+        score = results[symbol]
+        if score < _ADX_TREND_MIN:
+            break
+        available, reason = _probe_symbol(symbol)
+        if available:
+            selected.append((symbol, score))
+        else:
+            print(f'[TENDENCIA] {symbol} descartado: {reason}')
+    return selected
+
+
 def _first_live_symbol(candidates):
     """Retorna o primeiro símbolo com tick recente e CALL/PUT disponíveis."""
     seen = set()
@@ -801,6 +926,26 @@ def _first_live_symbol(candidates):
     return ''
 
 
+def _first_live_symbol_with_compatible_model(candidates):
+    """Retorna um símbolo operável que já possui bundle ativo aprovado."""
+    seen = set()
+    for symbol in candidates:
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        try:
+            _payload, metadata = load_validated_bundle(AI_MODEL_PATH, symbol)
+            if not usable(metadata, symbol):
+                continue
+        except Exception:
+            continue
+        available, reason = _probe_symbol(symbol)
+        if available:
+            return symbol
+        print(f'[TENDENCIA] {symbol} possui modelo compatível, mas está indisponivel: {reason}')
+    return ''
+
+
 def _require_live_symbol(symbol, *, allow_fallback=False):
     available, reason = _probe_symbol(symbol)
     if available:
@@ -812,7 +957,7 @@ def _require_live_symbol(symbol, *, allow_fallback=False):
         )
         if fallback:
             print(
-                "\n[TENDÊNCIA] ✔ Ativo fechado substituído por: "
+                "\n[TENDÊNCIA] ✔ Ativo indisponível substituído por: "
                 f"{_symbol_display(fallback)}"
             )
             return fallback
@@ -822,6 +967,81 @@ def _require_live_symbol(symbol, *, allow_fallback=False):
 def _ensure_operable_symbol(symbol):
     """Confirma mercado aberto e CALL/PUT antes de iniciar coleta de dados."""
     return _require_live_symbol(symbol, allow_fallback=True)
+
+
+def _detect_top_trending_symbols(
+    no_scan: bool = False,
+    limit: int = _TOP_TRENDING_SYMBOLS,
+) -> list:
+    """Seleciona os melhores símbolos operáveis para o torneio inicial."""
+    import config as _cfg
+
+    if limit <= 0:
+        return []
+
+    if no_scan:
+        return [_require_live_symbol(_cfg.SYMBOL, allow_fallback=True)]
+
+    all_scores = {}
+
+    print(
+        "\n[TENDÊNCIA] "
+        "── Torneio: scan forex (pares de moedas) ───────"
+    )
+    print(
+        "[TENDÊNCIA] Candidatos: "
+        + ", ".join(_SCAN_SYMBOLS_FOREX)
+    )
+    all_scores.update(_scan_group(_SCAN_SYMBOLS_FOREX))
+
+    print(
+        "\n[TENDÊNCIA] "
+        "── Torneio: scan primário (volatilidade) ───────"
+    )
+    print(
+        "[TENDÊNCIA] Candidatos: "
+        + ", ".join(_SCAN_SYMBOLS_PRIMARY)
+    )
+    all_scores.update(_scan_group(_SCAN_SYMBOLS_PRIMARY))
+
+    print(
+        "\n[TENDÊNCIA] "
+        "── Torneio: scan secundário (boom/crash/jump) ──"
+    )
+    print(
+        "[TENDÊNCIA] Candidatos: "
+        + ", ".join(_SCAN_SYMBOLS_SECONDARY)
+    )
+    all_scores.update(_scan_group(_SCAN_SYMBOLS_SECONDARY))
+
+    selected = _top_live_from(all_scores, limit)
+    seen = {symbol for symbol, _score in selected}
+
+    if len(selected) < limit:
+        fallback_candidates = (
+            [_cfg.SYMBOL]
+            + [s for s in _SCAN_SYMBOLS_PRIMARY if s != _cfg.SYMBOL]
+            + [s for s in _SCAN_SYMBOLS_SECONDARY if s != _cfg.SYMBOL]
+        )
+        for symbol in fallback_candidates:
+            if len(selected) >= limit:
+                break
+            if symbol in seen:
+                continue
+            available, reason = _probe_symbol(symbol)
+            if available:
+                seen.add(symbol)
+                selected.append((symbol, 0.0))
+            else:
+                print(f'[TENDENCIA] {symbol} indisponivel para fallback: {reason}')
+
+    symbols = [symbol for symbol, _score in selected]
+    if symbols:
+        print(
+            "\n[TENDÊNCIA] Top símbolos para treino: "
+            + ", ".join(_symbol_display(symbol) for symbol in symbols)
+        )
+    return symbols
 
 
 def _detect_trending_symbol(
@@ -987,8 +1207,9 @@ def _fetch_historical_ticks(
     available, reason = _probe_symbol(symbol)
     if not available:
         print(
-            f"\n[HISTÓRICO] {symbol} fechado ou sem CALL/PUT "
-            f"({reason}); histórico não será baixado."
+            f"\n[HISTÓRICO] {symbol} indisponível para contrato "
+            f"CALL/PUT de {DURATION}{DURATION_UNIT} ({reason}); "
+            "histórico não será baixado."
         )
         return 0
 
@@ -1630,6 +1851,7 @@ class _CollectorThread(threading.Thread):
         self._history_start = None
         self._history_end = None
         self._history_seen = set()
+        self._last_history_log_count = 0
         from payout_quotes import ProposalRecorder
         import config as cfg
         self._payout_recorder = ProposalRecorder(Path(TICKS_CSV).with_name('payout_quotes.csv'),
@@ -1736,6 +1958,7 @@ class _CollectorThread(threading.Thread):
         records, _ = read_records(TICKS_CSV)
         self._history_seen = {r['epoch'] for r in records
                               if r['symbol'] == self._symbol and r['kind'] == 'tick'}
+        self._last_history_log_count = len(self._history_seen)
         print(
             f"\n[COLETOR] Conectado | "
             f"{_symbol_display(self._symbol)}"
@@ -1828,7 +2051,17 @@ class _CollectorThread(threading.Thread):
                         and math.isfinite(price) and price > 0):
                     append_record(TICKS_CSV, epoch, self._symbol, price)
                     self._history_seen.add(epoch)
-            print(f'[COLETOR] Historico: {len(self._history_seen):,} ticks identificados; coleta ao vivo ativa.')
+            history_count = len(self._history_seen)
+            should_log_history = (
+                self._last_history_log_count == 0
+                or history_count - self._last_history_log_count >= _HISTORY_LOG_INTERVAL
+            )
+            if should_log_history:
+                print(
+                    f'[COLETOR] Historico: {history_count:,} ticks identificados; '
+                    'coleta ao vivo ativa.'
+                )
+                self._last_history_log_count = history_count
             if page[0][0] <= self._history_start + MAX_TICK_GAP_SEC:
                 print('[COLETOR] Ticks historicos recuperados; fluxo ao vivo permanece ativo.')
                 self.history_ready.set()
@@ -1913,13 +2146,13 @@ class _CollectorThread(threading.Thread):
         append_record(TICKS_CSV,epoch,self._symbol,price)
         self._history_seen.add(epoch)
 
-        print(
-            f"\r[COLETOR] Ticks: "
-            f"{self._local_count:>7,} | "
-            f"{price} @ {dt_str}",
-            end="",
-            flush=True,
-        )
+        if self._local_count == 1 or self._local_count % _TICK_LOG_INTERVAL == 0:
+            print(
+                f"[COLETOR] Ticks: "
+                f"{self._local_count:>7,} | "
+                f"{price} @ {dt_str}",
+                flush=True,
+            )
 
     def _request_tick_history(self, ws):
         ws.send(json.dumps({'ticks_history': self._symbol, 'style': 'ticks',
@@ -1968,6 +2201,7 @@ def _wait_for_ticks(
             raise RuntimeError(collector.fatal_error or 'coletor encerrado sem dados')
 
     check_collector()
+    _pipeline_heartbeat("collecting")
     current = _count_ticks()
     labelable = _count_labelable_contracts_for_training()
 
@@ -1987,6 +2221,7 @@ def _wait_for_ticks(
     )
 
     while not _shutdown.is_set():
+        _pipeline_heartbeat("collecting")
         time.sleep(poll_sec)
         check_collector()
 
@@ -2074,22 +2309,31 @@ def _trim_ticks(
 
 def _load_latest_final_metrics():
     """Métricas do bundle ativo; None quando o bundle não existe ou não é utilizável."""
+    global _last_model_load_error
     try:
         if not os.path.exists(AI_MODEL_PATH):
+            _last_model_load_error = ""
             return None
         if not os.path.exists(AI_MODEL_PATH + '.metadata.json'):
-            print('[PIPELINE] Modelo antigo sem metadados ignorado; treino inicial automatico necessario.')
+            msg = '[PIPELINE] Modelo antigo sem metadados ignorado; treino inicial automatico necessario.'
+            if msg != _last_model_load_error:
+                print(msg)
+                _last_model_load_error = msg
             return None
         from model_contract import load_validated_bundle
         symbol = _runtime_symbol()
         payload, metadata = load_validated_bundle(AI_MODEL_PATH, symbol)
         if usable(metadata, symbol):
+            _last_model_load_error = ""
             return metadata.get('metrics')
-        print(f"[PIPELINE] Bundle existente inutilizável: symbol={metadata.get('symbol')} "
-              f"approved={metadata.get('approved')} "
-              f"deps={metadata.get('dependencies')}")
+        msg = (f"[PIPELINE] Bundle existente inutilizável: symbol={metadata.get('symbol')} "
+               f"approved={metadata.get('approved')} "
+               f"deps={metadata.get('dependencies')}")
     except Exception as exc:
-        print(f"[PIPELINE] Falha ao carregar modelo existente: {exc}")
+        msg = f"[PIPELINE] Falha ao carregar modelo existente: {exc}"
+    if msg != _last_model_load_error:
+        print(msg)
+        _last_model_load_error = msg
     return None
 
 
@@ -2236,7 +2480,7 @@ def _run_training(
         dataset_key = (fingerprint(dataset_path), json.dumps(specification(_runtime_symbol()), sort_keys=True), test_ratio)
         if getattr(_run_training, '_last_dataset_key', None) == dataset_key:
             print('[PIPELINE] Dataset rotulado inalterado; aguardando novos contratos vencidos para retreinar.')
-            return False, None
+            return False, {"status": "unchanged_dataset"}
         metrics = train_model.train(
             dataset_path,
             model_path,
@@ -2265,6 +2509,128 @@ def _run_training(
     return True, metrics
 
 
+def _safe_symbol_slug(symbol: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in str(symbol)).strip("_") or "symbol"
+
+
+def _training_rank_key(metrics: dict) -> tuple:
+    observed = metrics.get("observed_payout_evaluation") or {}
+    payout_metrics = observed if observed.get("eligible") is not None else metrics
+    return (
+        bool(metrics.get("eligible")),
+        float(payout_metrics.get("expectancy", metrics.get("expectancy", 0.0)) or 0.0),
+        float(metrics.get("win_rate", 0.0) or 0.0),
+        float(metrics.get("auc", 0.0) or 0.0),
+        float(metrics.get("f1", 0.0) or 0.0),
+        int(metrics.get("trades", 0) or 0),
+    )
+
+
+def _run_initial_symbol_tournament(
+    candidates: list,
+    *,
+    history_count: int,
+    min_ticks: int,
+    resources: dict,
+) -> tuple[str, Optional[dict]]:
+    """Treina candidatos isolados e promove somente o melhor aprovado."""
+    if not candidates:
+        return "", None
+
+    print(
+        "\n[TORNEIO] Iniciando treino comparativo dos "
+        f"{len(candidates)} melhores símbolos."
+    )
+
+    previous_symbol = _runtime_symbol()
+    results = []
+
+    for index, symbol in enumerate(candidates, start=1):
+        if _shutdown.is_set():
+            break
+
+        print(
+            f"\n[TORNEIO] ({index}/{len(candidates)}) Preparando {_symbol_display(symbol)}"
+        )
+        _set_runtime_symbol(symbol)
+
+        collector = None
+        try:
+            _ensure_ticks_header()
+            collector = _CollectorThread(symbol)
+            collector.start()
+            _fetch_historical_ticks(history_count)
+            _wait_for_ticks(min_ticks, collector=collector)
+
+            slug = _safe_symbol_slug(symbol)
+            tmp_dataset = f"{DATASET_CSV}.candidate.{slug}"
+            tmp_model = f"{AI_MODEL_PATH}.candidate.{slug}"
+            tmp_tft = f"{TRANSFORMER_MODEL_PATH}.candidate.{slug}"
+            tmp_duration = f"{DURATION_MODEL_PATH}.candidate.{slug}"
+
+            success, metrics = _run_training(
+                dataset_path=tmp_dataset,
+                model_path=tmp_model,
+                tft_output_path=tmp_tft,
+                duration_output_path=tmp_duration,
+            )
+            if success and metrics:
+                promote = bool(metrics.get("eligible"))
+                reason = "aprovado no teste final do torneio" if promote else "; ".join(metrics.get("rejection_reasons") or [])
+                metrics = dict(metrics, tournament_promotion_reason=reason)
+                print(
+                    f"[TORNEIO] {symbol}: aprovado={metrics.get('eligible')} "
+                    f"AUC={metrics.get('auc', 0):.4f} "
+                    f"win_rate={metrics.get('win_rate', 0):.2%} "
+                    f"trades={metrics.get('trades', 0)} | {reason}"
+                )
+                if promote:
+                    results.append((symbol, tmp_model, metrics))
+                else:
+                    print(f"[TORNEIO] {symbol}: candidato não elegível para promoção.")
+            else:
+                print(f"[TORNEIO] {symbol}: treino não gerou candidato utilizável.")
+
+        except RuntimeError as exc:
+            print(f"[TORNEIO] {symbol}: coleta/treino bloqueado: {exc}")
+        finally:
+            if collector is not None:
+                collector.stop()
+                while collector.is_alive():
+                    collector.join(timeout=5)
+
+    if not results:
+        _set_runtime_symbol(previous_symbol)
+        print(
+            "[TORNEIO] Nenhum dos símbolos gerou bundle aprovado; "
+            "pipeline seguirá no fluxo adaptativo padrão."
+        )
+        return "", None
+
+    winner_symbol, winner_model, winner_metrics = max(
+        results,
+        key=lambda item: _training_rank_key(item[2]),
+    )
+    _set_runtime_symbol(winner_symbol)
+
+    os.replace(winner_model, AI_MODEL_PATH)
+    winner_metadata = winner_model + ".metadata.json"
+    if os.path.exists(winner_metadata):
+        os.replace(winner_metadata, AI_MODEL_PATH + ".metadata.json")
+
+    _reset_ai_predictor()
+    _model_ready.set()
+
+    print(
+        "\n[TORNEIO] Vencedor promovido: "
+        f"{_symbol_display(winner_symbol)} | "
+        f"AUC={winner_metrics.get('auc', 0):.4f} | "
+        f"win_rate={winner_metrics.get('win_rate', 0):.2%} | "
+        f"trades={winner_metrics.get('trades', 0)}"
+    )
+    return winner_symbol, winner_metrics
+
+
 # ─────────────────────────────────────────────────────────────────
 # FASE 6 — Re-treino adaptativo
 # ─────────────────────────────────────────────────────────────────
@@ -2278,9 +2644,11 @@ _retrain_state: dict = {
     "last_epoch": 0.0,
     "last_tick_count": 0,
     "last_label_count": 0,
+    "bootstrap_failed_promotions": 0,
 }
 
 _model_ready = threading.Event()
+_last_model_load_error = ""
 
 
 def _should_retrain_now() -> tuple[bool, str]:
@@ -2414,7 +2782,7 @@ def _should_retrain_now() -> tuple[bool, str]:
     return True, f'{new_labels} novos contratos rotulados disponíveis'
 
 
-def _retrain_loop() -> None:
+def _retrain_loop(bootstrap_until_ready: bool = False) -> None:
     """
     Thread de re-treino adaptativo.
 
@@ -2432,16 +2800,41 @@ def _retrain_loop() -> None:
         _retrain_state['last_label_count'] = _count_labelable_contracts_for_training()
 
     while not _shutdown.is_set():
+        _pipeline_heartbeat("training")
 
         for _ in range(12):
             if _shutdown.is_set():
                 return
 
+            _pipeline_heartbeat("training")
             time.sleep(5)
 
-        should, reason = (
-            _should_retrain_now()
-        )
+        if bootstrap_until_ready and _load_latest_final_metrics() is None:
+            labels = _count_labelable_contracts_for_training()
+            required = minimum_training_rows()
+            if labels >= required:
+                new_labels = labels - _retrain_state.get("last_label_count", 0)
+                already_tried_dataset = getattr(_run_training, "_last_dataset_key", None) is not None
+                if already_tried_dataset and new_labels < RETRAIN_NEW_LABELS_TRIGGER:
+                    should, reason = False, (
+                        "sem modelo compatível; "
+                        f"{new_labels} novos contratos rotulados; "
+                        f"aguardando {RETRAIN_NEW_LABELS_TRIGGER}"
+                    )
+                else:
+                    should, reason = True, (
+                        "sem modelo compatível; "
+                        f"{labels} contratos rotulados disponíveis"
+                    )
+            else:
+                should, reason = False, (
+                    f"{labels} contratos rotulados; "
+                    f"aguardando {required} para treino inicial"
+                )
+        else:
+            should, reason = (
+                _should_retrain_now()
+            )
 
         if not should:
             continue
@@ -2513,6 +2906,7 @@ def _retrain_loop() -> None:
                     "atualizado com sucesso "
                     f"({promo_reason})."
                 )
+                _retrain_state["bootstrap_failed_promotions"] = 0
 
             else:
                 # Keep the last trained candidate reviewable without publishing it.
@@ -2523,12 +2917,49 @@ def _retrain_loop() -> None:
                     "[RE-TREINO] Challenger "
                     f"não promovido: {promo_reason}"
                 )
+                if bootstrap_until_ready and _load_latest_final_metrics() is None:
+                    failures = int(_retrain_state.get("bootstrap_failed_promotions", 0) or 0) + 1
+                    _retrain_state["bootstrap_failed_promotions"] = failures
+                    if failures >= BOOTSTRAP_MAX_FAILED_PROMOTIONS:
+                        print(
+                            "[RE-TREINO] Bootstrap sem modelo compatível após "
+                            f"{failures} tentativas; solicitando troca de ativo."
+                        )
+                        _request_market_switch_for_unfavorable(
+                            _runtime_symbol(),
+                            "bootstrap_model_not_promoted",
+                            failures,
+                        )
 
         else:
-            print(
-                "[RE-TREINO] Falhou — bot continua "
-                "com o modelo anterior."
-            )
+            if (challenger_metrics or {}).get("status") == "unchanged_dataset":
+                print(
+                    "[RE-TREINO] Dataset inalterado — coleta continua "
+                    "até surgirem novos contratos rotulados."
+                )
+            elif _load_latest_final_metrics() is None:
+                print(
+                    "[RE-TREINO] Falhou — ainda sem modelo compatível; "
+                    "coleta e bootstrap de treino continuam ativos."
+                )
+                if bootstrap_until_ready:
+                    failures = int(_retrain_state.get("bootstrap_failed_promotions", 0) or 0) + 1
+                    _retrain_state["bootstrap_failed_promotions"] = failures
+                    if failures >= BOOTSTRAP_MAX_FAILED_PROMOTIONS:
+                        print(
+                            "[RE-TREINO] Bootstrap falhou repetidamente sem modelo compatível; "
+                            "solicitando troca de ativo."
+                        )
+                        _request_market_switch_for_unfavorable(
+                            _runtime_symbol(),
+                            "bootstrap_training_failed",
+                            failures,
+                        )
+            else:
+                print(
+                    "[RE-TREINO] Falhou — bot continua "
+                    "com o modelo anterior."
+                )
 
         _retrain_state[
             "last_epoch"
@@ -2559,6 +2990,7 @@ def _wait_for_compatible_model(collector=None, poll_sec: int = 10) -> bool:
         "antes de iniciar o bot de trading..."
     )
     while not _shutdown.is_set():
+        _pipeline_heartbeat("waiting_model")
         _check_market_switch()
         if _load_latest_final_metrics() is not None:
             _model_ready.set()
@@ -2702,7 +3134,20 @@ def _main_session(resources, forced_symbol=None) -> None:
         ),
     )
 
+    parser.add_argument(
+        "--top-symbols",
+        type=int,
+        default=_TOP_TRENDING_SYMBOLS,
+        metavar="N",
+        help=(
+            "Quantidade de símbolos operáveis a treinar no torneio inicial "
+            f"(1-{_TOP_TRENDING_SYMBOLS}; padrão: {_TOP_TRENDING_SYMBOLS})."
+        ),
+    )
+
     args = parser.parse_args()
+    if not 1 <= args.top_symbols <= _TOP_TRENDING_SYMBOLS:
+        parser.error(f"--top-symbols deve estar entre 1 e {_TOP_TRENDING_SYMBOLS}")
     execution_lock=resources["lock"]
 
     # ── Determina modo ────────────────────────────────────────
@@ -2753,13 +3198,32 @@ def _main_session(resources, forced_symbol=None) -> None:
     # ── Scan de tendência ────────────────────────────────────
 
     import config as _cfg
+    model_required = bool(_cfg.USE_AI_MODEL)
+    active_modules = [
+        label for enabled, label in (
+            (_cfg.USE_WEIGHTED_SIGNAL, 'score ponderado'),
+            (_cfg.USE_AI_MODEL, 'modelo treinado'),
+            (_cfg.PRICE_ACTION_FILTER, 'Price Action'),
+            (_cfg.CANDLE_PATTERN_FILTER, 'padrões de vela'),
+        ) if enabled
+    ]
+    print('[PIPELINE] Módulos de decisão ativos: ' + ', '.join(active_modules or ['nenhum']))
 
     state_path=Path(__file__).resolve().parent/'state.json'
     prior=json.loads(state_path.read_text()) if state_path.exists() else {}
     pending=prior.get('active_contract')
+    tournament_candidates = []
     try:
-        detected=(pending.get('symbol') if pending else None) or (
-            forced_symbol or (_cfg.SYMBOL if args.skip_collect else _detect_trending_symbol(no_scan=args.no_scan)))
+        if pending:
+            detected = pending.get('symbol')
+        elif forced_symbol:
+            detected = forced_symbol
+        elif args.skip_collect:
+            detected = _cfg.SYMBOL
+        else:
+            tournament_candidates = _detect_top_trending_symbols(no_scan=args.no_scan, limit=args.top_symbols)
+            detected = tournament_candidates[0] if tournament_candidates else _detect_trending_symbol(no_scan=args.no_scan)
+
         if not pending and not args.skip_collect:
             detected = _ensure_operable_symbol(detected)
     except RuntimeError as exc:
@@ -2772,12 +3236,44 @@ def _main_session(resources, forced_symbol=None) -> None:
             f"{_cfg.SYMBOL} → {detected}"
         )
 
+    if (
+        not pending
+        and not args.force_retrain
+        and forced_symbol is None
+        and not tournament_candidates
+        and model_required
+    ):
+        model_symbol = _first_live_symbol_with_compatible_model(
+            [detected] + [s for s in _scan_candidates() if s != detected]
+        )
+        if model_symbol and model_symbol != detected:
+            print(
+                "[TENDÊNCIA] Scan escolheu ativo sem bundle aprovado; "
+                f"mantendo modelo compatível em {_symbol_display(model_symbol)}."
+            )
+            detected = model_symbol
+
     _set_runtime_symbol(detected)
 
     history_count = _history_fetch_count_for_start(args.history_count)
 
-    _prepare_training_start(reuse=args.reuse_training_data or forced_symbol is not None,
-                            skip_collect=args.skip_collect, pending=pending)
+    if model_required:
+        _prepare_training_start(reuse=args.reuse_training_data or forced_symbol is not None,
+                                skip_collect=args.skip_collect, pending=pending)
+    else:
+        print('[PIPELINE] IA desligada; preservando dados e artefatos de treinamento.')
+
+    if model_required and tournament_candidates and not pending and not args.skip_collect:
+        winner_symbol, _winner_metrics = _run_initial_symbol_tournament(
+            tournament_candidates,
+            history_count=history_count,
+            min_ticks=args.min_ticks,
+            resources=resources,
+        )
+        if winner_symbol:
+            detected = winner_symbol
+        else:
+            _set_runtime_symbol(detected)
 
     _banner(
         history_count,
@@ -2875,9 +3371,14 @@ def _main_session(resources, forced_symbol=None) -> None:
 
     # ── FASES 2/3/4: Treino inicial ──────────────────────────
 
-    model_exists = _load_latest_final_metrics() is not None and not args.force_retrain
+    model_exists = not model_required or (
+        _load_latest_final_metrics() is not None and not args.force_retrain
+    )
 
-    if model_exists or pending:
+    if not model_required:
+        print('\n[PIPELINE] Modelo treinado desativado; treino inicial ignorado.')
+
+    elif model_exists or pending:
         print(
             "\n[PIPELINE] Fases 2-4: "
             "treino inicial ignorado: modelo compatível ou contrato pendente a reconciliar."
@@ -2966,16 +3467,7 @@ def _main_session(resources, forced_symbol=None) -> None:
             _retrain_state["last_epoch"] = time.time()
             _retrain_state["last_tick_count"] = _count_ticks()
             model_exists = False
-
-            retrain_thread = threading.Thread(
-                target=_retrain_loop,
-                daemon=True,
-                name="Retrain",
-            )
-
-            resources["retrain"] = retrain_thread
-            retrain_thread.start()
-            print('[PIPELINE] Re-treino adaptativo assumirá a promoção do primeiro bundle elegível')
+            print('[PIPELINE] Bootstrap de re-treino assumirá a promoção do primeiro bundle elegível')
         else:
             os.replace(AI_MODEL_PATH+'.new',AI_MODEL_PATH)
             if os.path.exists(AI_MODEL_PATH+'.new.metadata.json'):
@@ -2986,7 +3478,7 @@ def _main_session(resources, forced_symbol=None) -> None:
 
     # ── FASE 5: Re-treino ─────────────────────────────────────
 
-    if model_exists or pending:
+    if model_required and (model_exists or pending):
         retrain_thread = threading.Thread(
             target=_retrain_loop,
             daemon=True,
@@ -2996,8 +3488,19 @@ def _main_session(resources, forced_symbol=None) -> None:
             resources["retrain"] = retrain_thread
             retrain_thread.start()
             print('[PIPELINE] Re-treino adaptativo iniciado para o bundle compatível')
+    elif not model_required:
+        print('[PIPELINE] IA desligada; retreino e promoção de modelo não bloqueiam a execução.')
     else:
         print('[PIPELINE] Sem modelo compatível; entradas permanecem bloqueadas até promoção.')
+        retrain_thread = threading.Thread(
+            target=_retrain_loop,
+            kwargs={'bootstrap_until_ready': True},
+            daemon=True,
+            name="RetrainBootstrap",
+        )
+        resources["retrain"] = retrain_thread
+        retrain_thread.start()
+        print('[PIPELINE] Coleta e treino inicial adaptativo ativos para o símbolo atual')
         if not _wait_for_compatible_model(collector=collector):
             return
         model_exists = True
@@ -3048,6 +3551,7 @@ def _main_session(resources, forced_symbol=None) -> None:
     bot._execution_lock=execution_lock
     bot.market_switch_requested = _market_switch.is_set
     bot.on_market_unavailable = _request_market_switch
+    bot.on_market_unfavorable = _request_market_switch_for_unfavorable
     bot.run()
     _check_market_switch()
 
@@ -3082,22 +3586,84 @@ def main() -> None:
             finally:
                 _finish_market_session(resources)
             # Keep risk, historical data and account state. Only the market changes.
+            _mark_market_failure(old_symbol, "market_unavailable")
             _shutdown.clear()
             forced_symbol = ''
             while not forced_symbol and not _shutdown.is_set():
-                forced_symbol = _first_live_symbol([s for s in _scan_candidates() if s != old_symbol])
-                if not forced_symbol:
-                    print('[MERCADO] Nenhum alternativo disponível; nova consulta em 60 segundos.')
-                    _shutdown.wait(60)
+                if _switch_budget_exhausted():
+                    _write_pipeline_status(
+                        status="degraded",
+                        running=False,
+                        stopped_at=datetime.utcnow().isoformat() + "+00:00",
+                        finished_at=datetime.utcnow().isoformat() + "+00:00",
+                        returncode=None,
+                        last_error="limite de trocas de mercado atingido; aguardando intervenção",
+                    )
+                    print('[MERCADO] Limite de trocas atingido; pipeline entrou em estado degradado.')
+                    return
+                candidates = [
+                    s for s in _scan_candidates()
+                    if s != old_symbol and _market_available_for_switch(s)
+                ]
+                forced_symbol = _first_live_symbol_with_compatible_model(candidates)
+                if forced_symbol:
+                    print(
+                        f'[MERCADO] {old_symbol} → {forced_symbol}; '
+                        'usando bundle compatível já aprovado.'
+                    )
+                    break
+                forced_symbol = _first_live_symbol(candidates)
+                if forced_symbol:
+                    print(
+                        f'[MERCADO] {old_symbol} → {forced_symbol}; '
+                        'sem bundle aprovado, coleta e treino serão iniciados.'
+                    )
+                    break
+                print('[MERCADO] Nenhum alternativo disponível; nova consulta em 60 segundos.')
+                _shutdown.wait(60)
             if not forced_symbol:
                 return
-            print(f'[MERCADO] {old_symbol} → {forced_symbol}; modelo compatível será exigido.')
             _model_ready.clear()
-            _retrain_state.update(last_epoch=0, last_tick_count=0, last_label_count=0)
+            _retrain_state.update(
+                last_epoch=0,
+                last_tick_count=0,
+                last_label_count=0,
+                bootstrap_failed_promotions=0,
+            )
             _reset_ai_predictor()
     finally:
         resources['lock'].close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        _write_pipeline_status(
+            status="stopped",
+            running=False,
+            stopped_at=datetime.utcnow().isoformat() + "+00:00",
+            finished_at=datetime.utcnow().isoformat() + "+00:00",
+            returncode=0,
+            last_error="",
+        )
+        raise
+    except Exception as exc:
+        _write_pipeline_status(
+            status="crashed",
+            running=False,
+            stopped_at=datetime.utcnow().isoformat() + "+00:00",
+            finished_at=datetime.utcnow().isoformat() + "+00:00",
+            returncode=1,
+            last_error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    else:
+        _write_pipeline_status(
+            status="stopped",
+            running=False,
+            stopped_at=datetime.utcnow().isoformat() + "+00:00",
+            finished_at=datetime.utcnow().isoformat() + "+00:00",
+            returncode=0,
+            last_error="",
+        )

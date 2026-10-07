@@ -37,6 +37,7 @@ _last_price: float = 0.0          # P2: referência para detecção de spike
 # P5: deduplicação — guarda os últimos 10.000 epochs sem nunca limpar tudo de uma vez
 _seen_epochs_deque: collections.deque = collections.deque(maxlen=10_000)
 _seen_epochs_set: set = set()
+TICK_LOG_INTERVAL = 200
 
 
 # ─────────────────────────────────────────────────────────────
@@ -148,13 +149,12 @@ def on_message(ws, message: str) -> None:
 
         append_record(TICKS_CSV,epoch,SYMBOL,price)
 
-        # Exibe contador na mesma linha para não poluir o terminal
-        print(
-            f"\r[COLETOR] Ticks coletados: {_tick_count:>7,} | "
-            f"Último: {price} @ {dt_str}",
-            end="",
-            flush=True,
-        )
+        if _tick_count == 1 or _tick_count % TICK_LOG_INTERVAL == 0:
+            print(
+                f"[COLETOR] Ticks coletados: {_tick_count:>7,} | "
+                f"Último: {price} @ {dt_str}",
+                flush=True,
+            )
 
 
 def on_error(ws, error) -> None:

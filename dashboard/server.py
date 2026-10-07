@@ -208,6 +208,46 @@ def _read_csv_safe(path, **kwargs):
         return pd.DataFrame()
 
 
+def _last_local_contract() -> dict | None:
+    df = _read_csv_safe(OPERATIONS_CSV)
+    if df.empty:
+        return None
+    row = df.iloc[-1].to_dict()
+
+    def _float(name: str) -> float:
+        try:
+            value = float(row.get(name, 0) or 0)
+            return value if pd.notna(value) else 0.0
+        except Exception:
+            return 0.0
+
+    def _int(name: str) -> int:
+        try:
+            value = int(float(row.get(name, 0) or 0))
+            return value if value > 0 else 0
+        except Exception:
+            return 0
+
+    return {
+        "has_active": False,
+        "closed": True,
+        "contract_id": str(row.get("contract_id", "") or ""),
+        "symbol": str(row.get("symbol", "") or ""),
+        "direction": str(row.get("direction", "") or ""),
+        "duration": int(_float("duration")),
+        "duration_unit": str(row.get("duration_unit", "m") or "m"),
+        "entry_epoch": _int("entry_epoch"),
+        "exit_epoch": _int("exit_epoch"),
+        "entry_price": _float("entry_price"),
+        "exit_price": _float("exit_price"),
+        "payout": _float("payout"),
+        "buy_price": _float("buy_price") or _float("stake"),
+        "profit": _float("profit"),
+        "result": str(row.get("result", "") or ""),
+        "timestamp": str(row.get("timestamp", "") or ""),
+    }
+
+
 def _deriv_credentials_available() -> bool:
     try:
         from config import TOKEN
@@ -353,6 +393,16 @@ def _bot_pid() -> int | None:
             return pid
     except (ValueError, OSError):
         pass
+    try:
+        status = _get_bot_status()
+        if (
+            bool(status.get("running"))
+            or str(status.get("status", "")) in {"starting", "running", "stopping"}
+        ):
+            pid = int(status.get("pid") or 0)
+            return pid if pid > 0 else None
+    except (TypeError, ValueError):
+        pass
     return None
 
 
@@ -362,6 +412,32 @@ def _clear_stale_bot_pid(pid: int | None = None) -> None:
             current = int(PID_FILE.read_text().strip())
             if pid is None or current == int(pid):
                 PID_FILE.unlink()
+    except Exception:
+        pass
+    _mark_stale_bot_status(pid)
+
+
+def _mark_stale_bot_status(pid: int | None = None) -> None:
+    try:
+        state = _get_bot_status()
+        status_pid = int(state.get("pid") or 0)
+        if pid is not None and status_pid and status_pid != int(pid):
+            return
+        if (
+            not state.get("running")
+            and str(state.get("status", "")) not in {"starting", "running", "stopping"}
+        ):
+            return
+        now = _utc_now_iso()
+        state.update(
+            status="crashed",
+            running=False,
+            stopped_at=now,
+            finished_at=now,
+            returncode=state.get("returncode"),
+            last_error=state.get("last_error") or "processo ausente",
+        )
+        _persist_bot_status(state)
     except Exception:
         pass
 
@@ -478,6 +554,7 @@ def _mark_bot_stopped(returncode: int | None = None, *, requested: bool = False)
         returncode=returncode,
         last_error="" if status == "stopped" else reason,
     )
+    _clear_stale_bot_pid(state.get("pid"))
     _bot_process = None
     if status == "crashed":
         _append_bot_log(f"[BOT] Processo encerrado inesperadamente: {reason}")
@@ -497,7 +574,7 @@ def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> 
     except (TypeError, ValueError):
         known_pid_int = 0
     should_mark_crashed = (
-        status in {"starting", "running"}
+        (status in {"starting", "running"} or bool(state.get("running")))
         and not running
         and known_pid_int
         and (pid is None or known_pid_int != int(pid or 0))
@@ -506,6 +583,8 @@ def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> 
         return _mark_bot_stopped(state.get("returncode"), requested=False)
     if running:
         return _set_bot_status(status="running", running=True, pid=pid, last_seen_at=_utc_now_iso())
+    if state.get("running") and status != "stopping":
+        return _mark_bot_stopped(state.get("returncode"), requested=False)
     return state
 
 
@@ -838,6 +917,21 @@ def api_bot_start():
     min_ticks = int(data.get("min_ticks", 200))
     history_count = int(data.get("history_count", MIN_HISTORY_CANDLES))
     force_retrain = bool(data.get("force_retrain", False))
+    use_trained_model = bool(data.get("use_trained_model", True))
+    use_weighted_signal = bool(data.get("use_weighted_signal", True))
+    use_price_action_filter = bool(data.get("use_price_action_filter", False))
+    use_candle_pattern_filter = bool(data.get("use_candle_pattern_filter", False))
+    if not any((
+        use_trained_model,
+        use_weighted_signal,
+        use_price_action_filter,
+        use_candle_pattern_filter,
+    )):
+        return jsonify({
+            "ok": False,
+            "msg": "Ative pelo menos um módulo de decisão.",
+        }), 400
+    execution_signal_mode = "trained_model"
 
     cmd = [sys.executable, "-u", str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]
     cmd += ["--balance", str(balance)]
@@ -866,6 +960,11 @@ def api_bot_start():
         global _bot_process
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        env["STANDERIV_USE_AI_MODEL"] = "1" if use_trained_model else "0"
+        env["STANDERIV_EXECUTION_SIGNAL_MODE"] = execution_signal_mode
+        env["STANDERIV_USE_WEIGHTED_SIGNAL"] = "1" if use_weighted_signal else "0"
+        env["STANDERIV_PRICE_ACTION_FILTER"] = "1" if use_price_action_filter else "0"
+        env["STANDERIV_CANDLE_PATTERN_FILTER"] = "1" if use_candle_pattern_filter else "0"
         proc = subprocess.Popen(
             cmd,
             cwd=str(_ROOT),
@@ -894,10 +993,24 @@ def api_bot_start():
             returncode=None,
             last_error="",
             command=cmd,
+            execution_signal_mode=execution_signal_mode,
+            use_trained_model=use_trained_model,
+            use_weighted_signal=use_weighted_signal,
+            use_price_action_filter=use_price_action_filter,
+            use_candle_pattern_filter=use_candle_pattern_filter,
         )
         threading.Thread(target=_read_bot_output, args=(proc,), daemon=True).start()
         PID_FILE.write_text(str(proc.pid))
-        return jsonify({"ok": True, "pid": proc.pid, "mode": mode})
+        return jsonify({
+            "ok": True,
+            "pid": proc.pid,
+            "mode": mode,
+            "execution_signal_mode": execution_signal_mode,
+            "use_trained_model": use_trained_model,
+            "use_weighted_signal": use_weighted_signal,
+            "use_price_action_filter": use_price_action_filter,
+            "use_candle_pattern_filter": use_candle_pattern_filter,
+        })
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
 
@@ -1574,7 +1687,7 @@ def api_contract_active():
     state = _read_json_safe(STATE_JSON)
     ac = state.get("active_contract")
     if not isinstance(ac, dict) or not ac.get("has_active"):
-        return jsonify({"has_active": False})
+        return jsonify({"has_active": False, "last_contract": _last_local_contract()})
 
     buy_timestamp = float(ac.get("buy_timestamp", 0.0) or 0.0)
     entry_epoch = int(ac.get("entry_epoch", 0) or 0)
@@ -1583,6 +1696,7 @@ def api_contract_active():
 
     payload = {
         "has_active": True,
+        "phase": str(ac.get("phase", "")),
         "contract_id": str(ac.get("contract_id", "")),
         "symbol": str(ac.get("symbol", state.get("symbol", ""))),
         "direction": str(ac.get("direction", "")),
@@ -1590,6 +1704,7 @@ def api_contract_active():
         "buy_timestamp": buy_timestamp,
         "entry_epoch": entry_epoch,
         "entry_price": float(ac.get("entry_price", 0.0) or 0.0),
+        "last_contract": _last_local_contract(),
     }
     return jsonify(payload)
 
