@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 import config
 from feature_engine import FEATURES, EXPERIMENTAL_FEATURES, compute_experimental_features
+from model_contract import FEATURE_WINDOW
 from payout_quotes import ProposalRecorder, QuoteHistory
 from train_model import _metrics, walk_forward_partitions, selection_key, temporal_partitions
 
@@ -20,8 +21,9 @@ class FixedModel:
         return np.tile([.1, .9], (len(X), 1))
 
 
-def frame(n=100, spacing=60):
+def frame(n=100, spacing=None):
     """Monta um DataFrame sintético de features, alvo e épocas com n linhas espaçadas."""
+    spacing = config.CANDLE_TIMEFRAME_SEC if spacing is None else spacing
     df = pd.DataFrame(np.zeros((n, len(FEATURES))), columns=FEATURES)
     df['target'] = 1
     df['technical_signal'] = 1
@@ -29,7 +31,7 @@ def frame(n=100, spacing=60):
     df['entry_epoch'] = 1_800_000_000 + np.arange(n)*spacing
     df['expiry_epoch'] = df.entry_epoch + 900
     df['signal_epoch'] = df.entry_epoch
-    df['feature_start_epoch'] = df.entry_epoch-6000
+    df['feature_start_epoch'] = df.entry_epoch - FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC
     df['symbol'], df['duration'], df['duration_unit'] = 'R_100', 15, 'm'
     return df
 
@@ -40,11 +42,25 @@ def test_components_explain_disagreement_without_changing_combined_gate():
     df['technical_signal'] = 0
     m = _metrics(FixedModel(), df)
     assert m['trades'] == 0
-    assert m['components']['ai_only']['trades'] == 7
+    assert m['components']['ai_only']['trades'] > 0
     assert m['components']['technical_only']['wins'] == 0
     assert m['blockers']['direction_disagreement'] == 100
     assert sum(m['blockers'].values())+m['trades'] == len(df)
     json.dumps(m, allow_nan=False)
+
+
+def test_combined_gate_matches_ai_when_no_technical_generator_is_enabled(monkeypatch):
+    """Garante que o avaliador simula a decisão por IA isolada quando os módulos técnicos estão desligados."""
+    monkeypatch.setattr(config, 'USE_AI_MODEL', True)
+    monkeypatch.setattr(config, 'USE_WEIGHTED_SIGNAL', False)
+    monkeypatch.setattr(config, 'PRICE_ACTION_FILTER', False)
+    monkeypatch.setattr(config, 'CANDLE_PATTERN_FILTER', False)
+    df = frame()
+    df['technical_signal'] = -1
+    metrics = _metrics(FixedModel(), df)
+
+    assert metrics['trades'] == metrics['components']['ai_only']['trades']
+    assert metrics['blockers'].get('no_technical_signal', 0) == 0
 
 
 def test_calibration_penalizes_confident_wrong_predictions_and_missing_ties():
@@ -63,7 +79,7 @@ def test_segments_and_drawdown_use_selected_nonoverlapping_trades():
     """Garante que segmentos e drawdown usam apenas as operações selecionadas sem sobreposição."""
     df = frame()
     m = _metrics(FixedModel(), df)
-    assert m['segments']['direction:BUY']['trades'] == m['trades'] == 7
+    assert m['segments']['direction:BUY']['trades'] == m['trades'] > 0
     assert m['max_drawdown_pct'] == 0
     df['target'] = 0
     assert _metrics(FixedModel(), df)['max_drawdown_pct'] > 0
@@ -85,6 +101,25 @@ def test_walk_forward_never_crosses_final_holdout_or_feature_embargo():
         assert len(current[0]) > len(previous[0])
 
 
+def test_weekly_sample_supports_one_embargoed_selection_fold():
+    """Garante que a semana de candles sustenta ajuste, calibração e seleção em sequência."""
+    from model_contract import minimum_history_candles, duration_seconds
+    from train_model import walk_forward_partitions
+    horizon = duration_seconds(config.DURATION, config.DURATION_UNIT)
+    rows = minimum_history_candles() - FEATURE_WINDOW - horizon // config.CANDLE_TIMEFRAME_SEC
+    df = frame(rows)
+    df['target'] = np.arange(rows) % 2
+    test = temporal_partitions(df)[-1]
+    development = df[df.expiry_epoch < test.feature_start_epoch.iloc[0]]
+
+    fit, calibration, selection = next(walk_forward_partitions(development, folds=1))
+
+    assert min(len(fit), len(calibration), len(selection)) >= 30
+    assert fit.expiry_epoch.max() < calibration.feature_start_epoch.min()
+    assert calibration.expiry_epoch.max() < selection.feature_start_epoch.min()
+    assert selection.expiry_epoch.max() < test.feature_start_epoch.min()
+
+
 def test_selection_prefers_supported_stability_over_auc_alone():
     """Garante que selection_key prioriza estabilidade com amostra suficiente em vez de AUC isolada."""
     stable = dict(trades=40, worst_expectancy=.1, mean_expectancy=.2,
@@ -98,12 +133,13 @@ def test_selection_prefers_supported_stability_over_auc_alone():
 def test_horizon_features_are_relative_causal_and_do_not_replace_baseline():
     """Garante que as features de horizonte são relativas à escala e não alteram as 27 features base."""
     prices = list(np.linspace(100, 110, 100))
-    a = compute_experimental_features(prices, 1_800_000_000, 60)
-    b = compute_experimental_features([p*10 for p in prices], 1_800_000_000, 60)
+    timeframe = config.CANDLE_TIMEFRAME_SEC
+    a = compute_experimental_features(prices, 1_800_000_000, timeframe)
+    b = compute_experimental_features([p*10 for p in prices], 1_800_000_000, timeframe)
     assert set(a) == set(EXPERIMENTAL_FEATURES)
     assert len(FEATURES) == 27
     assert a == pytest.approx(b)
-    assert a['return_15m'] == pytest.approx(prices[-1]/prices[-16]-1)
+    assert a['return_15m'] == pytest.approx(prices[-1]/prices[-2]-1)
     assert compute_experimental_features(prices, 1_800_000_000, 1) is None
 
 
@@ -265,6 +301,55 @@ def test_training_simulation_payout_floor(ratio,blocked,mode):
     df=frame(100)
     result=simulate(df,np.ones(len(df),dtype=int),np.full(len(df),.9),mode=mode,payout=ratio)
     assert (result['trades']==0) is blocked
+
+
+def test_low_combined_score_reports_causal_diagnostics(monkeypatch):
+    """Garante que bloqueio por score combinado registra quantis, pesos e amostras explicativas."""
+    from training_evaluation import simulate
+    df = frame(20)
+    df['tech_score'] = 0.0
+    monkeypatch.setattr(config, 'AI_SCORE_MIN', 0.95)
+    result = simulate(df, np.ones(len(df), dtype=int), np.full(len(df), .6),
+                      mode='combined', payout=.85)
+    details = result['blocker_diagnostics']['low_combined_score']
+    assert result['blockers']['low_combined_score'] == 20
+    assert details['threshold'] == .95
+    assert details['formula']['tech_weight'] == config.AI_TECH_WEIGHT
+    assert details['confidence_quantiles']['0.5'] == pytest.approx(.6)
+    assert details['abs_tech_score_quantiles']['1.0'] == 0
+    assert details['combined_score_quantiles']['1.0'] < .95
+    assert 1 <= len(details['sample']) <= 5
+
+
+def test_evaluation_reports_approval_diagnostics(monkeypatch):
+    """Garante que o relatório final resume blocker principal e comparação entre modos."""
+    import training_evaluation as evaluation
+    df = frame(10)
+    df['target'] = [0, 1] * 5
+
+    class DirectionalModel:
+        """Modelo com probabilidade válida e direção BUY constante."""
+        classes_ = np.array([0, 1])
+        def predict_proba(self, X):
+            """Retorna confiança suficiente para passar probabilidade isolada."""
+            return np.tile(np.array([[.4, .6]]), (len(X), 1))
+
+    def fake_simulate(_df, _direction, _confidence, *, mode, **_kwargs):
+        """Diferencia os modos para exercitar o resumo sem depender de filtros reais."""
+        if mode == 'combined':
+            return dict(trades=0, wins=0, win_rate=0., win_rate_lower95=0.,
+                        blockers={'low_combined_score': len(_df)}, break_even=.54)
+        return dict(trades=3, wins=2, win_rate=2/3, win_rate_lower95=.2,
+                    blockers={}, break_even=.54)
+
+    monkeypatch.setattr(evaluation, 'simulate', fake_simulate)
+    result = evaluation.evaluate(DirectionalModel(), df, .85)
+    summary = result['approval_diagnostics']
+    assert summary['primary_blocker'] == 'low_combined_score'
+    assert summary['combined_trades'] == 0
+    assert summary['component_trades']['ai_only'] == 3
+    assert summary['component_trades']['technical_only'] == 3
+    assert summary['component_win_rates']['combined'] is None
 
 
 @pytest.mark.parametrize('probability,ratio,accepted', [

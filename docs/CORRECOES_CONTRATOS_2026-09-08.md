@@ -6,9 +6,9 @@ O fluxo agora exige concordância explícita da IA, modelo compatível com o ati
 
 - `strategy.py`: abstenção, divergência e probabilidades inválidas bloqueiam a entrada. O score combina a força técnica efetiva com a confiança da direção selecionada. `ai_score` não é uma probabilidade de vitória.
 - `market_data.py`: lê explicitamente o esquema, ordena por ativo/horário, remove duplicatas idênticas e separa conflitos. Dados legados não ganham uma origem presumida. Novas gravações usam bloqueio de arquivo e distinguem `tick` e `candle`.
-- `dataset_builder.py`: usa 100 candles de tempo completos e contínuos por amostra. O alvo compara o primeiro tick disponível depois do sinal com o primeiro tick no vencimento. Mantém resultados de movimento pequeno e representa empate como classe 2; classe 0 é queda e classe 1 é alta. Empate não é uma PUT vencedora.
+- `dataset_builder.py`: usa 150 candles de tempo completos e contínuos por amostra. O alvo compara o primeiro tick disponível depois do sinal com o primeiro tick no vencimento. Mantém resultados de movimento pequeno e representa empate como classe 2; classe 0 é queda e classe 1 é alta. Empate não é uma PUT vencedora.
 - `model_contract.py`: versiona ativo, timeframe, janela, features, regra de entrada, classes e expiração. Uma lacuna superior a 10 segundos impede usar a janela como uma sequência contínua de ticks. O dataset não usa candles históricos como preços de entrada de contratos.
-- `feature_engine.py`: usa a mesma janela de 100 preços e OHLC temporal no treino e na inferência. As features de Price Action podem ser calculadas no treino, em vez de serem sistematicamente zeradas.
+- `feature_engine.py`: usa a mesma janela de 150 preços e OHLC temporal no treino e na inferência. As features de Price Action podem ser calculadas no treino, em vez de serem sistematicamente zeradas.
 - `train_model.py`: separa treino, calibração, seleção e teste final, com embargo entre features/rótulos das partições. RandomForest e XGBoost são candidatos; a calibração multinomial usa um período posterior ao ajuste do estimador. A escolha usa validação, e o teste final é reservado para avaliação.
 - `ai_predictor.py`: recusa modelos sem metadados, de outro ativo/vencimento, não aprovados ou com versões de dependências diferentes. Carrega um único bundle. Sem modelo compatível, não opera por fallback técnico.
 - A expiração atual é explicitamente **15 minutos**, configurada em `DURATION`; não depende de uma falsa previsão de duração. O antigo TFT, o stacking não temporal e o classificador de duração não participam do novo caminho operacional. Reativar o ensemble exigiria sua própria calibração e avaliação conjunta; os `.pkl` antigos foram preservados.
@@ -44,7 +44,7 @@ A manutenção não iniciou conexões, operações, coleta ou retreino operacion
 
 Sem modelo compatível, o pipeline coleta e tenta treinar automaticamente assim que houver amostras contínuas suficientes. Contratos pendentes têm prioridade de reconciliação independentemente da disponibilidade do modelo.
 
-O histórico inicial mínimo é calculado em `model_contract.minimum_history_candles`: na configuração de candles de 1 minuto e vencimento de 15 minutos, são 9.720 candles, reservando 9.600 amostras antes dos embargos temporais e 120 oportunidades sem sobreposição na fração de teste antes dos filtros. Esse orçamento foi ampliado na [manutenção de 10/09](historico/MANUTENCAO_TREINO_2026-09-10.md). Esse orçamento de coleta não bloqueia o início do treino: `minimum_training_rows` calcula o piso estrutural de 1.815 amostras (incluindo a calibração das janelas walk-forward), e o treinador valida as partições reais, classes e embargo. Lacunas de mercado podem reduzir as linhas aproveitáveis. As exigências estatísticas de aprovação continuam inalteradas. Valores positivos menores de `--history-count` são elevados ao mínimo.
+O histórico inicial mínimo é calculado em `model_contract.minimum_history_candles`: na configuração de candles de 1 minuto e vencimento de 15 minutos, são 9.770 candles, reservando 9.600 amostras antes dos embargos temporais e 120 oportunidades sem sobreposição na fração de teste antes dos filtros. Esse orçamento foi ampliado na [manutenção de 10/09](historico/MANUTENCAO_TREINO_2026-09-10.md). Esse orçamento de coleta não bloqueia o início do treino: `minimum_training_rows` calcula o piso estrutural de 2.445 amostras (incluindo a calibração das janelas walk-forward), e o treinador valida as partições reais, classes e embargo. Lacunas de mercado podem reduzir as linhas aproveitáveis. As exigências estatísticas de aprovação continuam inalteradas. Valores positivos menores de `--history-count` são elevados ao mínimo.
 
 Uma inicialização normal começa agora um novo ciclo de aprendizado. Depois de obter exclusão de execução e antes de iniciar a coleta, arquiva ticks, datasets, modelos anteriores, candidatos e metadados em `recovered_data/training_resets/`, com manifesto. Não apaga contratos, risco, credenciais ou logs. O histórico recente é solicitado novamente nessa inicialização; os CSVs e modelos das execuções anteriores não são usados. `--reuse-training-data` permite reutilização explícita; `--skip-collect` também preserva os dados para uso offline. A presença de contrato pendente suspende o arquivamento para priorizar reconciliação. O arquivamento não é executado sobre o processo ativo pela manutenção.
 
@@ -122,3 +122,68 @@ e `R_50`. Após reinício com reutilização dos dados, o fallback real selecion
 `R_10`, iniciou coleta e recuperação do histórico. Nenhuma compra foi necessária
 para validar disponibilidade; não foi afirmada aprovação de modelo para o novo
 ativo.
+
+## Janela semanal e confirmação shadow — 08/10/2026
+
+Esta seção supersede os valores de 1 minuto, 150 candles e orçamento histórico
+maior descritos acima. O contrato vigente usa candles de 15 minutos, expiração
+de 15 minutos, `FEATURE_WINDOW=50`, schema 4 e no máximo 672 candles alinhados
+dos últimos sete dias tanto na carga inicial quanto no dataset de treino. O
+treinador mantém ajuste, calibração, seleção e holdout em ordem cronológica e
+com embargo; a semana precisa produzir pelo menos 579 linhas rotuláveis para o
+piso estrutural atual. Gaps, classes ausentes ou menos de 30 operações no teste
+reprovam o candidato; o histórico não é ampliado silenciosamente.
+
+O scanner exige ADX >= 30 como filtro duro e usa o score composto existente
+somente para ordenar os mercados elegíveis. Candidatos sem bundle elegível são
+seguidos por novos lotes de mercados fortes; sem mercado qualificado, o pipeline
+aguarda e revarre. Os candidatos e relatórios de cada tentativa ficam isolados
+em `.training_candidates/` e não substituem os artefatos anteriores.
+
+ROC-AUC é uma métrica de avaliação, não um estimador. Os estimadores e métodos
+de calibração recebem o mesmo snapshot semanal e as mesmas partições. A
+aprovação offline escolhe o bundle, mas não habilita compra. O bundle precisa
+validar pelo menos 30 resultados shadow direcionais, liquidados e não
+sobrepostos, com taxa de acerto >= 55% e payout líquido observado >= 70%, todos
+do mesmo `model_id`. Cotações ausentes/antigas, empates, gaps e resultados de
+outro bundle não contam. O estado shadow é persistido separadamente de risco e
+operações; um retreino não promove outro bundle enquanto o shadow do ativo não
+estiver aprovado.
+
+O fluxo que usa o modelo treinado pode abrir contratos somente após o gate
+shadow e apenas em conta demo. O piso de 55% com payout líquido de 70% tem
+expectativa teórica negativa (break-even aproximado de 58,8%, antes de custos);
+esse critério é uma validação operacional solicitada para demo, não evidência
+de rentabilidade nem autorização para operar em conta real. Nenhuma conexão,
+compra, promoção ou reinício foi executado para implementar esta mudança.
+
+## Seleção por catálogo, histórico por ativo e consenso — 09/10/2026
+
+Esta atualização substitui o piso de ADX 30 do scanner acima por ADX atualizado
+>= 25 para seleção. A classe, o estado aberto e a suspensão vêm da resposta
+oficial `active_symbols`; a sondagem sem compra ainda confirma feed atual e
+CALL/PUT. Não sintéticos são avaliados primeiro. Sintéticos só são consultados
+se nenhum não sintético elegível existir, e precisam estar abertos e sem
+suspensão. O score composto existente apenas ordena os elegíveis, com símbolo
+como desempate estável. A configuração de ADX interna da estratégia continua
+separada e não foi reduzida por esta mudança.
+
+`Histórico Ativos/` persiste CSV OHLC v2 por ativo, além de sidecar de epochs
+consultados sem candle. A sincronização busca lacunas e candles posteriores,
+deduplica, ordena e grava atomicamente. Retém até sete dias e só elimina dados
+anteriores à janela após consultar a fonte; falha parcial preserva candles
+válidos. O executor compartilha esse preload entre os módulos; treino continua
+limitado a ticks com proveniência identificada.
+
+Os módulos habilitados têm um voto cada. Score, IA, Price Action e Padrões podem
+executar independentemente; as flags atuais mantêm Score/IA ativos e PA/Padrões
+desativados por padrão. Score requer maioria interna de três dos cinco
+componentes direcionais existentes. Padrões exigem ocorrências fortes em pelo
+menos duas velas distintas. O consenso exige mais da metade do total de módulos
+ativos na mesma direção; erro e abstenção não reduzem o denominador. Gates de
+proposta, payout, probabilidade calibrada e shadow/demo permanecem inalterados.
+
+Os modelos existentes continuam sendo avaliados no mesmo snapshot e nas
+partições temporais com embargo já implementadas; seleção permanece no
+development e o holdout continua fora da seleção. Nenhum treino ou promoção de
+artefatos ativos foi executado nesta atualização.

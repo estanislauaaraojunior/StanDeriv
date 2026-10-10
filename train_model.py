@@ -105,7 +105,7 @@ def temporal_partitions(df, test_ratio = .2):
     if not .1 <= test_ratio <= .3:
         raise ValueError('test_ratio deve estar entre 0.1 e 0.3')
     n = len(df)
-    boundaries = [0, int(n * (.7 - test_ratio)), int(n * (.85 - test_ratio)), int(n * (1 - test_ratio)), n]
+    boundaries = [0, int(n * .50), int(n * .66), int(n * (1 - test_ratio)), n]
     parts = []
     for start, end in zip(boundaries, boundaries[1:]):
         part = df.iloc[start: end]
@@ -134,6 +134,17 @@ def _metrics(model, df, payout=.85, *, features=None, quotes=None):
 def walk_forward_partitions(development, folds=3):
     """Expanding fit → calibração → avaliação; nenhum acesso ao holdout final."""
     n = len(development)
+    if folds == 1:
+        fit_end, calibration_end = int(n * .60), int(n * .80)
+        fit = development.iloc[:fit_end]
+        calibration = development.iloc[fit_end:calibration_end]
+        evaluation = development.iloc[calibration_end:]
+        fit = fit[fit.expiry_epoch < calibration.feature_start_epoch.iloc[0]]
+        calibration = calibration[calibration.expiry_epoch < evaluation.feature_start_epoch.iloc[0]]
+        if any(len(part) < 30 or part.target.nunique() < 2 for part in (fit, calibration, evaluation)):
+            raise ValueError('seleção semanal insuficiente após embargo; colete mais dados contínuos')
+        yield fit, calibration, evaluation
+        return
     edges = np.linspace(int(n*.55), n, folds+1, dtype=int)
     for start, end in zip(edges, edges[1:]):
         calibration_start = int(start*.8)
@@ -219,11 +230,11 @@ def fit_calibration_partition(development):
     return fit, calibration
 
 
-def walk_forward_evaluate(development, features=None, *, candidates=None):
+def walk_forward_evaluate(development, features=None, *, candidates=None, folds=3):
     """Avalia cada candidato e método de calibração nas janelas walk-forward e agrega métricas e ganhos sobre a frequência de classes."""
     from copy import copy
     features = FEATURES if features is None else features
-    partitions = list(walk_forward_partitions(development))
+    partitions = list(walk_forward_partitions(development, folds=folds))
     candidates = training_candidates() if candidates is None else candidates
     results = []
     for name, estimator in candidates:
@@ -270,9 +281,12 @@ def choose_candidate(results):
 
 def selection_key(result):
     """Chave de ordenação lexicográfica para seleção de candidatos."""
-    return (result.get('log_loss_gain_vs_prior', 1.) > 0,
-            result['trades'] >= 30 and result.get('empty_folds', 0) == 0,
-            result['worst_expectancy'], result['mean_expectancy'],
+    viable = result['trades'] >= 30 and result.get('empty_folds', 0) == 0
+    return (viable,
+            result['worst_expectancy'] > 0,
+            result['mean_expectancy'],
+            result['worst_expectancy'],
+            result.get('log_loss_gain_vs_prior', 1.) > 0,
             -result['max_drawdown_pct'], -result['mean_log_loss'], result['mean_auc'])
 
 
@@ -301,7 +315,8 @@ def train(dataset_path, output_path, test_ratio = .2, gap_ratio = .02,
     # O último período fica fora de toda seleção, incluindo comparação de features.
     development = df[df.expiry_epoch < int(test.feature_start_epoch.iloc[0])]
     candidates = training_candidates(search_trials)
-    walk_forward = walk_forward_evaluate(development, candidates=candidates)
+    walk_forward_folds = 1 if len(development) < 1000 else 3
+    walk_forward = walk_forward_evaluate(development, candidates=candidates, folds=walk_forward_folds)
     winner = choose_candidate(walk_forward)
     legacy_recipes = [r for r in walk_forward if r['name'] in ('RandomForest', 'XGBoost')
                       and r['calibration_method'] == 'multinomial']

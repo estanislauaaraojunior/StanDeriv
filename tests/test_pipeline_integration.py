@@ -212,11 +212,11 @@ class TestRecommendedConfig:
             f"atual: {config.CANDLE_TIMEFRAME_SEC}s"
         )
 
-    def test_target_lookforward_at_least_2(self):
-        """Horizonte de 2+ candles é mais estável para previsão direcional."""
+    def test_target_lookforward_matches_fifteen_minute_expiry(self):
+        """Garante que o target respeita o vencimento de um candle de 15 minutos."""
         import config
-        assert config.TARGET_LOOKFORWARD >= 2, (
-            f"Estratégia recomenda TARGET_LOOKFORWARD >= 2, atual: {config.TARGET_LOOKFORWARD}"
+        assert config.CANDLE_TIMEFRAME_SEC == 900 and config.TARGET_LOOKFORWARD == 1, (
+            f"Esperado um candle por vencimento de 15 minutos, atual: {config.TARGET_LOOKFORWARD}"
         )
 
     def test_signal_score_min_is_selective(self):
@@ -237,8 +237,8 @@ class TestRecommendedConfig:
     def test_min_candles_warmup_adequate(self):
         """Aquecimento de 20+ velas dá ao modelo dados suficientes antes da primeira entrada."""
         import config
-        assert config.MIN_CANDLES >= 35, (
-            f"Estratégia recomenda MIN_CANDLES >= 35 (MACD precisa de 35 preços), atual: {config.MIN_CANDLES}"
+        assert config.MIN_CANDLES >= 150, (
+            f"Estratégia recomenda MIN_CANDLES >= 150 para contratos 15m, atual: {config.MIN_CANDLES}"
         )
 
 

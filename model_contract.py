@@ -4,8 +4,8 @@ import json
 import math
 from pathlib import Path
 
-SCHEMA_VERSION = 2
-FEATURE_WINDOW = 100
+SCHEMA_VERSION = 4
+FEATURE_WINDOW = 50
 MAX_TICK_GAP_SEC = 10
 # Entrada autorizada quando o retorno esperado não é negativo.
 MIN_EXPECTED_RETURN = 0.0
@@ -13,33 +13,27 @@ EVALUATION_RISK_TIMEZONE = 'UTC'
 
 
 def minimum_training_rows():
-    """Número mínimo de linhas de treino considerando janela de features, horizonte e folds do walk-forward."""
+    """Piso estrutural para partições cronológicas e um fold da janela operacional."""
     import config
     horizon = math.ceil(duration_seconds(config.DURATION, config.DURATION_UNIT)
                         / config.CANDLE_TIMEFRAME_SEC)
-    # 15% calibration/validation partitions lose a feature window plus expiry.
     embargo = FEATURE_WINDOW + horizon
-    # Menor calibração do walk-forward: 20% dos primeiros 55% do development.
-    theoretical = max(math.ceil((embargo + 31) / .15),
-                      math.ceil(((embargo + 32) / (.55 * .2) + embargo) / .8))
-    # Na prática, gaps de mercado e a separação temporal final podem remover
-    # mais linhas que o embargo idealizado. Com 15m/1m, 1.853 contratos
-    # rotuláveis já produziram só 2 amostras de calibração no primeiro fold.
-    return max(theoretical, 2280)
+    minimum_partition = 30
+    outer = max(
+        math.ceil((minimum_partition + embargo) / fraction)
+        for fraction in (.50, .16, .14)
+    )
+    test = math.ceil(minimum_partition / .20)
+    inner_calibration = math.ceil(
+        (minimum_partition + 1.2 * embargo) / (.80 * .20)
+    )
+    return max(outer, test, inner_calibration)
 
 
 def minimum_history_candles():
-    """Histórico mínimo de candles a coletar para treinar e avaliar o modelo."""
+    """Quantidade exata de candles que representa a janela rolling de treino."""
     import config
-    horizon = math.ceil(duration_seconds(config.DURATION, config.DURATION_UNIT)
-                        / config.CANDLE_TIMEFRAME_SEC)
-    # Collection budget includes room for final evaluation; it is not a gate
-    # for attempting training when fewer usable rows survive real market gaps.
-    # Only 20% reaches final evaluation. Reserve 120 non-overlapping
-    # opportunities there, before technical filters and historical risk pauses.
-    # The old budget reserved 30 at best, making approval practically unreachable.
-    reserve = max(minimum_training_rows(), math.ceil(120 * (horizon + 1) / .2))
-    return FEATURE_WINDOW + horizon + reserve + 5
+    return config.TRAINING_HISTORY_DAYS * 24 * 60 * 60 // config.CANDLE_TIMEFRAME_SEC
 
 
 def duration_seconds(duration, unit):
@@ -55,14 +49,21 @@ def specification(symbol):
     import time
     from feature_engine import FEATURES
     return {'schema_version': SCHEMA_VERSION, 'symbol': symbol,
-            'timeframe_sec': config.CANDLE_TIMEFRAME_SEC, 'feature_window': FEATURE_WINDOW,
+            'timeframe_sec': config.CANDLE_TIMEFRAME_SEC,
+            'training_history_days': config.TRAINING_HISTORY_DAYS,
+            'training_history_candles': minimum_history_candles(),
+            'asset_history_candles': getattr(config, 'ASSET_HISTORY_CANDLES', 0),
+            'feature_window': FEATURE_WINDOW,
             'duration': config.DURATION, 'duration_unit': config.DURATION_UNIT,
             'target': 'first_tick_after_signal_to_first_tick_at_expiry_strict_v2',
             'features': FEATURES, 'ohlc': 'time_candles', 'ties': 'separate_class_2',
             'max_tick_gap_sec': MAX_TICK_GAP_SEC,
-            'approval_policy': {'version': 2, 'min_net_payout': config.MIN_NET_PAYOUT,
+            'approval_policy': {'version': 3, 'min_net_payout': config.MIN_NET_PAYOUT,
                                 'min_win_rate': config.MIN_APPROVAL_WIN_RATE,
                                 'min_trades': 1, 'wilson_gate': False,
+                                'shadow_min_net_payout': config.SHADOW_MIN_NET_PAYOUT,
+                                'shadow_min_accuracy': config.SHADOW_MIN_ACCURACY,
+                                'shadow_min_results': config.SHADOW_MIN_RESULTS,
                                 'auc_gate': False},
             'strategy_parameters': {key:getattr(config,key) for key in (
                 'USE_WEIGHTED_SIGNAL','SIGNAL_SCORE_MIN','AI_CONFIDENCE_MIN','AI_SCORE_MIN',

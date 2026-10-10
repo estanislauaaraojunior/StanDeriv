@@ -75,15 +75,132 @@ def test_scanner_skips_historical_winner_without_live_feed(monkeypatch):
     """Garante que o scanner descarta o melhor símbolo histórico sem feed ao vivo e escolhe o próximo."""
     probe = Mock(side_effect=[(False, 'Invalid symbol.'), (True, '')])
     monkeypatch.setattr(pipeline, '_probe_symbol', probe)
-    monkeypatch.setattr(pipeline, '_ADX_TREND_MIN', 20)
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'frxNZDCAD': 31.0, 'frxEURUSD': 32.0})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'frxNZDCAD': 100, 'frxEURUSD': 100})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        symbol: {'market': 'forex', 'underlying_symbol_type': 'forex',
+                 'is_synthetic': False, 'exchange_is_open': True,
+                 'is_trading_suspended': False}
+        for symbol in ('frxNZDCAD', 'frxEURUSD')
+    })
     assert pipeline._best_live_from({'frxNZDCAD': 35, 'frxEURUSD': 30}) == ('frxEURUSD', 30)
     assert [call.args[0] for call in probe.call_args_list] == ['frxNZDCAD', 'frxEURUSD']
 
 
+def test_scanner_admits_adx_25_and_does_not_filter_by_composite_score(monkeypatch):
+    """ADx 25 é inclusivo e score baixo não exclui ativo elegível."""
+    probe = Mock(return_value=(True, ''))
+    monkeypatch.setattr(pipeline, '_probe_symbol', probe)
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'BELOW': 24.99, 'BOUNDARY': 25.0})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'BELOW': 100, 'BOUNDARY': 100})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        symbol: {'market': 'forex', 'underlying_symbol_type': 'forex',
+                 'is_synthetic': False, 'exchange_is_open': True,
+                 'is_trading_suspended': False}
+        for symbol in ('BELOW', 'BOUNDARY')
+    })
+
+    selected = pipeline._top_live_from({'BELOW': 90.0, 'BOUNDARY': 1.0}, limit=2)
+
+    assert selected == [('BOUNDARY', 1.0)]
+    probe.assert_called_once_with('BOUNDARY')
+
+
+def test_scanner_rejects_stale_adx_and_closed_or_suspended_synthetics(monkeypatch):
+    """ADX não atualizado e sintéticos fechados/suspensos não chegam à sondagem."""
+    probe = Mock(return_value=(True, ''))
+    monkeypatch.setattr(pipeline, '_probe_symbol', probe)
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'STALE': 40, 'CLOSED': 40, 'SUSPENDED': 40})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'STALE': 1})
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        'STALE': {'market': 'forex', 'underlying_symbol_type': 'forex',
+                  'is_synthetic': False, 'exchange_is_open': True, 'is_trading_suspended': False},
+        'CLOSED': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                   'is_synthetic': True, 'exchange_is_open': False, 'is_trading_suspended': False},
+        'SUSPENDED': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                      'is_synthetic': True, 'exchange_is_open': True, 'is_trading_suspended': True},
+    })
+
+    selected = pipeline._top_live_from({'STALE': 100, 'CLOSED': 90, 'SUSPENDED': 80}, limit=3)
+
+    assert selected == []
+    probe.assert_not_called()
+
+
+def test_adx_freshness_tolerates_one_candle_lag(monkeypatch):
+    """ADX da última vela fechada ou com atraso de uma vela é aceito; atraso maior é rejeitado."""
+    timeframe = config.CANDLE_TIMEFRAME_SEC
+    now = 1_800_000_000
+    latest_closed = now // timeframe * timeframe - timeframe
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {
+        'CURRENT': latest_closed,
+        'ONE_CANDLE_LAG': latest_closed - timeframe,
+        'TWO_CANDLES_LAG': latest_closed - 2 * timeframe,
+    })
+
+    assert pipeline._adx_is_fresh('CURRENT', now_epoch=now)
+    assert pipeline._adx_is_fresh('ONE_CANDLE_LAG', now_epoch=now)
+    assert not pipeline._adx_is_fresh('TWO_CANDLES_LAG', now_epoch=now)
+
+
+def test_no_scan_does_not_override_non_synthetic_priority(monkeypatch):
+    """Símbolo sintético configurado não vence ativo não sintético elegível, mesmo com no_scan."""
+    monkeypatch.setattr(config, 'SYMBOL', 'SYNTH')
+    monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
+    monkeypatch.setattr(pipeline, '_catalog_scan_candidates', lambda: ['FOREX', 'SYNTH'])
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        'FOREX': {'market': 'forex', 'underlying_symbol_type': 'forex',
+                  'is_synthetic': False, 'exchange_is_open': True, 'is_trading_suspended': False},
+        'SYNTH': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                  'is_synthetic': True, 'exchange_is_open': True, 'is_trading_suspended': False},
+    })
+    monkeypatch.setattr(pipeline, '_scan_group', lambda symbols: {symbol: 1 for symbol in symbols})
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'FOREX': 25, 'SYNTH': 40})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'FOREX': 100, 'SYNTH': 100})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
+    monkeypatch.setattr(pipeline, '_probe_symbol', lambda _symbol: (True, ''))
+
+    assert pipeline._detect_top_trending_symbols(no_scan=True, limit=1) == ['FOREX']
+
+
+def test_active_symbol_catalog_uses_deriv_category_and_open_fields(monkeypatch):
+    """A classificação usa campos da resposta oficial, não padrões de nome."""
+    monkeypatch.setattr(pipeline, '_websocket_request', lambda _request: {
+        'active_symbols': [
+            {'underlying_symbol': 'X1', 'market': 'synthetic_index', 'submarket': 'random_index',
+             'underlying_symbol_type': 'synthetic_index', 'exchange_is_open': 1,
+             'is_trading_suspended': 0},
+            {'underlying_symbol': 'X2', 'market': 'forex', 'submarket': 'major_pairs',
+             'underlying_symbol_type': 'forex', 'exchange_is_open': 0,
+             'is_trading_suspended': 0},
+        ]
+    })
+
+    catalog = pipeline._fetch_active_symbols()
+
+    assert catalog['X1']['is_synthetic'] is True
+    assert catalog['X1']['exchange_is_open'] is True
+    assert catalog['X2']['is_synthetic'] is False
+    assert catalog['X2']['exchange_is_open'] is False
+
+
 def test_fixed_symbol_searches_fallback_if_unavailable(monkeypatch):
-    """Garante que símbolo fixo indisponível aciona a busca de um símbolo alternativo ao vivo."""
-    monkeypatch.setattr(pipeline, '_probe_symbol', lambda _: (False, 'Invalid symbol.'))
-    monkeypatch.setattr(pipeline, '_first_live_symbol', lambda _: 'R_50')
+    """Símbolo configurado lateral aciona fallback para candidato do catálogo com ADX válido."""
+    monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
+    monkeypatch.setattr(pipeline, '_catalog_scan_candidates', lambda: ['R_100', 'R_50'])
+    monkeypatch.setattr(pipeline, '_scan_group', lambda symbols: {symbol: 1 for symbol in symbols})
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'R_100': 24.99, 'R_50': 25.0})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'R_100': 100, 'R_50': 100})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        'R_100': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                  'is_synthetic': True, 'exchange_is_open': True, 'is_trading_suspended': False},
+        'R_50': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                 'is_synthetic': True, 'exchange_is_open': True, 'is_trading_suspended': False},
+    })
+    monkeypatch.setattr(pipeline, '_probe_symbol', lambda symbol: (True, ''))
     assert pipeline._detect_trending_symbol(no_scan=True) == 'R_50'
 
 
@@ -117,6 +234,23 @@ def test_invalid_symbol_requests_market_change(collector, monkeypatch):
     ws.close.assert_called_once()
     with pytest.raises(pipeline.MarketUnavailable):
         pipeline._wait_for_ticks(200, collector=collector)
+
+
+def test_duplicate_first_live_tick_cancels_watchdog(collector):
+    """Garante que tick vivo duplicado prova feed ativo e não dispara reconexão por falso timeout."""
+    timer = Mock()
+    collector._first_tick_timer = timer
+    collector._last_epoch = 1000
+    collector._first_tick_timed_out = True
+    ws = Mock()
+
+    collector._on_message(ws, json.dumps({
+        'tick': {'symbol': 'R_100', 'epoch': 1000, 'quote': 100.0},
+    }))
+
+    timer.cancel.assert_called_once()
+    assert collector._first_tick_timed_out is False
+    assert collector._local_count == 0
 
 
 def test_disconnect_closes_socket_for_new_session(collector):

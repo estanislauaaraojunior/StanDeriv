@@ -102,6 +102,21 @@ def test_diagnostic_raw_recipe_cannot_win_selection():
     assert tm.choose_candidate([raw, calibrated]) is calibrated
 
 
+def test_calibration_selection_prefers_operational_viability_before_log_loss():
+    """Garante que calibração sem entradas não vence outra viável só por log loss melhor."""
+    no_trade = dict(
+        diagnostic_only=False, name='quiet', trades=0, empty_folds=1,
+        worst_expectancy=0, mean_expectancy=0, max_drawdown_pct=0,
+        mean_log_loss=.2, mean_auc=.7, log_loss_gain_vs_prior=.5,
+    )
+    viable = dict(
+        diagnostic_only=False, name='viable', trades=35, empty_folds=0,
+        worst_expectancy=.01, mean_expectancy=.03, max_drawdown_pct=3,
+        mean_log_loss=.8, mean_auc=.55, log_loss_gain_vs_prior=-.1,
+    )
+    assert tm.choose_candidate([no_trade, viable]) is viable
+
+
 def test_decision_curve_keeps_floors_and_no_trade_precision_is_undefined():
     """Garante que a curva de decisão respeita os pisos de confiança e deixa a precisão indefinida sem operações."""
     before = config.AI_CONFIDENCE_MIN

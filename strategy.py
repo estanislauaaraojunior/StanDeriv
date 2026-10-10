@@ -78,14 +78,15 @@ def get_adaptive_adx_min(adx_history: list) -> float:
     Retorna o ADX mínimo adaptado ao percentil do histórico recente.
 
     Se ADX_ADAPTIVE=False ou histórico vazio, retorna ADX_MIN fixo.
-    Piso de 15 para evitar filtros excessivamente frouxos.
+    O percentil adaptativo pode elevar o filtro, mas nunca reduzi-lo abaixo de
+    ADX_MIN.
     """
     from config import ADX_ADAPTIVE, ADX_ADAPTIVE_PERCENTILE
     if not adx_history or not ADX_ADAPTIVE:
-        return ADX_MIN
+        return float(ADX_MIN)
     sorted_h = sorted(adx_history)
     idx = max(0, int(len(sorted_h) * ADX_ADAPTIVE_PERCENTILE / 100) - 1)
-    return max(sorted_h[idx], 15.0)
+    return float(max(sorted_h[idx], ADX_MIN))
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -177,90 +178,121 @@ def get_signal(
     weighted_signal = None
     weighted_indicators = {}
     if weighted_enabled:
-        if adx_val < adx_min:
-            indicators["adx_below_min"] = True
-            if not _opportunity_mode():
-                weighted_indicators["decision_block"] = "adx_below_min"
-        if adx_is_falling and not _opportunity_mode():
-            weighted_indicators["decision_block"] = "adx_falling"
-        if not weighted_indicators:
-            weighted_signal, weighted_indicators = _weighted_signal(
-                ema9, ema21, macd_hist, mom, adx_val, rsi_val, last_price,
-                dict(indicators), prices, candle_alerts, use_ai_model=False,
-                evaluation_time=evaluation_time, candles=candles,
-                apply_aux_filters=False,
-            )
+        try:
+            if adx_val < adx_min:
+                indicators["adx_below_min"] = True
+                if not _opportunity_mode():
+                    weighted_indicators["decision_block"] = "adx_below_min"
+            if adx_is_falling and not _opportunity_mode():
+                weighted_indicators["decision_block"] = "adx_falling"
+            if not weighted_indicators:
+                weighted_signal, weighted_indicators = _weighted_signal(
+                    ema9, ema21, macd_hist, mom, adx_val, rsi_val, last_price,
+                    dict(indicators), prices, candle_alerts, use_ai_model=False,
+                    evaluation_time=evaluation_time, candles=candles,
+                    apply_aux_filters=False,
+                )
+                if weighted_signal in ("BUY", "SELL"):
+                    majority, component_votes = _weighted_directional_majority(
+                        weighted_signal, ema9, ema21, macd_hist, mom, rsi_val, last_price
+                    )
+                    weighted_indicators["technical_component_votes"] = component_votes
+                    if not majority:
+                        weighted_signal = None
+                        weighted_indicators["decision_block"] = "technical_component_no_majority"
+        except Exception as exc:
+            weighted_signal = None
+            weighted_indicators = {"module_error": type(exc).__name__}
 
     model_signal = None
     model_indicators = {}
     if model_enabled:
-        model_signal, model_indicators = _trained_model_signal(prices, candles=candles)
+        try:
+            model_signal, model_indicators = _trained_model_signal(prices, candles=candles)
+        except Exception as exc:
+            model_indicators = {"module_error": type(exc).__name__}
 
-    primary_count = int(weighted_enabled) + int(model_enabled)
-    if primary_count == 2:
-        if weighted_signal not in ("BUY", "SELL") or model_signal not in ("BUY", "SELL"):
-            indicators.update(weighted_indicators)
-            indicators.update(model_indicators)
-            indicators["decision_block"] = "primary_module_abstention"
-            return None, indicators
-        if weighted_signal != model_signal:
-            indicators.update(weighted_indicators)
-            indicators.update(model_indicators)
-            indicators["decision_block"] = "primary_module_disagreement"
-            return None, indicators
-        indicators.update(weighted_indicators)
-        indicators.update(model_indicators)
-        indicators["decision_modules"] = ["weighted_score", "trained_model"]
-        indicators["decision_source"] = "weighted_score+trained_model"
-        return weighted_signal, indicators
-
-    if primary_count == 1:
-        if weighted_enabled:
-            primary_signal, primary_indicators = weighted_signal, weighted_indicators
-            primary_module = "weighted_score"
-        else:
-            primary_signal, primary_indicators = model_signal, model_indicators
-            primary_module = "trained_model"
-        if primary_signal in ("BUY", "SELL"):
-            indicators.update(primary_indicators)
-            indicators["decision_modules"] = [primary_module]
-            indicators["decision_source"] = primary_module
-            return primary_signal, indicators
+    module_signals = {}
+    module_details = {}
+    if weighted_enabled:
+        module_signals["weighted_score"] = weighted_signal
+        module_details["weighted_score"] = weighted_indicators
+    if model_enabled:
+        module_signals["trained_model"] = model_signal
+        module_details["trained_model"] = model_indicators
 
     decision_candles = list(candles[-FEATURE_WINDOW:]) if candles is not None else ind.ticks_to_candles(prices, CANDLE_SIZE)
-    pa = ind.price_action_features(decision_candles, PA_SR_TOLERANCE)
-    if pa is not None:
-        indicators["pa_sr_position"] = round(pa["pa_sr_position"], 4)
-        indicators["pa_market_structure"] = round(pa["pa_market_structure"], 4)
-
-    fallback_signals = []
+    pa = None
     if PRICE_ACTION_FILTER:
-        pa_signal, pa_score = _price_action_signal(pa)
-        indicators["pa_score"] = round(pa_score, 4)
-        if pa_signal:
-            fallback_signals.append(("price_action", pa_signal))
+        try:
+            pa = ind.price_action_features(decision_candles, PA_SR_TOLERANCE)
+            if pa is not None:
+                indicators["pa_sr_position"] = round(pa["pa_sr_position"], 4)
+                indicators["pa_market_structure"] = round(pa["pa_market_structure"], 4)
+            pa_signal, pa_score = _price_action_signal(pa)
+            module_signals["price_action"] = pa_signal
+            module_details["price_action"] = {"pa_score": round(pa_score, 4)}
+        except Exception as exc:
+            module_signals["price_action"] = None
+            module_details["price_action"] = {"module_error": type(exc).__name__}
+
     if CANDLE_PATTERN_FILTER:
-        pattern_signal, pattern_reason = _candle_pattern_signal(candle_alerts, evaluation_time)
-        if pattern_reason:
-            indicators["candle_pattern_block"] = pattern_reason
-        if pattern_signal:
-            fallback_signals.append(("candle_pattern", pattern_signal))
+        try:
+            pattern_signal, pattern_reason = _candle_pattern_signal(candle_alerts, evaluation_time)
+            module_signals["candle_pattern"] = pattern_signal
+            module_details["candle_pattern"] = {"candle_pattern_block": pattern_reason} if pattern_reason else {}
+        except Exception as exc:
+            module_signals["candle_pattern"] = None
+            module_details["candle_pattern"] = {"module_error": type(exc).__name__}
 
-    if len(fallback_signals) == 2 and fallback_signals[0][1] != fallback_signals[1][1]:
-        indicators["decision_block"] = "fallback_module_disagreement"
+    enabled = indicators["enabled_decision_modules"]
+    votes = {name: module_signals.get(name) for name in enabled}
+    indicators["module_votes"] = votes
+    indicators["module_details"] = module_details
+    if model_enabled and model_indicators.get("model_id"):
+        indicators["active_model_id"] = model_indicators["model_id"]
+    required_votes = len(enabled) // 2 + 1
+    winners = [direction for direction in ("BUY", "SELL")
+               if sum(vote == direction for vote in votes.values()) >= required_votes]
+    if len(winners) != 1:
+        indicators.update(weighted_indicators)
+        indicators.update(model_indicators)
+        indicators["decision_block"] = (
+            "no_decision_modules_enabled" if not enabled else "module_consensus_no_majority"
+        )
         return None, indicators
-    if fallback_signals:
-        signal = fallback_signals[0][1]
-        indicators["decision_modules"] = [name for name, _ in fallback_signals]
-        indicators["decision_source"] = "+".join(indicators["decision_modules"])
-        indicators.setdefault("win_probability", None)
-        return signal, indicators
 
-    indicators.update(weighted_indicators)
-    indicators.update(model_indicators)
-    if primary_count:
-        indicators["decision_block"] = "primary_module_no_signal"
-    return None, indicators
+    signal = winners[0]
+    supporting = [name for name, vote in votes.items() if vote == signal]
+    indicators["decision_modules"] = supporting
+    indicators["decision_source"] = "+".join(supporting)
+    for name in supporting:
+        indicators.update(module_details.get(name, {}))
+    return signal, indicators
+
+
+def _weighted_directional_majority(
+    signal: str,
+    ema_fast: float,
+    ema_slow: float,
+    macd_hist: float,
+    momentum: float,
+    rsi_value: float,
+    price: float,
+) -> tuple[bool, dict]:
+    """Exige que pelo menos três dos cinco componentes técnicos apontem para o sinal."""
+    component_values = {
+        "ema": ema_fast - ema_slow,
+        "macd": macd_hist,
+        "price_vs_ema": price - ema_fast,
+        "momentum": momentum,
+        "rsi": rsi_value - 50.0,
+    }
+    votes = {
+        name: ("BUY" if value > 0 else "SELL" if value < 0 else None)
+        for name, value in component_values.items()
+    }
+    return sum(vote == signal for vote in votes.values()) >= 3, votes
 
 
 def _trained_model_signal(prices: list, *, candles: list = None) -> SignalResult:
@@ -312,7 +344,7 @@ def _candle_pattern_signal(
     candle_alerts: list,
     evaluation_time: Optional[float] = None,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Direção dos padrões de candle recentes e fortes mais novos; (None, 'candle_pattern_conflict') se divergirem."""
+    """Vota pela maioria dos padrões fortes em pelo menos duas velas recentes distintas."""
     now = time.time() if evaluation_time is None else evaluation_time
     valid = [
         alert for alert in (candle_alerts or [])
@@ -322,12 +354,17 @@ def _candle_pattern_signal(
     ]
     if not valid:
         return None, None
-    latest_epoch = max(alert.get("timestamp", 0) for alert in valid)
-    latest = [alert for alert in valid if alert.get("timestamp", 0) == latest_epoch]
-    directions = {alert["direction"] for alert in latest}
-    if len(directions) != 1:
+    by_epoch = {}
+    for alert in valid:
+        by_epoch.setdefault(alert["timestamp"], set()).add(alert["direction"])
+    candle_votes = [next(iter(directions)) for directions in by_epoch.values() if len(directions) == 1]
+    if len(candle_votes) < 2:
+        return None, "candle_pattern_insufficient_history"
+    bullish = candle_votes.count("bullish")
+    bearish = candle_votes.count("bearish")
+    if bullish == bearish:
         return None, "candle_pattern_conflict"
-    direction = "BUY" if directions.pop() == "bullish" else "SELL"
+    direction = "BUY" if bullish > bearish else "SELL"
     return direction, None
 
 

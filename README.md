@@ -233,11 +233,31 @@ Cada padrão inclui `strength` (0-1) e notificação em tempo real no terminal e
 
 ## Modelos e contrato temporal
 
-O treino atual compara RandomForest, variantes balanceadas, ExtraTrees, HistGradientBoosting e XGBoost em três janelas walk-forward com calibração e embargo temporal. A seleção considera amostra, estabilidade do resultado, drawdown, qualidade das probabilidades e AUC, usando somente o período de desenvolvimento. O candidato escolhido é avaliado no teste final reservado. O bundle registra ativo, janela de 100 candles OHLC, features, versões de dependências e vencimento.
+O treino usa uma janela móvel máxima de sete dias: 672 candles OHLC de 15 minutos, com janela de 50 candles por amostra. RandomForest, BalancedLogisticRegression, ExtraTrees, HistGradientBoosting e XGBoost são comparados no mesmo snapshot temporal; o desenvolvimento separa ajuste, calibração e seleção do holdout final com embargo. ROC-AUC é uma métrica, não um modelo. A amostra semanal precisa sustentar pelo menos 30 operações no teste; dados/classes insuficientes reprovam o candidato.
+
+Após aprovação offline, o bundle passa por shadow forward sem compras. A liberação só ocorre após pelo menos 30 resultados direcionais não sobrepostos, acerto mínimo de 55% e payout líquido observado de pelo menos 70%, todos do mesmo `model_id`. Esse fluxo permite compras somente em conta demo; conta real permanece bloqueada.
 
 O target representa alta, queda ou empate entre o primeiro tick após o sinal e o primeiro tick no vencimento. Empate perde tanto CALL quanto PUT. A duração atual é fixa em 15 minutos (`DURATION=15`, `DURATION_UNIT="m"`). As duas próximas observações e sua média não são usadas como target.
 
 Abstenção, divergência, falta de dados e modelo incompatível bloqueiam entradas. A força técnica real participa do score; o score não representa probabilidade de vitória. Antes da compra, a probabilidade calibrada da direção é confrontada com preço e payout da proposta.
+
+## Seleção e histórico de ativos
+
+O scanner consulta `active_symbols` da Deriv para categoria, abertura e
+suspensão; não classifica ativos pelo nome/código. O ADX é calculado sobre
+candles fechados de 15 minutos e precisa corresponder ao último candle fechado,
+com valor >= 25. O score composto existente só ordena os elegíveis; empates são
+resolvidos pelo código do símbolo. Ativos não sintéticos são avaliados primeiro.
+Sintéticos só são consultados quando nenhum não sintético passar, e precisam
+estar abertos, sem suspensão, atender ao ADX e à sondagem CALL/PUT.
+
+`Histórico Ativos/` mantém um CSV OHLC no esquema v2 por símbolo, além de
+metadados temporários de epochs sem candle. A sincronização lê primeiro o disco,
+busca gaps e candles posteriores e grava os resultados ordenados e deduplicados
+atomicamente. A retenção é de até sete dias (672 candles); falha de sincronização
+não remove candles recentes válidos. O executor reutiliza esse histórico no
+buffer compartilhado. O treino continua exigindo ticks identificados; candles
+não são convertidos em ticks.
 
 ## Decisão de abertura de contrato
 
@@ -247,37 +267,38 @@ sozinho: `executor.py` só envia proposta quando a conta está autenticada, o ti
 ou pendente, a duração prevista coincide com `DURATION`/`DURATION_UNIT` e os
 gates de cadência e risco configurados permitem nova tentativa.
 
-`strategy.py` então consolida os módulos de decisão ativos. Com
-`USE_AI_MODEL=True`, o módulo `trained_model` exige um bundle v2 compatível com
-o símbolo, 100 candles OHLC contínuos, features calculáveis, direção `BUY` ou
-`SELL`, `model_id` válido e confiança estritamente maior que
-`AI_CONFIDENCE_MIN`. Sem modelo compatível, com direção ausente, confiança
-inválida ou abstenção, o sinal é bloqueado. A direção `BUY` vira contrato `CALL`;
-`SELL` vira `PUT`.
+`strategy.py` executa independentemente cada módulo habilitado: `weighted_score`,
+`trained_model`, `price_action` e `candle_pattern`. Os defaults atuais mantêm
+score e IA ativos e PA/padrões desativados; cada chave pode ser configurada sem
+desligar os demais. Cada módulo recebe os mesmos candles. Erro, ausência de
+dados, abstenção ou sinal inválido permanece como voto não aprovado no total de
+módulos ativos. Só há sinal quando mais da metade aprova a mesma direção; empate,
+divergência ou nenhum módulo ativo bloqueia.
+
+Com `USE_AI_MODEL=True`, `trained_model` só pode votar com bundle v4 compatível,
+50 candles OHLC contínuos, direção válida, `model_id` e confiança acima de
+`AI_CONFIDENCE_MIN`. O voto e os detalhes de uma IA dissidente não são usados
+como probabilidade da direção majoritária.
 
 Com `USE_WEIGHTED_SIGNAL=True`, o módulo `weighted_score` calcula `tech_score`
 com EMA9 versus EMA21, histograma MACD, preço versus EMA9, momentum, RSI e ADX.
-Score maior ou igual a `SIGNAL_SCORE_MIN` gera `BUY`; score menor ou igual ao
-negativo desse limiar gera `SELL`. Em `ENTRY_MODE="opportunity"`, o limiar usado
-é `OPPORTUNITY_SIGNAL_SCORE_MIN` e ADX fraco reduz a confiança sem zerar o score
-abaixo de `OPPORTUNITY_ADX_WEIGHT_FLOOR`. Quando `weighted_score` e
-`trained_model` estão ativos ao mesmo tempo, ambos precisam emitir sinal e
-concordar na direção; abstenção ou divergência bloqueia a entrada.
+Score maior ou igual a `SIGNAL_SCORE_MIN` propõe `BUY`; score menor ou igual ao
+negativo do limiar propõe `SELL`. A aprovação interna requer que pelo menos três
+dos cinco componentes direcionais existentes concordem. ADX continua sendo
+modulador/filtro interno; o piso ADX adaptativo de estratégia é separado do piso
+25 usado para seleção de ativos.
 
-`PRICE_ACTION_FILTER` e `CANDLE_PATTERN_FILTER` são filtros auxiliares quando
-ligados. Price Action usa estrutura de mercado, consistência da tendência,
-break of structure, suporte/resistência, zonas de oferta/demanda e FVG; pode
-bloquear `BUY` contra resistência sem rompimento ou `SELL` contra suporte sem
-rompimento. Padrões de vela consideram apenas alertas recentes, com força mínima
-`CANDLE_PATTERN_MIN_STRENGTH` e idade máxima `CANDLE_PATTERN_MAX_AGE_SEC`; padrão
-bearish forte contra `BUY`, ou bullish forte contra `SELL`, bloqueia. Quando
-atuam como fallback, sinais divergentes entre Price Action e padrões também
-bloqueiam.
+Price Action usa as features existentes de estrutura, tendência, break of
+structure, zonas e FVG. Padrões usam os detectores existentes e precisam de
+ocorrências fortes em pelo menos duas velas distintas dentro de
+`CANDLE_PATTERN_MAX_AGE_SEC`; uma ocorrência isolada abstém.
 
 Depois do sinal, `executor.py` ainda pede uma proposta à Deriv. A compra só é
 enviada se a proposta tiver preço e payout finitos, `0 < preço < payout`, payout
-líquido mínimo `MIN_NET_PAYOUT` e preço dentro da stake. Quando o sinal veio do
-modelo, `win_probability` precisa ser válida e a função
+líquido mínimo `MIN_NET_PAYOUT` e preço dentro da stake. Com IA ativa, mesmo
+quando seu voto não integra a maioria, continuam valendo os gates de
+compatibilidade, probabilidade calibrada e shadow/demo. Com IA desativada,
+valida-se o payout sem inventar probabilidade para outros módulos. A função
 `profitable_proposal()` exige retorno esperado não negativo:
 `probabilidade * payout_total / preço - 1 >= 0`. Rejeições nessa etapa não abrem
 contrato e limpam a pendência local.
@@ -358,11 +379,17 @@ A origem não é alterada. Registros sem identificação de tick/candle recebem 
 
 ### ADX adaptativo
 
-`ADX_ADAPTIVE=True` utiliza o percentil configurado do histórico de ADX. O histórico é atualizado também durante contratos e pausas. O ADX continua sendo a aproximação por fechamentos implementada em `indicators.py`, não um ADX calculado a partir do range completo de cada vela.
+`ADX_MIN=30` exige tendência forte antes de liberar o score técnico. Com
+`ADX_ADAPTIVE=True`, o percentil configurado do histórico de ADX pode elevar o
+limiar, mas não reduzi-lo abaixo de `ADX_MIN`. O histórico é atualizado também
+durante contratos e pausas. O ADX continua sendo a aproximação por fechamentos
+implementada em `indicators.py`, não um ADX calculado a partir do range completo
+de cada vela.
 
 ### Score técnico e IA
 
-`SIGNAL_SCORE_MIN=0.05` controla a seleção técnica. `AI_CONFIDENCE_MIN` segue
+`SIGNAL_SCORE_MIN=0.06` controla a seleção técnica. `ENTRY_MODE="balanced"`
+mantém o ADX mínimo como gate, em vez de apenas penalizar o score. `AI_CONFIDENCE_MIN` segue
 o piso de aprovação (`MIN_APPROVAL_WIN_RATE=0.45`) e a concordância explícita
 entre IA e sinal técnico continua obrigatória quando a IA é usada. A combinação
 usa `AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45` e `AI_SCORE_MIN=0.30`.
@@ -370,10 +397,10 @@ Desligar a IA permite análise/backtest técnico, mas não fornece a probabilida
 exigida para comprar contratos ao vivo.
 
 ### Candles Baseados em Tempo
-`CANDLE_TIMEFRAME_SEC = 60` define a duração de cada vela em segundos (substituindo o modelo de ticks fixos). Recomendado: 60s (1min) para mais entradas, 300s (5min) para mais seletividade.
+`CANDLE_TIMEFRAME_SEC = 900` define o timeframe operacional atual: candles de 15 minutos. O treino e a inferência usam o mesmo timeframe e vencimento de 15 minutos.
 
 ### Buffer de Preços
-`PRICE_BUFFER_SIZE = 500` limita o buffer bruto. Features de modelos usam a janela canônica de 100 candles definida em `model_contract.py`.
+`PRICE_BUFFER_SIZE = 500` limita o buffer bruto. Features de modelos usam a janela canônica de 50 candles definida em `model_contract.py`.
 
 ### Cadência de Entradas
 `ENTRY_CANDLE_INTERVAL = 1` controla o intervalo mínimo entre entradas em velas fechadas (1 = avalia a cada nova vela).
@@ -409,21 +436,23 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `AI_TECH_WEIGHT` | 0.55 | Peso do sinal técnico no score final |
 | `AI_MODEL_WEIGHT` | 0.45 | Peso do sinal da IA no score final |
 | `AI_SCORE_MIN` | 0.30 | Score mínimo ponderado (IA + técnico) para abrir operação |
-| `SIGNAL_SCORE_MIN` | 0.05 | Limiar mínimo do score técnico ponderado |
-| `ENTRY_MODE` | `opportunity` | Modo de entrada; em `opportunity`, ADX fraco penaliza score em vez de bloquear |
-| `OPPORTUNITY_SIGNAL_SCORE_MIN` | 0.02 | Limiar técnico usado no modo `opportunity` |
+| `SIGNAL_SCORE_MIN` | 0.06 | Limiar mínimo do score técnico ponderado em modo balanceado |
+| `ENTRY_MODE` | `balanced` | Modo de entrada; preserva ADX mínimo como gate antes do score ponderado |
+| `OPPORTUNITY_SIGNAL_SCORE_MIN` | 0.05 | Limiar técnico usado se o modo `opportunity` for reativado |
 | `OPPORTUNITY_ADX_WEIGHT_FLOOR` | 0.35 | Piso do peso de ADX no modo `opportunity`, evitando zerar o score por ADX baixo |
 | `PRICE_ACTION_FILTER` | `False` | Controla se Price Action pode bloquear sinais operacionais; as features continuam calculadas para telemetria e treino |
 | `CANDLE_PATTERN_FILTER` | `False` | Controla se padrões de vela conflitantes podem bloquear sinais; desligado, viram apenas telemetria/alerta |
 | `ENFORCE_ENTRY_CADENCE` | `False` | Controla se o executor deve aguardar fechamento/intervalo de vela antes de reavaliar entrada |
 | `ENFORCE_RISK_GATE` | `False` | Controla se `RiskManager.can_trade()` bloqueia envio/compra; desligado, risco ainda calcula stake e registra resultado |
-| `UNFAVORABLE_SYMBOL_SWITCH_DECISIONS` | 5 | Quantidade de avaliações desfavoráveis antes de trocar ativo; `0` desativa a troca automática |
-| `CANDLE_TIMEFRAME_SEC` | 60 | Duração de cada vela de tempo em segundos |
+| `UNFAVORABLE_SYMBOL_SWITCH_DECISIONS` | 12 | Quantidade de avaliações desfavoráveis antes de trocar ativo; `0` desativa a troca automática |
+| `CANDLE_TIMEFRAME_SEC` | 900 | Duração de cada vela de tempo em segundos |
+| `MIN_CANDLES` | 150 | Aquecimento mínimo do executor para contratos de 15 minutos |
 | `PRICE_BUFFER_SIZE` | 500 | Ticks mantidos em memória para indicadores |
 | `ENTRY_CANDLE_INTERVAL` | 1 | Intervalo mínimo entre entradas (em velas) |
 | `DURATION` | 15 | Vencimento fixo do contrato, em minutos |
+| `ADX_MIN` | 30 | Tendência mínima exigida para sinal técnico em modo balanceado |
 | `ADX_ADAPTIVE_PERCENTILE` | 50 | Percentil do histórico de ADX usado como piso adaptativo |
-| `TARGET_LOOKFORWARD` | 15 | Compatibilidade com o vencimento; o target é calculado por timestamps |
+| `TARGET_LOOKFORWARD` | 1 | Candles de 15 minutos até o vencimento; o target é calculado por timestamps |
 
 ## Histórico de Mudanças anteriores ao contrato v2
 
@@ -438,7 +467,7 @@ Os itens abaixo registram versões passadas; o comportamento atual está descrit
 - Heartbeat watchdog contra desconexão silenciosa
 - Dashboard com autenticação por token (`DASHBOARD_TOKEN`)
 - Score ponderado IA vs técnico (`AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45`, `AI_SCORE_MIN=0.30`)
-- Sinal ponderado por indicador (`USE_WEIGHTED_SIGNAL`, `SIGNAL_SCORE_MIN=0.05`)
+- Sinal ponderado por indicador (`USE_WEIGHTED_SIGNAL`, `SIGNAL_SCORE_MIN=0.06`)
 - Target lookforward configurável (`TARGET_LOOKFORWARD=2`)
 - Velas baseadas em tempo com `CANDLE_TIMEFRAME_SEC` (substitui modelo de ticks fixos)
 - Buffer de preços configurável (`PRICE_BUFFER_SIZE=500`)

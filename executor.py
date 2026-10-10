@@ -55,7 +55,7 @@ import math
 import hashlib
 import secrets
 from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, duration_seconds,
-                            profitable_proposal, valid_payout_proposal,
+                            net_payout_ratio, profitable_proposal, valid_payout_proposal,
                             write_json_atomic, acquire_execution_lock)
 from market_data import read_records, canonicalize
 import indicators as ind
@@ -63,6 +63,7 @@ import indicators as ind
 
 _STATE_JSON = Path(__file__).resolve().parent / "state.json"
 _BOT_STATUS_JSON = Path(__file__).resolve().parent / "bot_status.json"
+_SHADOW_STATE_JSON = Path(__file__).resolve().parent / "shadow_state.json"
 
 
 class DerivBot:
@@ -177,6 +178,11 @@ class DerivBot:
         self._proposal_api_error_streak = 0
         self._auth_verified = False
         self._state_lock = threading.RLock()
+        self._shadow_monitor = None
+        self._shadow_model_id = ''
+        self._shadow_symbol = ''
+        self._shadow_quote_history = None
+        self._shadow_quote_mtime = None
         self._restore_active_contract()
 
 
@@ -271,6 +277,30 @@ class DerivBot:
             write_json_atomic(_BOT_STATUS_JSON, status)
         except Exception:
             pass
+
+    def _publish_shadow_status(self, *, model_id: str = "", reason: str = "", **updates) -> None:
+        """Publica diagnóstico shadow sem interferir na decisão técnica."""
+        status = {
+            "model_id": str(model_id or self._shadow_model_id or ""),
+            "symbol": self.symbol,
+            "approved": bool(getattr(self._shadow_monitor, "approved", False)),
+            "reason": reason,
+        }
+        monitor = self._shadow_monitor
+        if monitor is not None:
+            status["result_count"] = int(getattr(monitor, "result_count", 0) or 0)
+            status["minimum_results"] = int(getattr(monitor, "minimum_results", config.SHADOW_MIN_RESULTS) or 0)
+            status["accuracy"] = float(getattr(monitor, "accuracy", 0.0) or 0.0)
+            status["minimum_accuracy"] = float(getattr(monitor, "minimum_accuracy", config.SHADOW_MIN_ACCURACY) or 0.0)
+            status["minimum_net_payout"] = float(getattr(monitor, "minimum_net_payout", config.SHADOW_MIN_NET_PAYOUT) or 0.0)
+            status["pending"] = bool(getattr(monitor, "state", {}).get("pending")) if hasattr(monitor, "state") else False
+        status.update(updates)
+        self._write_runtime_status(
+            tick_epoch=self._last_tick_epoch,
+            force=True,
+            event="shadow_status",
+            shadow=status,
+        )
 
     def _decision_counts(self) -> dict:
         """Contagem de decisões recentes por motivo."""
@@ -493,6 +523,28 @@ class DerivBot:
         )
         return True
 
+    @staticmethod
+    def _payout_capped_stake(stake: float) -> float:
+        """Limita a stake inicial para evitar propostas acima do payout máximo aceito pela API."""
+        maximum = float(getattr(config, "DERIV_MAX_PAYOUT", 0) or 0)
+        safety = float(getattr(config, "DERIV_PAYOUT_CAP_SAFETY", 1) or 1)
+        multiplier = float(getattr(config, "DERIV_PAYOUT_CAP_ESTIMATED_MULTIPLIER", 0) or 0)
+        if (
+            not math.isfinite(stake)
+            or not math.isfinite(maximum)
+            or not math.isfinite(safety)
+            or not math.isfinite(multiplier)
+            or stake <= 0
+            or maximum <= 0
+            or safety <= 0
+            or multiplier <= 0
+        ):
+            return stake
+        capped = math.floor(maximum / multiplier * safety * 100) / 100
+        if capped <= 0:
+            return stake
+        return min(stake, capped)
+
     def _handle_api_error(self, data: dict) -> None:
         """Trata erro da API conforme a fase: proposta rejeitada, compra incerta (reconciliação) ou não correlacionado."""
         error = data.get("error") or {}
@@ -653,20 +705,37 @@ class DerivBot:
                 self._adx_history.append(value)
 
     def _preload_candles_from_csv(self):
-        """Pré-carrega velas fechadas do símbolo a partir do CSV de ticks, se o histórico for válido."""
-        if not Path(TICKS_CSV).exists():
-            return
-        records, rejected=read_records(TICKS_CSV)
-        records,conflicts,_=canonicalize(records)
-        if rejected or conflicts:
-            print('[BOT] Histórico local inválido; aguardando OHLC autenticado')
-            return
+        """Pré-carrega candles do CSV comum e do histórico semanal por ativo."""
         cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
         candles=[]
-        for row in records:
-            if row['symbol']==self.symbol and row['kind']=='candle' and row['timeframe']==CANDLE_TIMEFRAME_SEC and row['epoch']<cutoff:
-                candles.append(dict(epoch=row['epoch'],open=row['open'],high=row['high'],low=row['low'],close=row['price']))
-        self._merge_candles(candles)
+        if Path(TICKS_CSV).exists():
+            records, rejected=read_records(TICKS_CSV)
+            records,conflicts,_=canonicalize(records)
+            if rejected or conflicts:
+                print('[BOT] Histórico local inválido; CSV v2 ignorado no preload')
+            else:
+                for row in records:
+                    if row['symbol']==self.symbol and row['kind']=='candle' and row['timeframe']==CANDLE_TIMEFRAME_SEC and row['epoch']<cutoff:
+                        candles.append(dict(epoch=row['epoch'],open=row['open'],high=row['high'],low=row['low'],close=row['price']))
+        try:
+            from asset_history import AssetHistoryStore
+            store = AssetHistoryStore(
+                Path(__file__).resolve().parent / 'Histórico Ativos',
+                CANDLE_TIMEFRAME_SEC,
+            )
+            candles.extend(
+                dict(epoch=row['epoch'],open=row['open'],high=row['high'],low=row['low'],close=row['price'])
+                for row in store.read(self.symbol) if row['epoch']<cutoff
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            print(f'[BOT] Histórico semanal indisponível no preload ({type(exc).__name__})')
+        if not candles:
+            return
+        try:
+            self._merge_candles(candles)
+        except ValueError:
+            print('[BOT] Histórico local contém candle inválido; ignorando preload e aguardando OHLC autenticado')
+            return
         self._warm_adx()
 
     def _on_open(self, ws) -> None:
@@ -960,6 +1029,20 @@ class DerivBot:
 
         epoch = self._last_tick_epoch
 
+        shadow_model_id = ai_predictor.model_id()
+        if shadow_model_id:
+            monitor = self._get_shadow_monitor(shadow_model_id)
+            shadow_result = monitor.settle_tick(epoch=epoch, price=price)
+            if shadow_result == 'approved':
+                print(f'[SHADOW] Bundle {shadow_model_id[:8]} aprovado; compras liberadas somente em demo.')
+                self._publish_shadow_status(model_id=shadow_model_id, reason='approved')
+            elif shadow_result == 'rejected':
+                print(f'[SHADOW] Bundle {shadow_model_id[:8]} reprovado; solicitando busca de outro mercado.')
+                self._publish_shadow_status(model_id=shadow_model_id, reason='rejected')
+                callback = getattr(self, 'on_shadow_rejected', None)
+                if callback:
+                    callback(self.symbol)
+
         # P9: reiniciar watchdog a cada tick.
         self._reset_watchdog()
         self._write_runtime_status(tick_epoch=epoch, event="tick")
@@ -1036,7 +1119,24 @@ class DerivBot:
                 self._check_candle_patterns(price)
 
         n_candles=len(self._candle_closes)
+        if config.USE_AI_MODEL and self._new_candle_closed:
+            self._capture_shadow_prediction(price, epoch)
         if n_candles<MIN_CANDLES:
+            warmup_remaining = max(0, MIN_CANDLES - n_candles)
+            if self._new_candle_closed:
+                self._record_decision(
+                    reason="warmup",
+                    tick_epoch=self._last_tick_epoch,
+                    force=False,
+                )
+            self._write_runtime_status(
+                tick_epoch=epoch,
+                event="warmup",
+                candle_count=n_candles,
+                min_candles=MIN_CANDLES,
+                warmup_remaining_candles=warmup_remaining,
+                model_feature_window=FEATURE_WINDOW,
+            )
             return
         self._evaluation_adx_history=list(self._adx_history)
         if self._new_candle_closed:
@@ -1133,6 +1233,15 @@ class DerivBot:
             evaluation_time=self._last_tick_epoch,
         )
 
+        if signal in ('BUY', 'SELL') and self._uses_model_decision(indicators):
+            model_id = str(indicators.get('model_id') or '')
+            if not self.demo:
+                signal = None
+                indicators['decision_block'] = 'shadow_demo_only'
+            elif not self._shadow_gate_ready(model_id):
+                signal = None
+                indicators['decision_block'] = 'shadow_validation_pending'
+
         self._print_status(
             price,
             indicators,
@@ -1155,6 +1264,84 @@ class DerivBot:
             if sent:
                 self._candles_since_last_entry = 0
 
+    @staticmethod
+    def _uses_model_decision(indicators):
+        enabled = indicators.get('enabled_decision_modules')
+        if enabled is not None:
+            return 'trained_model' in enabled
+        return ('trained_model' in indicators.get('decision_modules', [])
+                or bool(indicators.get('model_id')))
+
+    def _get_shadow_monitor(self, model_id):
+        if not model_id:
+            return None
+        if (self._shadow_monitor is not None and self._shadow_model_id == model_id
+                and self._shadow_symbol == self.symbol):
+            return self._shadow_monitor
+        from shadow_monitor import ShadowMonitor
+        self._shadow_monitor = ShadowMonitor(
+            _SHADOW_STATE_JSON,
+            symbol=self.symbol,
+            model_id=model_id,
+            timeframe_sec=CANDLE_TIMEFRAME_SEC,
+            duration_sec=duration_seconds(DURATION, DURATION_UNIT),
+        )
+        self._shadow_model_id = model_id
+        self._shadow_symbol = self.symbol
+        return self._shadow_monitor
+
+    def _shadow_payout(self, direction, epoch):
+        path = Path(TICKS_CSV).with_name('payout_quotes.csv')
+        try:
+            mtime = path.stat().st_mtime_ns
+            if self._shadow_quote_history is None or mtime != self._shadow_quote_mtime:
+                from payout_quotes import QuoteHistory
+                self._shadow_quote_history = QuoteHistory(path, currency=CURRENCY)
+                self._shadow_quote_mtime = mtime
+            return self._shadow_quote_history.lookup(
+                self.symbol, DURATION, DURATION_UNIT, direction, epoch
+            )
+        except (OSError, KeyError, TypeError, ValueError):
+            return None
+
+    def _capture_shadow_prediction(self, entry_price, entry_epoch):
+        try:
+            status = ai_predictor.status()
+            if not status.get('ready'):
+                return
+            prices, candles = list(self._candle_closes), list(self._candles)
+            direction, confidence = ai_predictor.predict(prices, candles=candles)
+            model_id = ai_predictor.prediction_model_id()
+            if direction not in ('BUY', 'SELL') or not model_id:
+                return
+            selected = 1 if direction == 'BUY' else 0
+            net_payout = self._shadow_payout(selected, entry_epoch)
+            if net_payout is None:
+                self._publish_shadow_status(
+                    model_id=model_id,
+                    reason='missing_observed_payout',
+                    missing_observed_payout=True,
+                )
+                return
+            monitor = self._get_shadow_monitor(model_id)
+            result = monitor.observe_prediction(
+                entry_epoch=entry_epoch,
+                entry_price=entry_price,
+                direction=selected,
+                confidence=confidence,
+                net_payout=net_payout,
+            )
+            self._publish_shadow_status(model_id=model_id, reason=result)
+        except (OSError, TypeError, ValueError):
+            self._publish_shadow_status(reason='capture_error')
+            return
+
+    def _shadow_gate_ready(self, model_id):
+        if not self.demo or not model_id:
+            return False
+        monitor = self._get_shadow_monitor(model_id)
+        return bool(monitor and monitor.approved)
+
     def _send_proposal(self,ws,direction,indicators):
         """Aplica pré-checagens, persiste a intenção e envia a proposta CALL/PUT; retorna se foi enviada."""
         if self._market_switch_pending() or self._in_trade or not self._auth_verified or not self._risk_allows_trade():
@@ -1166,16 +1353,25 @@ class DerivBot:
         if time.time()-self._last_tick_epoch>MAX_TICK_GAP_SEC:
             self._record_decision(reason="stale_tick", signal=direction, indicators=indicators)
             return False
-        duration=ai_predictor.predict_duration(list(self._candle_closes))
+        model_selected = self._uses_model_decision(indicators)
+        duration=(
+            ai_predictor.predict_duration(list(self._candle_closes))
+            if model_selected
+            else config.DURATION
+        )
         if duration!=config.DURATION or DURATION_UNIT!=config.DURATION_UNIT:
             self._record_decision(reason="duration_mismatch", signal=direction, indicators=indicators)
             return False
-        model_selected = (
-            'trained_model' in indicators.get('decision_modules', [])
-            or ('decision_modules' not in indicators and bool(indicators.get('model_id')))
-        )
         if model_selected and not indicators.get('model_id'):
-            self._record_decision(reason="missing_model_id", signal=direction, indicators=indicators)
+            active_model_id = indicators.get('active_model_id')
+            if not active_model_id:
+                self._record_decision(reason="missing_model_id", signal=direction, indicators=indicators)
+                return False
+        else:
+            active_model_id = indicators.get('model_id')
+        if model_selected and not self._shadow_gate_ready(str(active_model_id)):
+            reason = 'shadow_demo_only' if not self.demo else 'shadow_validation_pending'
+            self._record_decision(reason=reason, signal=direction, indicators=indicators)
             return False
         probability=indicators.get('win_probability')
         if model_selected and (
@@ -1188,7 +1384,7 @@ class DerivBot:
         self._pending_payout=self._pending_buy_price=None
         self._proposal_retry_count=0
         self._pending_direction=direction
-        self._pending_stake=self.risk_manager.get_stake()
+        self._pending_stake=self._payout_capped_stake(self.risk_manager.get_stake())
         self._pending_duration=duration
         self._pending_indicators=dict(indicators)
         self._pending_timestamp=time.time()
@@ -1215,18 +1411,39 @@ class DerivBot:
             return
         probability=self._pending_indicators.get('win_probability')
         price,payout=proposal.get('ask_price'),proposal.get('payout')
-        model_selected = (
-            'trained_model' in self._pending_indicators.get('decision_modules', [])
-            or ('decision_modules' not in self._pending_indicators
-                and bool(self._pending_indicators.get('model_id')))
-        )
+        model_selected = self._uses_model_decision(self._pending_indicators)
         proposal_valid = (
             profitable_proposal(price, payout, probability)
             if model_selected
             else valid_payout_proposal(price, payout)
         )
-        if (not proposal_valid or float(price)>self._pending_stake
-                or not proposal.get('id') or not self._risk_allows_trade()):
+        if not proposal_valid:
+            self._clear_pending()
+            return
+        if model_selected:
+            model_id = str(
+                self._pending_indicators.get('model_id')
+                or self._pending_indicators.get('active_model_id')
+                or ''
+            )
+            if not self._shadow_gate_ready(model_id):
+                self._record_decision(
+                    reason='shadow_demo_only' if not self.demo else 'shadow_validation_pending',
+                    signal=self._pending_direction or None,
+                    indicators=self._pending_indicators,
+                )
+                self._clear_pending()
+                return
+            if net_payout_ratio(price, payout) < config.SHADOW_MIN_NET_PAYOUT:
+                self._record_decision(
+                    reason='shadow_payout_below_floor',
+                    signal=self._pending_direction or None,
+                    indicators=self._pending_indicators,
+                )
+                self._clear_pending()
+                return
+        if (float(price)>self._pending_stake or not proposal.get('id')
+                or not self._risk_allows_trade()):
             self._clear_pending()
             return
         self._pending_buy_price=float(price)

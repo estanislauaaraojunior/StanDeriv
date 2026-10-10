@@ -79,6 +79,8 @@ from config import (
     MODEL_PROMOTION_MAX_F1_DROP,
     DEMO_MODE,
     CANDLE_TIMEFRAME_SEC,
+    TRAINING_HISTORY_DAYS,
+    ASSET_HISTORY_CANDLES,
     TICK_SPIKE_THRESHOLD,
     RETRAIN_EVAL_WINDOW,
     RETRAIN_WIN_RATE_TRIGGER,
@@ -91,15 +93,17 @@ from config import (
     MARKET_SWITCH_COOLDOWN_SEC,
     MARKET_SWITCH_MAX_PER_WINDOW,
     MARKET_SWITCH_WINDOW_SEC,
+    MIN_CANDLES,
 )
 
 from executor import DerivBot
 from risk_manager import RiskManager
-from market_data import ensure_header, append_record, read_records
+from market_data import ensure_header, append_record, append_records, read_records
+from asset_history import AssetHistoryStore
 from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, usable,
                             load_validated_bundle, write_json_atomic,
                             acquire_execution_lock, minimum_history_candles,
-                            minimum_training_rows)
+                            minimum_training_rows, fingerprint, duration_seconds)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -111,6 +115,13 @@ _DEFAULT_MIN_TICKS = 100
 _MIN_LABELABLE_CONTRACTS = minimum_training_rows()
 _TICK_LOG_INTERVAL = 200
 _HISTORY_LOG_INTERVAL = 10_000
+_TICK_BACKFILL_WORKERS = 4
+_TICK_PAGE_SIZE = 5000
+_TICK_MIN_CHUNK_SEC = 600
+_TICK_RATE_LIMIT_RETRIES = 8
+_TICK_BACKFILL_PASSES = 3
+_TICK_PASS_PAUSE_SEC = 15
+_COLLECTOR_TICK_BACKFILL_ENABLED = False
 
 _WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
 
@@ -119,6 +130,7 @@ _PAT_ACCOUNT_ID: Optional[str] = None
 _PAT_ACCOUNT: dict = {}
 _PAT_WS_URL: Optional[str] = None
 _BOT_STATUS_JSON = Path(__file__).resolve().parent / "bot_status.json"
+_SHADOW_STATE_JSON = Path(__file__).resolve().parent / "shadow_state.json"
 _market_failure_until: dict[str, float] = {}
 _market_switch_times: list[float] = []
 
@@ -212,6 +224,7 @@ def _set_runtime_symbol(symbol):
 # Evento global: sinaliza encerramento a todas as threads
 _shutdown = threading.Event()
 _market_switch = threading.Event()
+_market_switch_reason = ''
 
 
 class MarketUnavailable(Exception):
@@ -221,14 +234,17 @@ class MarketUnavailable(Exception):
 
 def _request_market_switch(symbol):
     """Pede troca de mercado se `symbol` for o ativo atual (contrato indisponível)."""
+    global _market_switch_reason
     if symbol == _runtime_symbol():
         if not _market_switch.is_set():
             print(f'\n[MERCADO] {symbol}: contrato indisponível; buscando outro ativo após concluir pendências.')
+            _market_switch_reason = 'market_unavailable'
         _market_switch.set()
 
 
 def _request_market_switch_for_unfavorable(symbol, reason, streak, indicators=None):
     """Pede troca de mercado após sequência de avaliações desfavoráveis do ativo atual."""
+    global _market_switch_reason
     if symbol == _runtime_symbol():
         if not _market_switch.is_set():
             adx = ""
@@ -238,6 +254,17 @@ def _request_market_switch_for_unfavorable(symbol, reason, streak, indicators=No
                 f"\n[MERCADO] {symbol}: {streak} avaliações sem condição favorável "
                 f"({reason}{adx}); buscando outro ativo após concluir pendências."
             )
+            _market_switch_reason = 'unfavorable'
+        _market_switch.set()
+
+
+def _request_shadow_validation_switch(symbol):
+    """Pede novo mercado após o bundle falhar sua amostra forward shadow."""
+    global _market_switch_reason
+    if symbol == _runtime_symbol():
+        if not _market_switch.is_set():
+            print(f'\n[SHADOW] {symbol}: bundle reprovado; procurando outro mercado forte.')
+            _market_switch_reason = 'shadow_validation_failed'
         _market_switch.set()
 
 
@@ -284,6 +311,14 @@ def _write_pipeline_status(**updates):
 
 def _pipeline_heartbeat(stage: str, **updates):
     """Publica no status o estágio atual, o horário e o símbolo."""
+    try:
+        candle_count = _count_candles()
+    except Exception:
+        candle_count = 0
+    updates.setdefault("candle_count", candle_count)
+    updates.setdefault("min_candles", MIN_CANDLES)
+    updates.setdefault("model_feature_window", FEATURE_WINDOW)
+    updates.setdefault("warmup_remaining_candles", max(0, MIN_CANDLES - candle_count))
     _write_pipeline_status(
         status=stage,
         running=True,
@@ -309,6 +344,18 @@ def _market_available_for_switch(symbol: str) -> bool:
     """Indica se a quarentena do símbolo já terminou."""
     until = float(_market_failure_until.get(str(symbol), 0.0) or 0.0)
     return until <= time.time()
+
+
+def _select_strong_market(candidates, *, exclude_symbols=()):
+    """Seleciona o primeiro mercado disponível com ADX e score acima dos pisos."""
+    excluded = set(exclude_symbols)
+    available = [symbol for symbol in candidates
+                 if symbol not in excluded and _market_available_for_switch(symbol)]
+    if not available:
+        return ''
+    scores = _scan_group(available)
+    selected = _top_live_from(scores, limit=1, exclude_symbols=excluded)
+    return selected[0][0] if selected else ''
 
 
 def _switch_budget_exhausted() -> bool:
@@ -356,19 +403,19 @@ def _minimum_history_candles():
 
 
 def _effective_history_count(requested):
-    """Quantidade de candles a baixar: 0 se inválida/não positiva, senão ao menos o mínimo necessário."""
+    """Limita a carga histórica à semana configurada; 0 mantém o modo sem coleta."""
     try:
         requested = int(requested)
     except (TypeError, ValueError):
         requested = 0
     if requested <= 0:
         return 0
-    return max(requested, _minimum_history_candles())
+    return min(max(requested, _minimum_history_candles()), _minimum_history_candles())
 
 
 def _history_fetch_count_for_start(requested):
-    """Na inicialização, sempre atualiza os candles mais recentes do símbolo ativo."""
-    return _effective_history_count(requested)
+    """A inicialização atualiza a base incremental, sem carga fixa de candles."""
+    return 0
 
 
 def _ensure_ticks_header():
@@ -376,17 +423,22 @@ def _ensure_ticks_header():
     ensure_header(TICKS_CSV)
 
 
-def _prepare_training_start(*, reuse=False, skip_collect=False, pending=None):
-    """Archive previous learning artifacts while the caller owns executor.lock."""
+def _prepare_training_start(*, reuse=False, skip_collect=False, pending=None, fresh_collect=False):
+    """Archive previous learning artifacts while the caller owns executor.lock.
+
+    Por padrão os ticks de TICKS_CSV são preservados: o backfill baixa apenas os trechos ausentes.
+    """
     if pending or reuse or skip_collect:
         print('[PIPELINE] Dados preservados: reconciliacao pendente ou reutilizacao solicitada.')
         return None
     import tempfile
     import config
 
-    bases = [TICKS_CSV, DATASET_CSV, AI_MODEL_PATH, config.LEGACY_TICKS_CSV,
+    bases = [DATASET_CSV, AI_MODEL_PATH, config.LEGACY_TICKS_CSV,
              'dataset.csv', config.TRANSFORMER_MODEL_PATH, config.DURATION_MODEL_PATH,
              'model_metrics.json']
+    if fresh_collect:
+        bases.insert(0, TICKS_CSV)
     paths = set()
     for base in bases:
         for suffix in ('', '.metadata.json', '.new', '.new.metadata.json',
@@ -450,163 +502,177 @@ def _get_ws_url() -> str:
 # PRÉ-FASE — Scan de tendência
 # ─────────────────────────────────────────────────────────────────
 
-_SCAN_SYMBOLS_FOREX = [
-    "frxEURUSD",
-    "frxGBPUSD",
-    "frxUSDJPY",
-    "frxAUDUSD",
-    "frxUSDCAD",
-    "frxUSDCHF",
-    "frxNZDUSD",
-    "frxEURGBP",
-    "frxEURJPY",
-    "frxEURCHF",
-    "frxEURCAD",
-    "frxEURNZD",
-    "frxEURAUD",
-    "frxGBPJPY",
-    "frxGBPCHF",
-    "frxGBPCAD",
-    "frxGBPAUD",
-    "frxGBPNZD",
-    "frxAUDJPY",
-    "frxAUDCAD",
-    "frxAUDNZD",
-    "frxAUDCHF",
-    "frxCADJPY",
-    "frxCADCHF",
-    "frxCHFJPY",
-    "frxNZDJPY",
-    "frxNZDCAD",
-]
-
-_SCAN_SYMBOLS_PRIMARY = [
-    "R_10",
-    "R_25",
-    "R_50",
-    "R_75",
-    "R_100",
-    "1HZ10V",
-    "1HZ25V",
-    "1HZ50V",
-    "1HZ75V",
-    "1HZ100V",
-]
-
-_SCAN_SYMBOLS_SECONDARY = [
-    "BOOM500",
-    "BOOM1000",
-    "CRASH500",
-    "CRASH1000",
-    "BOOM300N",
-    "CRASH300N",
-    "JD10",
-    "JD25",
-    "JD50",
-    "JD75",
-    "JD100",
-    "stpRNG",
-]
-
 _SCAN_TICKS = 200
 _SCAN_TIMEOUT = 15
-_ADX_TREND_MIN = 15.0
+_SCAN_WORKERS = 8
+_ADX_TREND_MIN = 25.0
 _TOP_TRENDING_SYMBOLS = 5
+_NO_MODEL_RETRY_SEC = 6 * 60 * 60
+_MARKET_RESCAN_SEC = 60
+_scan_adx_values: dict[str, Optional[float]] = {}
+_scan_adx_epochs: dict[str, Optional[int]] = {}
+_active_symbols_catalog: dict[str, dict] = {}
+_asset_history_store: Optional[AssetHistoryStore] = None
 
 
-def _fetch_prices_for_symbol(
-    symbol: str,
-    count: int,
-) -> list:
-    """
-    Busca `count` ticks históricos de `symbol`.
-
-    Retorna lista de preços em ordem cronológica.
-    """
-    received: list = []
-    done = threading.Event()
-
-    def _send_history_request(ws) -> None:
-        """Solicita as últimas `count` velas do símbolo."""
-        ws.send(
-            json.dumps(
-                {
-                    "ticks_history": symbol,
-                    "end": "latest",
-                    "count": count,
-                    "style": "candles",
-                    "granularity": CANDLE_TIMEFRAME_SEC,
-                    "adjust_start_time": 1,
-                }
-            )
+def _history_store() -> AssetHistoryStore:
+    """Retorna o armazenamento operacional de candles, independente por ativo."""
+    global _asset_history_store
+    if _asset_history_store is None or _asset_history_store.timeframe_sec != CANDLE_TIMEFRAME_SEC:
+        _asset_history_store = AssetHistoryStore(
+            Path(__file__).resolve().parent / "Histórico Ativos",
+            CANDLE_TIMEFRAME_SEC,
+            max_days=TRAINING_HISTORY_DAYS,
+            max_candles=ASSET_HISTORY_CANDLES,
+            page_limit=1000,
         )
+    return _asset_history_store
 
-    def _on_open(ws) -> None:
-        """Pede o histórico (Bearer) ou envia `authorize` (modo legado)."""
+
+def _websocket_request(request: dict, *, timeout: int = _SCAN_TIMEOUT) -> dict:
+    """Executa uma solicitação de leitura autenticada; não envia mensagens de compra."""
+    done = threading.Event()
+    response: dict = {}
+    errors: list[str] = []
+
+    def send_request(ws):
+        ws.send(json.dumps(request))
+
+    def on_open(ws):
         if _uses_bearer_auth():
-            _send_history_request(ws)
+            send_request(ws)
         else:
-            ws.send(
-                json.dumps(
-                    {
-                        "authorize": TOKEN
-                    }
-                )
-            )
+            ws.send(json.dumps({"authorize": TOKEN}))
 
-    def _on_message(ws, message) -> None:
-        """Coleta fechamentos de velas já encerradas e fecha a conexão."""
+    def on_message(ws, raw):
         try:
-            data = json.loads(message)
+            data = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
+            errors.append("resposta JSON inválida")
             ws.close()
             return
-
         if "error" in data:
+            errors.append(str(data["error"].get("message") or "erro da API"))
             ws.close()
-            return
-
-        if data.get("msg_type") == "authorize":
-            _send_history_request(ws)
-            return
-
-        if data.get("msg_type") == "candles":
-            try:
-                cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
-                received.extend(float(c['close']) for c in data.get('candles', [])
-                                if int(c['epoch'])+CANDLE_TIMEFRAME_SEC<=cutoff)
-            except (TypeError, ValueError):
-                pass
-
+        elif data.get("msg_type") == "authorize":
+            send_request(ws)
+        elif request.get("active_symbols") and data.get("msg_type") == "active_symbols":
+            response.update(data)
             ws.close()
-
-    def _on_error(ws, err) -> None:
-        """Fecha a conexão em caso de erro."""
-        ws.close()
-
-    def _on_close(ws, *_args) -> None:
-        """Sinaliza o término da coleta."""
-        done.set()
+        elif data.get("msg_type") == "candles":
+            response.update(data)
+            ws.close()
 
     ws = websocket.WebSocketApp(
-        _get_ws_url(),
-        on_open=_on_open,
-        on_message=_on_message,
-        on_error=_on_error,
-        on_close=_on_close,
+        _get_ws_url(), on_open=on_open, on_message=on_message,
+        on_error=lambda socket, _error: (errors.append("falha de WebSocket"), socket.close()),
+        on_close=lambda *_args: done.set(),
+    )
+    worker = threading.Thread(target=ws.run_forever, daemon=True)
+    worker.start()
+    if not done.wait(timeout):
+        ws.close()
+        worker.join(timeout=1)
+        raise TimeoutError("tempo limite ao consultar histórico de mercado")
+    if errors:
+        raise RuntimeError(errors[0])
+    if not response:
+        raise RuntimeError("resposta de mercado ausente")
+    return response
+
+
+def _fetch_candles_for_symbol(symbol: str, start_epoch: int, end_epoch: int) -> list[dict]:
+    """Busca uma página fechada de candles para um range específico."""
+    count = max(1, (end_epoch - start_epoch) // CANDLE_TIMEFRAME_SEC + 1)
+    response = _websocket_request({
+        "ticks_history": symbol,
+        "start": start_epoch,
+        "end": end_epoch,
+        "count": min(count, 1000),
+        "style": "candles",
+        "granularity": CANDLE_TIMEFRAME_SEC,
+        "adjust_start_time": 1,
+    })
+    candles = response.get("candles")
+    if not isinstance(candles, list):
+        raise RuntimeError("resposta de candles inválida")
+    cutoff = int(time.time()) // CANDLE_TIMEFRAME_SEC * CANDLE_TIMEFRAME_SEC
+    return [candle for candle in candles
+            if int(candle.get("epoch", 0)) + CANDLE_TIMEFRAME_SEC <= cutoff]
+
+
+def _fetch_active_symbols() -> dict[str, dict]:
+    """Obtém catálogo oficial com categoria e estado de abertura da Deriv."""
+    response = _websocket_request({
+        "active_symbols": "full",
+        "contract_type": ["CALL", "PUT"],
+    })
+    symbols = response.get("active_symbols")
+    if not isinstance(symbols, list):
+        raise RuntimeError("catálogo active_symbols inválido")
+    catalog = {}
+    required = ("market", "submarket", "underlying_symbol_type",
+                "exchange_is_open", "is_trading_suspended")
+    for item in symbols:
+        if not isinstance(item, dict) or any(key not in item for key in required):
+            continue
+        symbol = str(item.get("underlying_symbol") or "").strip()
+        market = str(item.get("market") or "").strip().lower()
+        symbol_type = str(item.get("underlying_symbol_type") or "").strip().lower()
+        if not symbol or not market or not symbol_type:
+            continue
+        catalog[symbol] = {
+            "market": market,
+            "submarket": str(item.get("submarket") or "").strip().lower(),
+            "underlying_symbol_type": symbol_type,
+            "is_synthetic": market == "synthetic_index" or symbol_type == "synthetic_index",
+            "exchange_is_open": item.get("exchange_is_open") == 1,
+            "is_trading_suspended": item.get("is_trading_suspended") != 0,
+        }
+    if not catalog:
+        raise RuntimeError("catálogo Deriv sem ativos classificáveis")
+    return catalog
+
+
+def _refresh_active_symbols() -> bool:
+    """Atualiza catálogo oficial; falha fechada em vez de reutilizar status antigo."""
+    global _active_symbols_catalog
+    try:
+        _active_symbols_catalog = _fetch_active_symbols()
+    except Exception as exc:
+        _active_symbols_catalog = {}
+        print(f"[TENDENCIA] Catálogo de ativos indisponível ({type(exc).__name__}); scan bloqueado.")
+        return False
+    return True
+
+
+def _catalog_scan_candidates() -> list[str]:
+    """Retorna símbolos classificados pelo catálogo, sem heurística baseada no nome."""
+    return sorted(
+        symbol for symbol, item in _active_symbols_catalog.items()
+        if item.get("market") and item.get("underlying_symbol_type")
+        and item.get("exchange_is_open") and not item.get("is_trading_suspended")
     )
 
-    threading.Thread(
-        target=ws.run_forever,
-        daemon=True,
-    ).start()
 
-    done.wait(timeout=_SCAN_TIMEOUT)
+def _fetch_prices_for_symbol(symbol: str, count: int = _SCAN_TICKS) -> list:
+    """Sincroniza histórico local e retorna os fechamentos mais recentes."""
+    store = _history_store()
+    result = store.synchronize(symbol, lambda start, end: _fetch_candles_for_symbol(symbol, start, end))
+    rows = result["candles"][-max(1, count):]
+    if not rows:
+        _scan_adx_epochs[symbol] = None
+        return []
+    contiguous = [rows[-1]]
+    for row in reversed(rows[:-1]):
+        if contiguous[0]["epoch"] - row["epoch"] != CANDLE_TIMEFRAME_SEC:
+            break
+        contiguous.insert(0, row)
+    _scan_adx_epochs[symbol] = contiguous[-1]["epoch"]
+    return [row["price"] for row in contiguous]
 
-    return received
 
-
-def _score_trend(prices: list) -> float:
+def _score_trend(prices: list, *, include_adx=False):
     """
     Pontuação de tendência combinando:
       - ADX
@@ -627,7 +693,7 @@ def _score_trend(prices: list) -> float:
     )
 
     if not prices:
-        return 0.0
+        return (0.0, None) if include_adx else 0.0
 
     adx_val = ind.adx(
         prices,
@@ -660,12 +726,12 @@ def _score_trend(prices: list) -> float:
             macd_res,
         )
     ):
-        return 0.0
+        return (0.0, adx_val) if include_adx else 0.0
 
     try:
         _, _, macd_hist = macd_res
     except (TypeError, ValueError):
-        return 0.0
+        return (0.0, adx_val) if include_adx else 0.0
 
     ema_factor = (
         1.2
@@ -691,11 +757,12 @@ def _score_trend(prices: list) -> float:
         )
     )
 
-    return (
+    score = (
         adx_val
         * ema_factor
         * macd_factor
     )
+    return (score, adx_val) if include_adx else score
 
 
 def _scan_group(candidates: list) -> dict:
@@ -704,22 +771,35 @@ def _scan_group(candidates: list) -> dict:
     lock = threading.Lock()
 
     def _scan_one(symbol: str) -> None:
-        """Pontua um símbolo (0 se fechado ou com poucos dados), guarda em `results` e imprime o resultado."""
-        if not _local_market_open(symbol):
+        """Calcula ADX somente para ativo aberto e classificado no catálogo atual."""
+        with lock:
+            _scan_adx_values[symbol] = None
+            _scan_adx_epochs[symbol] = None
+        metadata = _active_symbols_catalog.get(symbol)
+        if (not metadata or not metadata.get("market")
+                or not metadata.get("underlying_symbol_type")):
             with lock:
                 results[symbol] = 0.0
-            print(f"  {symbol:<12} fechado pelo calendário local")
+            print(f"  {symbol:<12} sem classificação oficial")
+            return
+        if not metadata.get("exchange_is_open") or metadata.get("is_trading_suspended"):
+            with lock:
+                results[symbol] = 0.0
+            print(f"  {symbol:<12} fechado ou suspenso no catálogo")
             return
 
-        prices = _fetch_prices_for_symbol(
-            symbol,
-            _SCAN_TICKS,
-        )
+        try:
+            prices = _fetch_prices_for_symbol(symbol, _SCAN_TICKS)
+        except Exception as exc:
+            with lock:
+                results[symbol] = 0.0
+            print(f"  {symbol:<12} histórico indisponível ({type(exc).__name__})")
+            return
 
-        score = (
-            _score_trend(prices)
+        score, adx_value = (
+            _score_trend(prices, include_adx=True)
             if len(prices) >= 50
-            else 0.0
+            else (0.0, None)
         )
 
         direction = ""
@@ -749,50 +829,32 @@ def _scan_group(candidates: list) -> dict:
 
         with lock:
             results[symbol] = score
+            _scan_adx_values[symbol] = adx_value
 
         print(
             f"  {symbol:<12} "
             f"score={score:6.2f} "
+            f"ADX={adx_value if adx_value is not None else 0.0:5.2f} "
             f"{direction}"
         )
 
-    threads = [
-        threading.Thread(
-            target=_scan_one,
-            args=(symbol,),
-            daemon=True,
-        )
-        for symbol in candidates
-    ]
-
-    for thread in threads:
-        thread.start()
-
-    for thread in threads:
-        thread.join(
-            timeout=_SCAN_TIMEOUT + 5
-        )
+    for offset in range(0, len(candidates), _SCAN_WORKERS):
+        threads = [
+            threading.Thread(target=_scan_one, args=(symbol,), daemon=True)
+            for symbol in candidates[offset:offset + _SCAN_WORKERS]
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=_SCAN_TIMEOUT + 5)
 
     return results
 
 
 
 def _scan_candidates() -> list:
-    """Lista ordenada de todos os símbolos candidatos ao scan (forex, primários, secundários)."""
-    return (
-        list(_SCAN_SYMBOLS_FOREX)
-        + list(_SCAN_SYMBOLS_PRIMARY)
-        + list(_SCAN_SYMBOLS_SECONDARY)
-    )
-
-
-def _local_market_open(symbol):
-    """Consulta o calendário local de mercado; assume aberto em caso de falha."""
-    try:
-        import config as _cfg
-        return _cfg.is_market_open(symbol)
-    except Exception:
-        return True
+    """Lista ativos do catálogo mais recente, sem classificar por código do símbolo."""
+    return _catalog_scan_candidates()
 
 
 def _probe_symbol(symbol, timeout=20):
@@ -893,11 +955,43 @@ def _probe_symbol(symbol, timeout=20):
     return result['tick'] and result['contracts'] and len(result['quotes']) == 2 and not result['reason'], result['reason']
 
 
+def _is_synthetic_symbol(symbol):
+    """Usa a categoria oficial do catálogo para classificar sintéticos."""
+    metadata = _active_symbols_catalog.get(symbol)
+    return bool(metadata and metadata.get("is_synthetic"))
+
+
+def _rank_by_preference(results):
+    """Prioriza não sintéticos; desempata por score decrescente e símbolo estável."""
+    return sorted(results, key=lambda symbol: (_is_synthetic_symbol(symbol), -results[symbol], symbol))
+
+
+def _adx_is_fresh(symbol: str, *, now_epoch: int | None = None) -> bool:
+    """Aceita um lag de até uma vela para o ADX ser considerado recente."""
+    epoch = _scan_adx_epochs.get(symbol)
+    if epoch is None:
+        return False
+    now = int(time.time() if now_epoch is None else now_epoch)
+    latest_closed = now // CANDLE_TIMEFRAME_SEC * CANDLE_TIMEFRAME_SEC - CANDLE_TIMEFRAME_SEC
+    return epoch >= latest_closed - CANDLE_TIMEFRAME_SEC
+
+
 def _best_live_from(results):
-    """Primeiro símbolo, por score decrescente e acima do piso, que passa na sondagem; retorna (símbolo, score) ou ('', 0.0)."""
-    for symbol in sorted(results, key=results.get, reverse=True):
-        if results[symbol] < _ADX_TREND_MIN:
-            break
+    """Primeiro mercado com ADX atualizado >= 25 e sondagem de execução válida."""
+    for symbol in _rank_by_preference(results):
+        adx_value = _scan_adx_values.get(symbol)
+        if adx_value is None:
+            print(f'[TENDENCIA] {symbol} descartado: ADX ausente')
+            continue
+        if adx_value < _ADX_TREND_MIN:
+            print(f'[TENDENCIA] {symbol} descartado: ADX {adx_value:.2f} abaixo de {_ADX_TREND_MIN:g}')
+            continue
+        if not _adx_is_fresh(symbol):
+            print(f'[TENDENCIA] {symbol} descartado: ADX {adx_value:.2f} fora do prazo de atualização')
+            continue
+        metadata = _active_symbols_catalog.get(symbol, {})
+        if not metadata.get("exchange_is_open") or metadata.get("is_trading_suspended"):
+            continue
         available, reason = _probe_symbol(symbol)
         if available:
             return symbol, results[symbol]
@@ -905,15 +999,29 @@ def _best_live_from(results):
     return '', 0.0
 
 
-def _top_live_from(results, limit=_TOP_TRENDING_SYMBOLS):
-    """Retorna os melhores símbolos operáveis acima do piso de tendência."""
+def _top_live_from(results, limit=_TOP_TRENDING_SYMBOLS, exclude_symbols=()):
+    """Retorna mercados abertos e sondados, com ADX atualizado >= 25."""
     selected = []
-    for symbol in sorted(results, key=results.get, reverse=True):
+    excluded = set(exclude_symbols)
+    for symbol in _rank_by_preference(results):
+        if symbol in excluded:
+            continue
         if len(selected) >= limit:
             break
         score = results[symbol]
-        if score < _ADX_TREND_MIN:
-            break
+        adx_value = _scan_adx_values.get(symbol)
+        if adx_value is None:
+            print(f'[TENDENCIA] {symbol} descartado: ADX ausente')
+            continue
+        if adx_value < _ADX_TREND_MIN:
+            print(f'[TENDENCIA] {symbol} descartado: ADX {adx_value:.2f} abaixo de {_ADX_TREND_MIN:g}')
+            continue
+        if not _adx_is_fresh(symbol):
+            print(f'[TENDENCIA] {symbol} descartado: ADX {adx_value:.2f} fora do prazo de atualização')
+            continue
+        metadata = _active_symbols_catalog.get(symbol, {})
+        if not metadata.get("exchange_is_open") or metadata.get("is_trading_suspended"):
+            continue
         available, reason = _probe_symbol(symbol)
         if available:
             selected.append((symbol, score))
@@ -923,22 +1031,22 @@ def _top_live_from(results, limit=_TOP_TRENDING_SYMBOLS):
 
 
 def _first_live_symbol(candidates):
-    """Retorna o primeiro símbolo com tick recente e CALL/PUT disponíveis."""
-    seen = set()
-    for symbol in candidates:
-        if symbol in seen:
-            continue
-        seen.add(symbol)
-        available, reason = _probe_symbol(symbol)
-        if available:
-            return symbol
-        print(f'[TENDENCIA] {symbol} indisponivel para fallback: {reason}')
-    return ''
+    """Retorna o primeiro candidato aberto, com ADX atualizado e sondagem válida."""
+    if not _refresh_active_symbols():
+        return ''
+    allowed = set(candidates)
+    scoped = [symbol for symbol in _catalog_scan_candidates() if symbol in allowed]
+    if not scoped:
+        return ''
+    scores = _scan_group(scoped)
+    selected = _top_live_from(scores, limit=1)
+    return selected[0][0] if selected else ''
 
 
 def _first_live_symbol_with_compatible_model(candidates):
-    """Retorna um símbolo operável que já possui bundle ativo aprovado."""
+    """Retorna um símbolo com bundle aprovado e elegibilidade atual de ADX/catálogo."""
     seen = set()
+    compatible = []
     for symbol in candidates:
         if symbol in seen:
             continue
@@ -949,18 +1057,16 @@ def _first_live_symbol_with_compatible_model(candidates):
                 continue
         except Exception:
             continue
-        available, reason = _probe_symbol(symbol)
-        if available:
-            return symbol
-        print(f'[TENDENCIA] {symbol} possui modelo compatível, mas está indisponivel: {reason}')
-    return ''
+        compatible.append(symbol)
+    return _first_live_symbol(compatible)
 
 
 def _require_live_symbol(symbol, *, allow_fallback=False):
-    """Retorna o símbolo se operável; com `allow_fallback` tenta outro candidato, senão levanta RuntimeError."""
-    available, reason = _probe_symbol(symbol)
-    if available:
-        return symbol
+    """Exige categoria, ADX atualizado e sondagem; fallback usa os mesmos requisitos."""
+    selected = _first_live_symbol([symbol])
+    if selected:
+        return selected
+    reason = 'catálogo, ADX mínimo ou sondagem não aprovados'
     if allow_fallback:
         print(f'[TENDENCIA] {symbol} indisponivel para operar: {reason}')
         fallback = _first_live_symbol(
@@ -983,68 +1089,40 @@ def _ensure_operable_symbol(symbol):
 def _detect_top_trending_symbols(
     no_scan: bool = False,
     limit: int = _TOP_TRENDING_SYMBOLS,
+    exclude_symbols=(),
 ) -> list:
-    """Seleciona os melhores símbolos operáveis para o torneio inicial."""
+    """Seleciona mercados operáveis com ADX mínimo, sem fallback para ativos laterais."""
     import config as _cfg
+    excluded = set(exclude_symbols)
 
     if limit <= 0:
         return []
 
+    if not _refresh_active_symbols():
+        return []
+
+    candidates = [symbol for symbol in _catalog_scan_candidates() if symbol not in excluded]
     if no_scan:
-        return [_require_live_symbol(_cfg.SYMBOL, allow_fallback=True)]
+        configured = [symbol for symbol in candidates if symbol == _cfg.SYMBOL]
+        if configured and not _is_synthetic_symbol(configured[0]):
+            configured_scores = _scan_group(configured)
+            selected = _top_live_from(configured_scores, limit=1)
+            if selected:
+                return [selected[0][0]]
+    if not candidates:
+        return []
+    non_synthetic = [symbol for symbol in candidates if not _is_synthetic_symbol(symbol)]
+    synthetic = [symbol for symbol in candidates if _is_synthetic_symbol(symbol)]
+    scan_candidates = non_synthetic or synthetic
+    print(f"\n[TENDENCIA] Scan de {len(scan_candidates)} ativos classificados pelo catálogo Deriv.")
+    all_scores = _scan_group(scan_candidates)
 
-    all_scores = {}
-
-    print(
-        "\n[TENDÊNCIA] "
-        "── Torneio: scan forex (pares de moedas) ───────"
-    )
-    print(
-        "[TENDÊNCIA] Candidatos: "
-        + ", ".join(_SCAN_SYMBOLS_FOREX)
-    )
-    all_scores.update(_scan_group(_SCAN_SYMBOLS_FOREX))
-
-    print(
-        "\n[TENDÊNCIA] "
-        "── Torneio: scan primário (volatilidade) ───────"
-    )
-    print(
-        "[TENDÊNCIA] Candidatos: "
-        + ", ".join(_SCAN_SYMBOLS_PRIMARY)
-    )
-    all_scores.update(_scan_group(_SCAN_SYMBOLS_PRIMARY))
-
-    print(
-        "\n[TENDÊNCIA] "
-        "── Torneio: scan secundário (boom/crash/jump) ──"
-    )
-    print(
-        "[TENDÊNCIA] Candidatos: "
-        + ", ".join(_SCAN_SYMBOLS_SECONDARY)
-    )
-    all_scores.update(_scan_group(_SCAN_SYMBOLS_SECONDARY))
-
-    selected = _top_live_from(all_scores, limit)
-    seen = {symbol for symbol, _score in selected}
-
-    if len(selected) < limit:
-        fallback_candidates = (
-            [_cfg.SYMBOL]
-            + [s for s in _SCAN_SYMBOLS_PRIMARY if s != _cfg.SYMBOL]
-            + [s for s in _SCAN_SYMBOLS_SECONDARY if s != _cfg.SYMBOL]
+    selected = _top_live_from(all_scores, limit, exclude_symbols=excluded)
+    if not selected and non_synthetic and synthetic:
+        print("[TENDENCIA] Nenhum não sintético elegível; tentando sintéticos abertos.")
+        selected = _top_live_from(
+            _scan_group(synthetic), limit, exclude_symbols=excluded
         )
-        for symbol in fallback_candidates:
-            if len(selected) >= limit:
-                break
-            if symbol in seen:
-                continue
-            available, reason = _probe_symbol(symbol)
-            if available:
-                seen.add(symbol)
-                selected.append((symbol, 0.0))
-            else:
-                print(f'[TENDENCIA] {symbol} indisponivel para fallback: {reason}')
 
     symbols = [symbol for symbol, _score in selected]
     if symbols:
@@ -1055,150 +1133,26 @@ def _detect_top_trending_symbols(
     return symbols
 
 
+def _wait_for_strong_training_symbols(*, no_scan=False, limit=_TOP_TRENDING_SYMBOLS):
+    """Espera por mercados operáveis com ADX mínimo, repetindo a varredura sem selecionar ativos laterais."""
+    while not _shutdown.is_set():
+        candidates = _detect_top_trending_symbols(no_scan=no_scan, limit=limit)
+        if candidates:
+            return candidates
+        print(f'[TENDENCIA] Nenhum mercado com ADX >= {_ADX_TREND_MIN:g}; mantendo compras bloqueadas.')
+        if _shutdown.wait(_MARKET_RESCAN_SEC):
+            break
+    return []
+
+
 def _detect_trending_symbol(
     no_scan: bool = False,
 ) -> str:
-    """
-    Etapas:
-
-      1. Escaneia pares Forex.
-      2. Se o melhor Forex tiver score suficiente, retorna-o.
-      3. Caso contrário, escaneia índices de volatilidade.
-      4. Caso contrário, escaneia Boom/Crash/Jump.
-      5. Se nenhum tiver tendência suficiente,
-         mantém o SYMBOL configurado.
-    """
-    import config as _cfg
-
-    if no_scan:
-        return _require_live_symbol(_cfg.SYMBOL, allow_fallback=True)
-
-    # ── Etapa 1: Scan Forex ───────────────────────────────────
-
-    print(
-        "\n[TENDÊNCIA] "
-        "── Scan forex (pares de moedas) ────────────────"
-    )
-
-    print(
-        "[TENDÊNCIA] Candidatos: "
-        + ", ".join(_SCAN_SYMBOLS_FOREX)
-    )
-
-    forex = _scan_group(
-        _SCAN_SYMBOLS_FOREX
-    )
-
-    best_fx, score_fx = _best_live_from(
-        forex
-    )
-
-    if score_fx >= _ADX_TREND_MIN:
-        print(
-            "\n[TENDÊNCIA] ✔ Melhor par forex: "
-            f"{_symbol_display(best_fx)} "
-            f"(score={score_fx:.2f})"
-        )
-
-        return best_fx
-
-    print(
-        "\n[TENDÊNCIA] ⚠ Nenhum par forex "
-        "com tendência clara "
-        f"(melhor score={score_fx:.2f} "
-        f"< {_ADX_TREND_MIN}) "
-        "— mercado fechado ou lateral. "
-        "Tentando índices sintéticos..."
-    )
-
-    # ── Etapa 2: Scan primários ───────────────────────────────
-
-    print(
-        "\n[TENDÊNCIA] "
-        "── Scan primário (volatilidade) ────────────────"
-    )
-
-    print(
-        "[TENDÊNCIA] Candidatos: "
-        + ", ".join(_SCAN_SYMBOLS_PRIMARY)
-    )
-
-    primary = _scan_group(
-        _SCAN_SYMBOLS_PRIMARY
-    )
-
-    best, score = _best_live_from(
-        primary
-    )
-
-    if score >= _ADX_TREND_MIN:
-        print(
-            "\n[TENDÊNCIA] ✔ Melhor índice: "
-            f"{_symbol_display(best)} "
-            f"(score={score:.2f})"
-        )
-
-        return best
-
-    print(
-        "\n[TENDÊNCIA] ⚠ Todos os índices "
-        "primários estão laterais "
-        f"(melhor score={score:.2f} "
-        f"< {_ADX_TREND_MIN})."
-    )
-
-    # ── Etapa 3: Scan secundários ─────────────────────────────
-
-    print(
-        "[TENDÊNCIA] "
-        "── Scan secundário (boom/crash/jump) ───────────"
-    )
-
-    print(
-        "[TENDÊNCIA] Candidatos: "
-        + ", ".join(_SCAN_SYMBOLS_SECONDARY)
-    )
-
-    secondary = _scan_group(
-        _SCAN_SYMBOLS_SECONDARY
-    )
-
-    best2, score2 = _best_live_from(
-        secondary
-    )
-
-    if score2 >= _ADX_TREND_MIN:
-        print(
-            "\n[TENDÊNCIA] ✔ Melhor índice "
-            "(secundário): "
-            f"{_symbol_display(best2)} "
-            f"(score={score2:.2f})"
-        )
-
-        return best2
-
-    # ── Etapa 4: fallback ─────────────────────────────────────
-
-    print(
-        "\n[TENDÊNCIA] ⚠ Nenhum instrumento "
-        "com tendência clara "
-        f"(melhor score secundário={score2:.2f}). "
-        "Procurando sintético operável..."
-    )
-
-    synthetic_fallback = _first_live_symbol(
-        [_cfg.SYMBOL]
-        + [s for s in _SCAN_SYMBOLS_PRIMARY if s != _cfg.SYMBOL]
-        + [s for s in _SCAN_SYMBOLS_SECONDARY if s != _cfg.SYMBOL]
-    )
-    if synthetic_fallback:
-        print(
-            "\n[TENDÊNCIA] ✔ Fallback sintético aberto: "
-            f"{_symbol_display(synthetic_fallback)}"
-        )
-        return synthetic_fallback
-
-    raise RuntimeError("nenhum índice sintético com tick recente e CALL/PUT disponível")
+    """Seleciona o primeiro ativo elegível pelo catálogo e pelo ADX atualizado."""
+    candidates = _detect_top_trending_symbols(no_scan=no_scan, limit=1)
+    if candidates:
+        return candidates[0]
+    raise RuntimeError("nenhum ativo aberto com ADX >= 25 e sondagem válida")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1209,9 +1163,10 @@ def _fetch_historical_ticks(
     count: int,
 ) -> int:
     """
-    Baixa candles históricos da API Deriv e grava em ticks.csv.
+    Atualiza o histórico OHLC incremental do ativo.
 
-    Epochs já existentes são ignorados.
+    A base por ativo controla lacunas e evita recoletar a janela inteira a cada
+    inicialização. `count` é preservado por compatibilidade com a CLI/status.
     """
     tf_min = CANDLE_TIMEFRAME_SEC // 60
     symbol = _runtime_symbol()
@@ -1225,217 +1180,33 @@ def _fetch_historical_ticks(
         return 0
 
     print(
-        f"\n[HISTÓRICO] Buscando os últimos "
-        f"{count:,} candles de {tf_min} min "
-        f"de '{_symbol_display(symbol)}'..."
+        f"\n[HISTÓRICO] Atualizando base incremental de "
+        f"{_symbol_display(symbol)} ({tf_min} min)..."
     )
 
-    _ensure_ticks_header()
-
-    existing_epochs: set = set()
-
-    if (
-        os.path.exists(TICKS_CSV)
-        and os.path.getsize(TICKS_CSV) > 0
-    ):
-        try:
-            with open(
-                TICKS_CSV,
-                "r",
-                encoding="utf-8",
-            ) as f:
-                for row in csv.DictReader(f):
-                    try:
-                        if row.get("kind") != "candle":
-                            continue
-                        existing_epochs.add(
-                            (
-                                int(row["epoch"]),
-                                row.get(
-                                    "symbol",
-                                    "",
-                                ),
-                                int(row.get("timeframe") or 0),
-                            )
-                        )
-                    except (
-                        KeyError,
-                        ValueError,
-                    ):
-                        pass
-        except Exception:
-            pass
-
-    received: list = []
-    done = threading.Event()
-    error_msg: list = []
-    next_end = ["latest"]
-
-    def _send_history_request(ws) -> None:
-        """Pede uma página (até 1000) de velas anterior à mais antiga já recebida."""
-        remaining = max(1, count - len(received))
-        ws.send(
-            json.dumps(
-                {
-                    "ticks_history": symbol,
-                    "end": next_end[0],
-                    "count": min(remaining, 1000),
-                    "style": "candles",
-                    "granularity": CANDLE_TIMEFRAME_SEC,
-                    "adjust_start_time": 1,
-                }
-            )
+    try:
+        result = _history_store().synchronize(
+            symbol,
+            lambda start, end: _fetch_candles_for_symbol(symbol, start, end),
         )
-
-    def _on_open(ws) -> None:
-        """Pede o histórico (Bearer) ou envia `authorize` (modo legado)."""
-        if _uses_bearer_auth():
-            _send_history_request(ws)
-        else:
-            ws.send(
-                json.dumps(
-                    {
-                        "authorize": TOKEN
-                    }
-                )
-            )
-
-    def _on_message(ws, message) -> None:
-        """Acumula páginas de velas fechadas sem duplicar e pede a próxima página até atingir `count`."""
-        try:
-            data = json.loads(message)
-        except (
-            TypeError,
-            json.JSONDecodeError,
-        ):
-            return
-
-        if "error" in data:
-            error_msg.append(
-                data["error"].get(
-                    "message",
-                    "Erro desconhecido",
-                )
-            )
-            ws.close()
-            return
-
-        if data.get("msg_type") == "authorize":
-            _send_history_request(ws)
-            return
-
-        if data.get("msg_type") == "candles":
-            page = []
-            for candle in data.get(
-                "candles",
-                [],
-            ):
-                try:
-                    epoch = int(
-                        candle.get(
-                            "epoch",
-                            0,
-                        )
-                    )
-
-                    close = float(
-                        candle.get(
-                            "close",
-                            candle.get(
-                                "open",
-                                0,
-                            ),
-                        )
-                    )
-
-                    if epoch > 0 and epoch+CANDLE_TIMEFRAME_SEC <= int(time.time()):
-                        page.append((epoch,close,candle))
-
-                except (
-                    TypeError,
-                    ValueError,
-                ):
-                    continue
-
-            if page:
-                known = {item[0] for item in received}
-                for item in page:
-                    if item[0] not in known:
-                        received.append(item)
-                        known.add(item[0])
-                oldest = min(item[0] for item in page)
-                next_end[0] = oldest - 1
-
-            if len(received) >= count or not page:
-                ws.close()
-            else:
-                _send_history_request(ws)
-
-    def _on_error(ws, err) -> None:
-        """Guarda a mensagem de erro e fecha a conexão."""
-        error_msg.append(str(err))
-        ws.close()
-
-    def _on_close(
-        ws,
-        code,
-        msg,
-    ) -> None:
-        """Sinaliza o término do download."""
-        done.set()
-
-    ws = websocket.WebSocketApp(
-        _get_ws_url(),
-        on_open=_on_open,
-        on_message=_on_message,
-        on_error=_on_error,
-        on_close=_on_close,
-    )
-
-    thread = threading.Thread(
-        target=ws.run_forever,
-        daemon=True,
-    )
-
-    thread.start()
-
-    done.wait(timeout=30)
-
-    if error_msg:
-        print(
-            f"[HISTÓRICO] Erro da API: "
-            f"{error_msg[0]}"
-        )
+    except Exception as exc:
+        print(f"[HISTÓRICO] Falha ao atualizar base do ativo ({type(exc).__name__}).")
         return 0
 
-    if not received:
+    if result.get("failed_ranges"):
         print(
-            "[HISTÓRICO] Nenhum candle "
-            "histórico recebido."
+            "[HISTÓRICO] Atualização parcial; "
+            f"{len(result['failed_ranges'])} faixa(s) ficam para retry."
         )
-        return 0
-
-    received.sort(
-        key=lambda item: item[0]
-    )
-
-    written = 0
-
-    for epoch,close,candle in received:
-        key=(epoch,symbol,CANDLE_TIMEFRAME_SEC)
-        if key in existing_epochs:
-            continue
-        append_record(TICKS_CSV,epoch,symbol,close,kind='candle',timeframe=CANDLE_TIMEFRAME_SEC,candle=candle)
-        existing_epochs.add(key)
-        written+=1
 
     print(
-        f"[HISTÓRICO] {written:,} candles "
-        f"de {tf_min}min gravados — "
-        f"total do ativo no CSV: {_count_market_records():,}"
+        f"[HISTÓRICO] Base do ativo atualizada: "
+        f"{int(result.get('added', 0)):,} candle(s) novos, "
+        f"{len(result.get('candles', [])):,} na janela local, "
+        f"{int(result.get('requested', 0)):,} página(s) consultada(s)."
     )
 
-    return written
+    return int(result.get("added", 0))
 
 
 def _banner(
@@ -1465,10 +1236,7 @@ def _banner(
         f"  Símbolo           : "
         f"{_symbol_display(symbol or SYMBOL)}"
     )
-    print(
-        f"  Candles históricos : "
-        f"{history_count:,} × {tf_min} min"
-    )
+    print("  Base do ativo      : incremental por lacunas")
     print(
         f"  Candles p/ treino  : "
         f"{_MIN_LABELABLE_CONTRACTS:,} contratos rotuláveis "
@@ -1853,6 +1621,153 @@ def _print_bearer_migration_hint() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Backfill paralelo de ticks
+# ─────────────────────────────────────────────────────────────────
+
+def _missing_tick_ranges(epochs, start, end):
+    """Intervalos de [start, end] sem ticks conhecidos, tolerando lacunas de até MAX_TICK_GAP_SEC."""
+    ranges, previous = [], None
+    for epoch in sorted(e for e in epochs if start <= e <= end):
+        if previous is None:
+            if epoch - start > MAX_TICK_GAP_SEC:
+                ranges.append((start, epoch - 1))
+        elif epoch - previous > MAX_TICK_GAP_SEC:
+            ranges.append((previous + 1, epoch - 1))
+        previous = epoch
+    if previous is None:
+        return [(start, end)] if start <= end else []
+    if end - previous > MAX_TICK_GAP_SEC:
+        ranges.append((previous + 1, end))
+    return ranges
+
+
+def _split_tick_ranges(ranges, workers):
+    """Divide os intervalos em blocos de tamanho similar para distribuir entre as conexões."""
+    total = sum(end - start + 1 for start, end in ranges)
+    if total <= 0:
+        return []
+    size = max(-(-total // max(1, workers)), _TICK_MIN_CHUNK_SEC)
+    chunks = []
+    for start, end in ranges:
+        while start <= end:
+            chunks.append((start, min(start + size - 1, end)))
+            start += size
+    return chunks
+
+
+def _is_rate_limit(error):
+    """Indica se o erro da API é de rate limit."""
+    return (error.get('code') == 'RateLimit'
+            or 'rate limit' in str(error.get('message', '')).lower())
+
+
+class _TickThrottle:
+    """Cadência única compartilhada pelas conexões; recua para todas quando a API limita."""
+
+    def __init__(self, interval=0.2):
+        self._lock = threading.Lock()
+        self._interval = interval
+        self._next = 0.0
+
+    def wait(self):
+        """Reserva o próximo horário de envio e dorme até ele."""
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next)
+            self._next = slot + self._interval
+        if slot > now:
+            time.sleep(slot - now)
+
+    def backoff(self):
+        """Dobra o intervalo (máx. 5 s) e pausa todas as conexões."""
+        with self._lock:
+            self._interval = min(self._interval * 2, 5.0)
+            self._next = time.monotonic() + max(5.0, 4 * self._interval)
+
+
+class _PartialTickFetch(RuntimeError):
+    """Download paralelo incompleto; `ticks` guarda o que foi obtido."""
+
+    def __init__(self, message, ticks):
+        super().__init__(message)
+        self.ticks = ticks
+
+
+def _request_tick_page(ws, symbol, start, end, throttle):
+    """Pede até 5000 ticks terminando em `end`, com retry em rate limit; devolve [(epoch, preço)] ordenado."""
+    for attempt in range(_TICK_RATE_LIMIT_RETRIES + 1):
+        throttle.wait()
+        ws.send(json.dumps({'ticks_history': symbol, 'style': 'ticks', 'start': start,
+                            'end': end, 'count': _TICK_PAGE_SIZE}))
+        while True:
+            data = json.loads(ws.recv())
+            if 'error' in data or data.get('msg_type') == 'history':
+                break
+        error = data.get('error')
+        if error:
+            if _is_rate_limit(error) and attempt < _TICK_RATE_LIMIT_RETRIES:
+                throttle.backoff()
+                continue
+            raise RuntimeError(error.get('message', 'erro API'))
+        times, prices = data['history']['times'], data['history']['prices']
+        if len(times) != len(prices):
+            raise ValueError('historico com tamanhos divergentes')
+        page = sorted((int(e), float(p)) for e, p in zip(times, prices))
+        if any(e <= 0 or not math.isfinite(p) or p <= 0 for e, p in page):
+            raise ValueError('tick historico invalido')
+        return page
+
+
+def _download_tick_chunks(url, symbol, chunks, throttle, ticks):
+    """Baixa os blocos em uma conexão, acumulando em `ticks` (preservado mesmo se a conexão falhar)."""
+    ws = websocket.create_connection(url, timeout=30)
+    try:
+        if not _uses_bearer_auth():
+            ws.send(json.dumps({'authorize': TOKEN}))
+            while json.loads(ws.recv()).get('msg_type') != 'authorize':
+                pass
+        for start, end in chunks:
+            cursor = end
+            while cursor >= start and not _shutdown.is_set():
+                page = _request_tick_page(ws, symbol, start, cursor, throttle)
+                if not page or page[0][0] > cursor:
+                    break
+                for epoch, price in page:
+                    if start <= epoch <= end:
+                        ticks[epoch] = price
+                if page[0][0] <= start + MAX_TICK_GAP_SEC:
+                    break
+                cursor = page[0][0] - 1
+    finally:
+        ws.close()
+
+
+def _fetch_ticks_parallel(symbol, start, end, known_epochs, workers=None):
+    """Baixa em paralelo só os trechos sem ticks; levanta _PartialTickFetch (com o obtido) se alguma conexão falhar."""
+    from concurrent.futures import ThreadPoolExecutor
+    workers = max(1, workers or _TICK_BACKFILL_WORKERS)
+    chunks = _split_tick_ranges(_missing_tick_ranges(known_epochs, start, end), workers)
+    if not chunks:
+        return []
+    buckets = [chunks[i::workers] for i in range(min(workers, len(chunks)))]
+    # Cada conexão exige URL própria; obtê-las aqui evita corrida sobre a URL Bearer pré-obtida.
+    urls = [_get_ws_url() for _ in buckets]
+    ticks, failures = {}, []
+    throttle = _TickThrottle()
+    with ThreadPoolExecutor(max_workers=len(buckets)) as pool:
+        futures = [pool.submit(_download_tick_chunks, url, symbol, bucket, throttle, ticks)
+                   for url, bucket in zip(urls, buckets)]
+        for future in futures:
+            try:
+                future.result()
+            except Exception as exc:
+                failures.append(f'{type(exc).__name__}: {exc}')
+    if failures:
+        raise _PartialTickFetch('; '.join(failures[:3]), sorted(ticks.items()))
+    return sorted(ticks.items())
+
+
+# ─────────────────────────────────────────────────────────────────
 # FASE 1 — Coletor em thread daemon
 # ─────────────────────────────────────────────────────────────────
 
@@ -1870,10 +1785,14 @@ class _CollectorThread(threading.Thread):
         self.fatal_error = ''
         self._stopped = threading.Event()
         self._first_tick_timer = None
+        self._first_tick_timed_out = False
         self.history_ready = threading.Event()
         self._history_start = None
         self._history_end = None
         self._history_seen = set()
+        self._history_lock = threading.Lock()
+        self._backfill_lock = threading.Lock()
+        self._backfill_running = False
         self._last_history_log_count = 0
         from payout_quotes import ProposalRecorder
         import config as cfg
@@ -1976,15 +1895,15 @@ class _CollectorThread(threading.Thread):
 
     def _on_open(self, ws) -> None:
         """Arma o timer de primeiro tick, carrega épocas já gravadas e autoriza ou assina ticks."""
-        self._first_tick_timer = threading.Timer(30, ws.close)
+        self._first_tick_timed_out = False
+        self._first_tick_timer = threading.Timer(30, self._on_first_tick_timeout, args=(ws,))
         self._first_tick_timer.daemon = True
         self._first_tick_timer.start()
-        self.history_ready.clear()
-        self._history_start = None
         records, _ = read_records(TICKS_CSV)
-        self._history_seen = {r['epoch'] for r in records
-                              if r['symbol'] == self._symbol and r['kind'] == 'tick'}
-        self._last_history_log_count = len(self._history_seen)
+        with self._history_lock:
+            self._history_seen = {r['epoch'] for r in records
+                                  if r['symbol'] == self._symbol and r['kind'] == 'tick'}
+            self._last_history_log_count = len(self._history_seen)
         print(
             f"\n[COLETOR] Conectado | "
             f"{_symbol_display(self._symbol)}"
@@ -2000,6 +1919,16 @@ class _CollectorThread(threading.Thread):
             )
             return
         self._subscribe(ws)
+
+    def _on_first_tick_timeout(self, ws) -> None:
+        """Fecha a sessão quando a assinatura não entrega o primeiro tick no prazo."""
+        self._first_tick_timed_out = True
+        if not _shutdown.is_set() and not self._stopped.is_set():
+            print("\n[COLETOR] Primeiro tick não recebido em 30s; reconectando com nova sessão.")
+        try:
+            ws.close()
+        except Exception:
+            pass
 
     def _subscribe(self, ws):
         """Assina o fluxo de ticks do símbolo."""
@@ -2031,6 +1960,12 @@ class _CollectorThread(threading.Thread):
 
         if "error" in data:
             error = data['error']
+            if _is_rate_limit(error) and self._history_start is not None and not self.history_ready.is_set():
+                print('\n[COLETOR] Rate limit em ticks_history; nova tentativa em 15s.')
+                retry = threading.Timer(_TICK_PASS_PAUSE_SEC, self._request_tick_history, args=(ws,))
+                retry.daemon = True
+                retry.start()
+                return
             from payout_quotes import market_unavailable
             if market_unavailable(error):
                 _request_market_switch(self._symbol)
@@ -2073,12 +2008,13 @@ class _CollectorThread(threading.Thread):
                 print('[COLETOR] Historico incompleto; aguardando dados continuos.')
                 self.history_ready.set()
                 return
-            for epoch, price in page:
-                if (self._history_start <= epoch <= self._history_end
+            with self._history_lock:
+                rows = [(epoch, self._symbol, price) for epoch, price in page
+                        if self._history_start <= epoch <= self._history_end
                         and epoch not in self._history_seen
-                        and math.isfinite(price) and price > 0):
-                    append_record(TICKS_CSV, epoch, self._symbol, price)
-                    self._history_seen.add(epoch)
+                        and math.isfinite(price) and price > 0]
+                append_records(TICKS_CSV, rows)
+                self._history_seen.update(row[0] for row in rows)
             history_count = len(self._history_seen)
             should_log_history = (
                 self._last_history_log_count == 0
@@ -2119,20 +2055,26 @@ class _CollectorThread(threading.Thread):
         ):
             return
 
-        if epoch <= self._last_epoch:
-            return
-
         if tick.get("symbol") != self._symbol or not math.isfinite(price) or price<=0:
             return
 
         if self._first_tick_timer:
             self._first_tick_timer.cancel()
+        self._first_tick_timed_out = False
+
+        if epoch <= self._last_epoch:
+            return
 
         if self._history_start is None:
             self._history_start = (epoch // CANDLE_TIMEFRAME_SEC - _minimum_history_candles()) * CANDLE_TIMEFRAME_SEC
             self._history_end = epoch - 1
-            print(f'[COLETOR] Recuperando ticks dos ultimos {_minimum_history_candles():,} candles para treino inicial.')
-            self._request_tick_history(ws)
+            if _COLLECTOR_TICK_BACKFILL_ENABLED:
+                print(f'[COLETOR] Recuperando ticks dos ultimos {_minimum_history_candles():,} candles para treino inicial.')
+            else:
+                self.history_ready.set()
+                print('[COLETOR] Backfill pesado de ticks desativado; coletando somente ticks ao vivo.')
+        if _COLLECTOR_TICK_BACKFILL_ENABLED and not self.history_ready.is_set():
+            self._start_backfill(ws)
 
         # Filtro anti-spike.
         if self._last_price != 0.0:
@@ -2171,8 +2113,9 @@ class _CollectorThread(threading.Thread):
 
         self._local_count += 1
 
-        append_record(TICKS_CSV,epoch,self._symbol,price)
-        self._history_seen.add(epoch)
+        with self._history_lock:
+            append_record(TICKS_CSV,epoch,self._symbol,price)
+            self._history_seen.add(epoch)
 
         if self._local_count == 1 or self._local_count % _TICK_LOG_INTERVAL == 0:
             print(
@@ -2181,6 +2124,67 @@ class _CollectorThread(threading.Thread):
                 f"{price} @ {dt_str}",
                 flush=True,
             )
+
+    def _store_history(self, ticks):
+        """Grava em lote os ticks ainda desconhecidos e devolve quantos foram novos."""
+        with self._history_lock:
+            rows = [(epoch, self._symbol, price) for epoch, price in ticks
+                    if epoch not in self._history_seen]
+            append_records(TICKS_CSV, rows)
+            self._history_seen.update(row[0] for row in rows)
+        return len(rows)
+
+    def _start_backfill(self, ws):
+        """Inicia ou retoma a recuperacao historica sem duplicar workers apos reconexao."""
+        with self._backfill_lock:
+            if self._backfill_running:
+                return
+            self._backfill_running = True
+        if _TICK_BACKFILL_WORKERS > 1:
+            threading.Thread(target=self._parallel_backfill,
+                             args=(ws, self._history_start, self._history_end),
+                             daemon=True, name='TickBackfill').start()
+        else:
+            try:
+                self._request_tick_history(ws)
+            finally:
+                with self._backfill_lock:
+                    self._backfill_running = False
+
+    def _parallel_backfill(self, ws, start, end):
+        """Recupera o histórico em conexões paralelas, repetindo só o que faltou; em falha, recorre à paginação sequencial."""
+        try:
+            stored = 0
+            error = None
+            for attempt in range(_TICK_BACKFILL_PASSES):
+                with self._history_lock:
+                    known = set(self._history_seen)
+                try:
+                    stored += self._store_history(_fetch_ticks_parallel(self._symbol, start, end, known))
+                    error = None
+                    break
+                except _PartialTickFetch as exc:
+                    stored += self._store_history(exc.ticks)
+                    error = exc
+                    if attempt + 1 < _TICK_BACKFILL_PASSES:
+                        print(f'[COLETOR] Download paralelo incompleto ({exc}); nova tentativa do que faltou.')
+                        if self._stopped.wait(_TICK_PASS_PAUSE_SEC):
+                            return
+                except Exception as exc:
+                    error = exc
+                    break
+            if error is not None:
+                print(f'[COLETOR] Download paralelo falhou ({error}); usando coleta sequencial.')
+                try:
+                    self._request_tick_history(ws)
+                except Exception:
+                    ws.close()
+                return
+            print(f'[COLETOR] Historico paralelo: {stored:,} ticks novos gravados.')
+            self.history_ready.set()
+        finally:
+            with self._backfill_lock:
+                self._backfill_running = False
 
     def _request_tick_history(self, ws):
         """Solicita até 5000 ticks históricos do intervalo ainda faltante."""
@@ -2194,12 +2198,23 @@ class _CollectorThread(threading.Thread):
         error,
     ) -> None:
         """Imprime o erro e fecha o WebSocket para reconectar."""
-        if not _shutdown.is_set():
+        message = str(error)
+        benign_close = (
+            self._first_tick_timed_out
+            and (
+                "Connection is already closed" in message
+                or "'NoneType' object has no attribute 'sock'" in message
+            )
+        )
+        if not _shutdown.is_set() and not benign_close:
             print(
                 f"\n[COLETOR] Erro WebSocket: "
                 f"{error}"
             )
-        ws.close()
+        try:
+            ws.close()
+        except Exception:
+            pass
 
     def _on_close(
         self,
@@ -2209,7 +2224,10 @@ class _CollectorThread(threading.Thread):
     ) -> None:
         """Informa o encerramento da conexão quando não foi intencional."""
         if not _shutdown.is_set() and not self._stopped.is_set():
-            action = 'coleta bloqueada' if self.fatal_error else 'reconectando...'
+            if self._first_tick_timed_out:
+                action = 'sem tick inicial; reconectando...'
+            else:
+                action = 'coleta bloqueada' if self.fatal_error else 'reconectando...'
             print(
                 f"\n[COLETOR] Conexão encerrada "
                 f"(código: {code}) — {action}"
@@ -2232,6 +2250,12 @@ def _wait_for_ticks(
         if collector is not None and (collector.fatal_error or not collector.is_alive()):
             raise RuntimeError(collector.fatal_error or 'coletor encerrado sem dados')
 
+    def missing_summary(current_count: int, labelable_count: int):
+        """Retorna o número de ticks e contratos ainda faltando para iniciar o treino."""
+        missing_ticks = max(0, min_ticks - current_count)
+        missing_contracts = max(0, _MIN_LABELABLE_CONTRACTS - labelable_count)
+        return missing_ticks, missing_contracts
+
     check_collector()
     _pipeline_heartbeat("collecting")
     current = _count_ticks()
@@ -2245,31 +2269,48 @@ def _wait_for_ticks(
         )
         return
 
+    missing_ticks, missing_contracts = missing_summary(current, labelable)
     print(
-        f"\n[PIPELINE] Aguardando "
-        f"{min_ticks:,} ticks reais para o primeiro treino "
-        f"e {_MIN_LABELABLE_CONTRACTS:,} contratos rotuláveis "
-        f"(atual: {current:,} ticks, {labelable:,} contratos)..."
+        f"\n[PIPELINE] Aguardando mínimo de treino: "
+        f"faltam {missing_ticks:,} ticks reais ({current:,}/{min_ticks:,}) "
+        f"e {missing_contracts:,} contratos rotuláveis "
+        f"({labelable:,}/{_MIN_LABELABLE_CONTRACTS:,}) para iniciar o treino."
     )
 
+    last_missing = None
     while not _shutdown.is_set():
         _pipeline_heartbeat("collecting")
-        time.sleep(poll_sec)
-        check_collector()
+        backfill = getattr(collector, 'history_ready', None)
+        if isinstance(backfill, threading.Event) and not backfill.is_set():
+            # Recontar o CSV durante o backfill custa mais que esperar o seu término.
+            backfill.wait(poll_sec)
+            check_collector()
+            if not backfill.is_set():
+                continue
+        else:
+            time.sleep(poll_sec)
+            check_collector()
 
         current = _count_ticks()
         labelable = _count_labelable_contracts_for_training()
+        missing_ticks, missing_contracts = missing_summary(current, labelable)
 
-        print(
-            f"\r[PIPELINE] Ticks reais: "
-            f"{current:,} / {min_ticks:,} | "
-            f"contratos rotuláveis: {labelable:,} / {_MIN_LABELABLE_CONTRACTS:,}   ",
-            end="",
-            flush=True,
-        )
+        if last_missing != (missing_ticks, missing_contracts):
+            print(
+                f"[PIPELINE] Faltam {missing_contracts:,} contratos rotuláveis "
+                f"({labelable:,}/{_MIN_LABELABLE_CONTRACTS:,}) "
+                f"e {missing_ticks:,} ticks reais ({current:,}/{min_ticks:,}) "
+                "para iniciar o treino.",
+                flush=True,
+            )
+            last_missing = (missing_ticks, missing_contracts)
 
         if current >= min_ticks and labelable >= _MIN_LABELABLE_CONTRACTS:
-            print()
+            print(
+                f"[PIPELINE] {current:,} ticks reais "
+                f"e {labelable:,} contratos rotuláveis "
+                "já disponíveis — pronto para treino."
+            )
             return
 
     sys.exit(0)
@@ -2322,6 +2363,27 @@ def _load_latest_final_metrics():
         print(msg)
         _last_model_load_error = msg
     return None
+
+
+def _active_model_shadow_approved():
+    """Confere que o shadow persistido pertence ao bundle ativo e atingiu os gates definidos."""
+    try:
+        metadata = json.loads(Path(AI_MODEL_PATH + '.metadata.json').read_text())
+        state = json.loads(_SHADOW_STATE_JSON.read_text())
+        model_id = fingerprint(AI_MODEL_PATH)
+        return (
+            metadata.get('approved') is True
+            and metadata.get('symbol') == _runtime_symbol()
+            and metadata.get('artifact_sha256') == model_id
+            and state.get('schema_version') == 1
+            and state.get('symbol') == _runtime_symbol()
+            and state.get('model_id') == model_id
+            and state.get('timeframe_sec') == CANDLE_TIMEFRAME_SEC
+            and state.get('duration_sec') == duration_seconds(DURATION, DURATION_UNIT)
+            and state.get('approved_at_epoch') is not None
+        )
+    except (OSError, TypeError, ValueError, KeyError):
+        return False
 
 
 def _should_promote_model(current,challenger):
@@ -2502,6 +2564,57 @@ def _safe_symbol_slug(symbol: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in str(symbol)).strip("_") or "symbol"
 
 
+def _metrics_opportunity_score(metrics: dict) -> tuple:
+    """Pontua histórico de entradas simuladas sem liberar promoção por diagnóstico."""
+    metrics = metrics or {}
+    uncalibrated = metrics.get("uncalibrated_metrics") or {}
+    diagnostics = metrics.get("approval_diagnostics") or {}
+    component_trades = diagnostics.get("component_trades") or {}
+    combined_trades = int(metrics.get("trades", 0) or 0)
+    diagnostic_trades = max(
+        [int(uncalibrated.get("trades", 0) or 0)]
+        + [int(value or 0) for value in component_trades.values()]
+    )
+    win_rate = float(metrics.get("win_rate", 0.0) or 0.0)
+    diagnostic_win_rate = float(uncalibrated.get("win_rate", 0.0) or 0.0)
+    return (
+        combined_trades,
+        combined_trades * win_rate,
+        diagnostic_trades,
+        diagnostic_trades * diagnostic_win_rate,
+        float(metrics.get("auc", 0.0) or 0.0),
+    )
+
+
+def _load_market_opportunity_history() -> dict:
+    """Lê candidatos isolados e resume quais símbolos já geraram entradas no diagnóstico."""
+    root = Path(AI_MODEL_PATH).resolve().parent / ".training_candidates"
+    history = {}
+    if not root.exists():
+        return history
+    for metadata_path in root.glob("*/model.pkl.metadata.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        symbol = metadata.get("symbol")
+        metrics = metadata.get("metrics") or {}
+        if not symbol:
+            continue
+        score = _metrics_opportunity_score(metrics)
+        if score > history.get(symbol, ()):
+            history[symbol] = score
+    return history
+
+
+def _order_symbols_by_opportunity(symbols: list, history: Optional[dict] = None) -> list:
+    """Ordena mercados mantendo ADX como desempate quando não há histórico útil."""
+    history = _load_market_opportunity_history() if history is None else history
+    indexed = list(enumerate(symbols))
+    indexed.sort(key=lambda item: (history.get(item[1], (0, 0.0, 0, 0.0, 0.0)), -item[0]), reverse=True)
+    return [symbol for _index, symbol in indexed]
+
+
 def _training_rank_key(metrics: dict) -> tuple:
     """Chave de ordenação de candidatos: elegibilidade, expectativa, win rate, AUC, F1 e número de contratos."""
     observed = metrics.get("observed_payout_evaluation") or {}
@@ -2509,6 +2622,7 @@ def _training_rank_key(metrics: dict) -> tuple:
     return (
         bool(metrics.get("eligible")),
         float(payout_metrics.get("expectancy", metrics.get("expectancy", 0.0)) or 0.0),
+        _metrics_opportunity_score(metrics),
         float(metrics.get("win_rate", 0.0) or 0.0),
         float(metrics.get("auc", 0.0) or 0.0),
         float(metrics.get("f1", 0.0) or 0.0),
@@ -2522,103 +2636,119 @@ def _run_initial_symbol_tournament(
     history_count: int,
     min_ticks: int,
     resources: dict,
+    no_scan: bool = False,
 ) -> tuple[str, Optional[dict]]:
-    """Treina candidatos isolados e promove somente o melhor aprovado."""
+    """Busca mercados fortes e treina candidatos até encontrar bundle aprovado ou receber interrupção."""
     if not candidates:
         return "", None
 
-    print(
-        "\n[TORNEIO] Iniciando treino comparativo dos "
-        f"{len(candidates)} melhores símbolos."
-    )
-
     previous_symbol = _runtime_symbol()
-    results = []
+    attempted = set()
+    retry_after = 0.0
+    batch = list(candidates)
 
-    for index, symbol in enumerate(candidates, start=1):
-        if _shutdown.is_set():
-            break
-
-        print(
-            f"\n[TORNEIO] ({index}/{len(candidates)}) Preparando {_symbol_display(symbol)}"
-        )
-        _set_runtime_symbol(symbol)
-
-        collector = None
-        try:
-            _ensure_ticks_header()
-            collector = _CollectorThread(symbol)
-            collector.start()
-            _fetch_historical_ticks(history_count)
-            _wait_for_ticks(min_ticks, collector=collector)
-
-            slug = _safe_symbol_slug(symbol)
-            tmp_dataset = f"{DATASET_CSV}.candidate.{slug}"
-            tmp_model = f"{AI_MODEL_PATH}.candidate.{slug}"
-            tmp_tft = f"{TRANSFORMER_MODEL_PATH}.candidate.{slug}"
-            tmp_duration = f"{DURATION_MODEL_PATH}.candidate.{slug}"
-
-            success, metrics = _run_training(
-                dataset_path=tmp_dataset,
-                model_path=tmp_model,
-                tft_output_path=tmp_tft,
-                duration_output_path=tmp_duration,
+    while not _shutdown.is_set():
+        batch = [symbol for symbol in batch if symbol not in attempted]
+        if not batch:
+            now = time.monotonic()
+            if retry_after and now >= retry_after:
+                attempted.clear()
+                retry_after = 0.0
+            batch = _detect_top_trending_symbols(
+                no_scan=no_scan, limit=_TOP_TRENDING_SYMBOLS, exclude_symbols=attempted
             )
-            if success and metrics:
-                promote = bool(metrics.get("eligible"))
-                reason = "aprovado no teste final do torneio" if promote else "; ".join(metrics.get("rejection_reasons") or [])
-                metrics = dict(metrics, tournament_promotion_reason=reason)
-                print(
-                    f"[TORNEIO] {symbol}: aprovado={metrics.get('eligible')} "
-                    f"AUC={metrics.get('auc', 0):.4f} "
-                    f"win_rate={metrics.get('win_rate', 0):.2%} "
-                    f"trades={metrics.get('trades', 0)} | {reason}"
+            if not batch:
+                if not retry_after:
+                    retry_after = time.monotonic() + _NO_MODEL_RETRY_SEC
+                wait = min(_MARKET_RESCAN_SEC, max(1, retry_after - time.monotonic()))
+                print(f'[TORNEIO] Nenhum novo mercado com ADX >= {_ADX_TREND_MIN:g}; nova varredura em {wait:.0f}s.')
+                _shutdown.wait(wait)
+                continue
+
+        # Sintéticos só são treinados depois que todos os forex disponíveis foram tentados sem aprovação.
+        batch = [s for s in batch if not _is_synthetic_symbol(s)] or batch
+        batch = _order_symbols_by_opportunity(batch)
+
+        print(f'\n[TORNEIO] Treinando {len(batch)} mercado(s) com os mesmos critérios temporais.')
+        results = []
+        for index, symbol in enumerate(batch, start=1):
+            if _shutdown.is_set():
+                break
+            attempted.add(symbol)
+            print(f"\n[TORNEIO] ({index}/{len(batch)}) Preparando {_symbol_display(symbol)}")
+            _set_runtime_symbol(symbol)
+            collector = None
+            try:
+                _ensure_ticks_header()
+                collector = _CollectorThread(symbol)
+                collector.start()
+                _fetch_historical_ticks(history_count)
+                _wait_for_ticks(min_ticks, collector=collector)
+
+                slug = _safe_symbol_slug(symbol)
+                attempt_id = f'{time.time_ns()}-{slug}'
+                candidate_dir = Path(AI_MODEL_PATH).resolve().parent / '.training_candidates' / attempt_id
+                candidate_dir.mkdir(parents=True, exist_ok=False)
+                tmp_dataset = str(candidate_dir / Path(DATASET_CSV).name)
+                tmp_model = str(candidate_dir / 'model.pkl')
+                tmp_tft = str(candidate_dir / 'transformer_model.pkl')
+                tmp_duration = str(candidate_dir / 'duration_model.pkl')
+
+                success, metrics = _run_training(
+                    dataset_path=tmp_dataset,
+                    model_path=tmp_model,
+                    tft_output_path=tmp_tft,
+                    duration_output_path=tmp_duration,
                 )
-                if promote:
-                    results.append((symbol, tmp_model, metrics))
+                if success and metrics:
+                    promote = bool(metrics.get('eligible'))
+                    reason = 'aprovado no teste final do torneio' if promote else '; '.join(metrics.get('rejection_reasons') or [])
+                    metrics = dict(metrics, tournament_promotion_reason=reason)
+                    print(
+                        f"[TORNEIO] {symbol}: aprovado={metrics.get('eligible')} "
+                        f"AUC={metrics.get('auc', 0):.4f} "
+                        f"win_rate={metrics.get('win_rate', 0):.2%} "
+                        f"trades={metrics.get('trades', 0)} | {reason}"
+                    )
+                    if promote:
+                        results.append((symbol, tmp_model, metrics))
+                    else:
+                        print(f'[TORNEIO] {symbol}: candidato não elegível; procurando outro mercado.')
                 else:
-                    print(f"[TORNEIO] {symbol}: candidato não elegível para promoção.")
-            else:
-                print(f"[TORNEIO] {symbol}: treino não gerou candidato utilizável.")
+                    print(f'[TORNEIO] {symbol}: treino não gerou candidato utilizável.')
+            except RuntimeError as exc:
+                print(f'[TORNEIO] {symbol}: coleta/treino bloqueado: {exc}')
+            finally:
+                if collector is not None:
+                    collector.stop()
+                    while collector.is_alive():
+                        collector.join(timeout=5)
 
-        except RuntimeError as exc:
-            print(f"[TORNEIO] {symbol}: coleta/treino bloqueado: {exc}")
-        finally:
-            if collector is not None:
-                collector.stop()
-                while collector.is_alive():
-                    collector.join(timeout=5)
+        if results:
+            winner_symbol, winner_model, winner_metrics = max(
+                results, key=lambda item: _training_rank_key(item[2])
+            )
+            _set_runtime_symbol(winner_symbol)
+            os.replace(winner_model, AI_MODEL_PATH)
+            winner_metadata = winner_model + '.metadata.json'
+            if os.path.exists(winner_metadata):
+                os.replace(winner_metadata, AI_MODEL_PATH + '.metadata.json')
+            _reset_ai_predictor()
+            _model_ready.set()
+            print(
+                f"\n[TORNEIO] Vencedor promovido: {_symbol_display(winner_symbol)} | "
+                f"AUC={winner_metrics.get('auc', 0):.4f} | "
+                f"win_rate={winner_metrics.get('win_rate', 0):.2%} | "
+                f"trades={winner_metrics.get('trades', 0)}"
+            )
+            return winner_symbol, winner_metrics
 
-    if not results:
-        _set_runtime_symbol(previous_symbol)
-        print(
-            "[TORNEIO] Nenhum dos símbolos gerou bundle aprovado; "
-            "pipeline seguirá no fluxo adaptativo padrão."
+        batch = _detect_top_trending_symbols(
+            no_scan=no_scan, limit=_TOP_TRENDING_SYMBOLS, exclude_symbols=attempted
         )
-        return "", None
 
-    winner_symbol, winner_model, winner_metrics = max(
-        results,
-        key=lambda item: _training_rank_key(item[2]),
-    )
-    _set_runtime_symbol(winner_symbol)
-
-    os.replace(winner_model, AI_MODEL_PATH)
-    winner_metadata = winner_model + ".metadata.json"
-    if os.path.exists(winner_metadata):
-        os.replace(winner_metadata, AI_MODEL_PATH + ".metadata.json")
-
-    _reset_ai_predictor()
-    _model_ready.set()
-
-    print(
-        "\n[TORNEIO] Vencedor promovido: "
-        f"{_symbol_display(winner_symbol)} | "
-        f"AUC={winner_metrics.get('auc', 0):.4f} | "
-        f"win_rate={winner_metrics.get('win_rate', 0):.2%} | "
-        f"trades={winner_metrics.get('trades', 0)}"
-    )
-    return winner_symbol, winner_metrics
+    _set_runtime_symbol(previous_symbol)
+    return '', None
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -2839,21 +2969,12 @@ def _retrain_loop(bootstrap_until_ready: bool = False) -> None:
             "Iniciando re-treino..."
         )
 
-        tmp_dataset = (
-            f"{DATASET_CSV}.tmp"
-        )
-
-        tmp_model = (
-            f"{AI_MODEL_PATH}.new"
-        )
-
-        tmp_tft = (
-            f"{TRANSFORMER_MODEL_PATH}.new"
-        )
-
-        tmp_duration = (
-            f"{DURATION_MODEL_PATH}.new"
-        )
+        candidate_dir = Path(AI_MODEL_PATH).resolve().parent / '.training_candidates' / f'retrain-{time.time_ns()}'
+        candidate_dir.mkdir(parents=True, exist_ok=False)
+        tmp_dataset = str(candidate_dir / Path(DATASET_CSV).name)
+        tmp_model = str(candidate_dir / 'model.pkl')
+        tmp_tft = str(candidate_dir / 'transformer_model.pkl')
+        tmp_duration = str(candidate_dir / 'duration_model.pkl')
 
         champion_metrics = (
             _load_latest_final_metrics()
@@ -2879,6 +3000,10 @@ def _retrain_loop(bootstrap_until_ready: bool = False) -> None:
                 )
             )
 
+            if promote and champion_metrics is not None and not _active_model_shadow_approved():
+                promote = False
+                promo_reason = 'bundle ativo ainda não concluiu a validação shadow'
+
             if promote:
                 os.replace(
                     tmp_model,
@@ -2900,13 +3025,9 @@ def _retrain_loop(bootstrap_until_ready: bool = False) -> None:
                 _retrain_state["bootstrap_failed_promotions"] = 0
 
             else:
-                # Keep the last trained candidate reviewable without publishing it.
-                os.replace(tmp_model, AI_MODEL_PATH + '.candidate')
-                if os.path.exists(tmp_model + '.metadata.json'):
-                    os.replace(tmp_model + '.metadata.json', AI_MODEL_PATH + '.candidate.metadata.json')
                 print(
                     "[RE-TREINO] Challenger "
-                    f"não promovido: {promo_reason}"
+                    f"não promovido: {promo_reason} | artefatos isolados em {candidate_dir}"
                 )
                 if bootstrap_until_ready and _load_latest_final_metrics() is None:
                     failures = int(_retrain_state.get("bootstrap_failed_promotions", 0) or 0) + 1
@@ -3118,6 +3239,9 @@ def _main_session(resources, forced_symbol=None) -> None:
     parser.add_argument('--reuse-training-data', action='store_true',
                         help='Reutiliza dados/modelos anteriores; por padrao inicia uma nova coleta e treino.')
 
+    parser.add_argument('--fresh-collect', action='store_true',
+                        help='Arquiva tambem os ticks existentes e baixa toda a janela novamente.')
+
     parser.add_argument(
         "--no-scan",
         action="store_true",
@@ -3203,10 +3327,11 @@ def _main_session(resources, forced_symbol=None) -> None:
     ]
     print('[PIPELINE] Módulos de decisão ativos: ' + ', '.join(active_modules or ['nenhum']))
 
-    state_path=Path(__file__).resolve().parent/'state.json'
+    state_path=Path(TICKS_CSV).resolve().with_name('state.json')
     prior=json.loads(state_path.read_text()) if state_path.exists() else {}
     pending=prior.get('active_contract')
     tournament_candidates = []
+    selected_by_ai_trend_scan = False
     try:
         if pending:
             detected = pending.get('symbol')
@@ -3214,9 +3339,16 @@ def _main_session(resources, forced_symbol=None) -> None:
             detected = forced_symbol
         elif args.skip_collect:
             detected = _cfg.SYMBOL
+        elif model_required:
+            candidates = _wait_for_strong_training_symbols(
+                no_scan=args.no_scan, limit=args.top_symbols
+            )
+            if not candidates:
+                return
+            detected = candidates[0]
+            selected_by_ai_trend_scan = True
         else:
-            tournament_candidates = _detect_top_trending_symbols(no_scan=args.no_scan, limit=args.top_symbols)
-            detected = tournament_candidates[0] if tournament_candidates else _detect_trending_symbol(no_scan=args.no_scan)
+            detected = _detect_trending_symbol(no_scan=args.no_scan)
 
         if not pending and not args.skip_collect:
             detected = _ensure_operable_symbol(detected)
@@ -3234,7 +3366,7 @@ def _main_session(resources, forced_symbol=None) -> None:
         not pending
         and not args.force_retrain
         and forced_symbol is None
-        and not tournament_candidates
+        and not selected_by_ai_trend_scan
         and model_required
     ):
         model_symbol = _first_live_symbol_with_compatible_model(
@@ -3253,7 +3385,8 @@ def _main_session(resources, forced_symbol=None) -> None:
 
     if model_required:
         _prepare_training_start(reuse=args.reuse_training_data or forced_symbol is not None,
-                                skip_collect=args.skip_collect, pending=pending)
+                                skip_collect=args.skip_collect, pending=pending,
+                                fresh_collect=args.fresh_collect)
     else:
         print('[PIPELINE] IA desligada; preservando dados e artefatos de treinamento.')
 
@@ -3263,10 +3396,13 @@ def _main_session(resources, forced_symbol=None) -> None:
             history_count=history_count,
             min_ticks=args.min_ticks,
             resources=resources,
+            no_scan=args.no_scan,
         )
         if winner_symbol:
             detected = winner_symbol
         else:
+            if _shutdown.is_set():
+                return
             _set_runtime_symbol(detected)
 
     _banner(
@@ -3551,6 +3687,7 @@ def _main_session(resources, forced_symbol=None) -> None:
     bot.market_switch_requested = _market_switch.is_set
     bot.on_market_unavailable = _request_market_switch
     bot.on_market_unfavorable = _request_market_switch_for_unfavorable
+    bot.on_shadow_rejected = _request_shadow_validation_switch
     bot.run()
     _check_market_switch()
 
@@ -3573,25 +3710,29 @@ def _finish_market_session(resources):
 
 def main() -> None:
     """Ponto de entrada: obtém o lock de execução e repete sessões, trocando de mercado quando indisponível."""
+    global _market_switch_reason
     resources = {'lock': acquire_execution_lock(Path(__file__).resolve().parent/'executor.lock')}
     forced_symbol = None
     try:
         while True:
             _shutdown.clear()
             _market_switch.clear()
+            _market_switch_reason = ''
             try:
                 _main_session(resources, forced_symbol)
                 return
             except MarketUnavailable as exc:
                 old_symbol = str(exc)
+                switch_reason = _market_switch_reason or 'market_unavailable'
             finally:
                 _finish_market_session(resources)
             # Keep risk, historical data and account state. Only the market changes.
-            _mark_market_failure(old_symbol, "market_unavailable")
+            if switch_reason != 'shadow_validation_failed':
+                _mark_market_failure(old_symbol, switch_reason)
             _shutdown.clear()
             forced_symbol = ''
             while not forced_symbol and not _shutdown.is_set():
-                if _switch_budget_exhausted():
+                if switch_reason != 'shadow_validation_failed' and _switch_budget_exhausted():
                     _write_pipeline_status(
                         status="degraded",
                         running=False,
@@ -3613,11 +3754,11 @@ def main() -> None:
                         'usando bundle compatível já aprovado.'
                     )
                     break
-                forced_symbol = _first_live_symbol(candidates)
+                forced_symbol = _select_strong_market(candidates, exclude_symbols={old_symbol})
                 if forced_symbol:
                     print(
                         f'[MERCADO] {old_symbol} → {forced_symbol}; '
-                        'sem bundle aprovado, coleta e treino serão iniciados.'
+                        'ADX mínimo confirmado; coleta e treino serão iniciados.'
                     )
                     break
                 print('[MERCADO] Nenhum alternativo disponível; nova consulta em 60 segundos.')

@@ -63,7 +63,7 @@ def test_initial_wait_observes_market_change(monkeypatch):
 
 
 def test_compatible_model_fallback_uses_live_approved_symbol(monkeypatch):
-    """Garante que o fallback escolhe o primeiro símbolo ao vivo com modelo aprovado e compatível."""
+    """Fallback exige bundle compatível, ADX recente e catálogo aberto."""
     checked = []
 
     def load_model(_path, symbol):
@@ -76,6 +76,17 @@ def test_compatible_model_fallback_uses_live_approved_symbol(monkeypatch):
     monkeypatch.setattr(pipeline, 'load_validated_bundle', load_model)
     monkeypatch.setattr(pipeline, 'usable', lambda metadata, symbol: metadata['symbol'] == symbol)
     monkeypatch.setattr(pipeline, '_probe_symbol', lambda symbol: (symbol == 'frxGBPUSD', 'fechado'))
+    monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        symbol: {'market': 'forex', 'underlying_symbol_type': 'forex',
+                 'is_synthetic': False, 'exchange_is_open': True,
+                 'is_trading_suspended': False}
+        for symbol in ('frxEURUSD', 'frxGBPUSD')
+    })
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'frxGBPUSD': 25})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'frxGBPUSD': 100})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
+    monkeypatch.setattr(pipeline, '_scan_group', lambda symbols: {symbol: 1 for symbol in symbols})
 
     assert pipeline._first_live_symbol_with_compatible_model(['frxEURUSD', 'frxGBPUSD']) == 'frxGBPUSD'
     assert checked == ['frxEURUSD', 'frxGBPUSD']
@@ -90,6 +101,13 @@ def test_compatible_model_fallback_rejects_closed_symbol(monkeypatch):
     )
     monkeypatch.setattr(pipeline, 'usable', lambda _metadata, _symbol: True)
     monkeypatch.setattr(pipeline, '_probe_symbol', lambda _symbol: (False, 'mercado fechado'))
+    monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        'frxGBPUSD': {'market': 'forex', 'underlying_symbol_type': 'forex',
+                      'is_synthetic': False, 'exchange_is_open': False,
+                      'is_trading_suspended': False},
+    })
+    monkeypatch.setattr(pipeline, '_scan_group', lambda symbols: {symbol: 50 for symbol in symbols})
 
     assert pipeline._first_live_symbol_with_compatible_model(['frxGBPUSD']) == ''
 
@@ -118,15 +136,16 @@ def test_session_cleanup_precedes_symbol_change(monkeypatch):
         assert order[-1] == 'train_finished'
         assert 'OLD' not in candidates
         return ''
-    def select(candidates):
-        """Verifica que a limpeza terminou e o símbolo antigo foi excluído; escolhe NEW."""
+    def select(candidates, *, exclude_symbols=()):
+        """Verifica que a limpeza terminou e o símbolo antigo foi excluído da busca ADX."""
         assert order[-1] == 'train_finished'
-        assert 'OLD' not in candidates
+        assert candidates == ['NEW']
+        assert 'OLD' in exclude_symbols
         return 'NEW'
     monkeypatch.setattr(pipeline, '_main_session', session)
     monkeypatch.setattr(pipeline, '_scan_candidates', lambda: ['OLD', 'NEW'])
     monkeypatch.setattr(pipeline, '_first_live_symbol_with_compatible_model', compatible)
-    monkeypatch.setattr(pipeline, '_first_live_symbol', select)
+    monkeypatch.setattr(pipeline, '_select_strong_market', select)
     pipeline.main()
     assert order == [('session', None), 'stop', 'joined', 'train_finished', ('session', 'NEW')]
     lock.close.assert_called_once()
@@ -162,6 +181,46 @@ def test_market_change_prefers_symbol_with_compatible_model(monkeypatch):
     lock.close.assert_called_once()
 
 
+def test_shadow_rejection_switches_to_strong_market_without_market_failure_budget(monkeypatch):
+    """Garante que reprovação shadow busca outro mercado forte sem marcar o antigo como indisponível."""
+    lock = Mock()
+    order = []
+    budget = Mock(return_value=True)
+    failed = Mock()
+    monkeypatch.setattr(pipeline, 'acquire_execution_lock', lambda _: lock)
+    monkeypatch.setattr(pipeline, '_shutdown', threading.Event())
+    monkeypatch.setattr(pipeline, '_market_switch', threading.Event())
+    monkeypatch.setattr(pipeline, '_model_ready', threading.Event())
+    monkeypatch.setattr(pipeline, '_retrain_state', {})
+    monkeypatch.setattr(pipeline, '_reset_ai_predictor', lambda: None)
+    monkeypatch.setattr(pipeline, '_switch_budget_exhausted', budget)
+    monkeypatch.setattr(pipeline, '_mark_market_failure', failed)
+    monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'OLD')
+    monkeypatch.setattr(pipeline, '_scan_candidates', lambda: ['OLD', 'NEW'])
+
+    def select(candidates, *, exclude_symbols=()):
+        """Retorna somente NEW, confirmando exclusão do bundle reprovado."""
+        order.append(('scan', list(candidates), set(exclude_symbols)))
+        return 'NEW'
+
+    def session(_resources, symbol):
+        """Simula reprovação shadow em OLD e sessão normal em NEW."""
+        order.append(('session', symbol))
+        if symbol is None:
+            pipeline._request_shadow_validation_switch('OLD')
+            raise pipeline.MarketUnavailable('OLD')
+
+    monkeypatch.setattr(pipeline, '_select_strong_market', select)
+    monkeypatch.setattr(pipeline, '_main_session', session)
+
+    pipeline.main()
+
+    assert order == [('session', None), ('scan', ['NEW'], {'OLD'}), ('session', 'NEW')]
+    budget.assert_not_called()
+    failed.assert_not_called()
+    lock.close.assert_called_once()
+
+
 def test_market_switch_budget_enters_degraded_state(monkeypatch):
     """Garante que estourar o orçamento de trocas de mercado leva o pipeline ao estado degraded."""
     lock = Mock()
@@ -191,17 +250,53 @@ def test_market_switch_budget_enters_degraded_state(monkeypatch):
 
 
 def test_top_trending_symbols_selects_best_live_markets(monkeypatch):
-    """Garante que a seleção dos mercados em tendência ordena por ADX e descarta os sem feed ao vivo."""
-    monkeypatch.setattr(pipeline, '_SCAN_SYMBOLS_FOREX', ['A', 'B', 'C'])
-    monkeypatch.setattr(pipeline, '_SCAN_SYMBOLS_PRIMARY', ['D', 'E', 'F'])
-    monkeypatch.setattr(pipeline, '_SCAN_SYMBOLS_SECONDARY', ['G'])
-    monkeypatch.setattr(pipeline, '_ADX_TREND_MIN', 10.0)
+    """Prioriza não sintéticos e depois ordena por score entre os ativos elegíveis."""
+    monkeypatch.setattr(pipeline, '_ADX_TREND_MIN', 30.0)
 
     scores = {'A': 18.0, 'B': 40.0, 'C': 9.0, 'D': 30.0, 'E': 25.0, 'F': 12.0, 'G': 50.0}
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'A': 31.0, 'B': 35.0, 'C': 29.0,
+                                                       'D': 40.0, 'E': 20.0, 'F': 35.0, 'G': 50.0})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {symbol: 100 for symbol in scores})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        symbol: {'market': 'forex' if symbol in {'A', 'B', 'C'} else 'synthetic_index',
+                 'underlying_symbol_type': 'forex' if symbol in {'A', 'B', 'C'} else 'synthetic_index',
+                 'is_synthetic': symbol not in {'A', 'B', 'C'},
+                 'exchange_is_open': True, 'is_trading_suspended': False}
+        for symbol in scores
+    })
+    monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
+    monkeypatch.setattr(pipeline, '_catalog_scan_candidates', lambda: list(scores))
     monkeypatch.setattr(pipeline, '_scan_group', lambda candidates: {symbol: scores[symbol] for symbol in candidates})
     monkeypatch.setattr(pipeline, '_probe_symbol', lambda symbol: (symbol != 'D', 'fechado'))
 
-    assert pipeline._detect_top_trending_symbols(limit=5) == ['G', 'B', 'E', 'A', 'F']
+    assert pipeline._detect_top_trending_symbols(limit=5) == ['B', 'A']
+
+
+def test_top_trending_symbols_falls_back_to_open_eligible_synthetic(monkeypatch):
+    """Sintético aberto com ADX 25 é usado somente quando não há não sintético elegível."""
+    monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
+    monkeypatch.setattr(pipeline, '_catalog_scan_candidates', lambda: ['FOREX', 'SYNTH'])
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        'FOREX': {'market': 'forex', 'underlying_symbol_type': 'forex',
+                  'is_synthetic': False, 'exchange_is_open': True, 'is_trading_suspended': False},
+        'SYNTH': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                  'is_synthetic': True, 'exchange_is_open': True, 'is_trading_suspended': False},
+    })
+    scanned = []
+
+    def scan(symbols):
+        scanned.extend(symbols)
+        return {symbol: 1 for symbol in symbols}
+
+    monkeypatch.setattr(pipeline, '_scan_group', scan)
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'FOREX': 24.99, 'SYNTH': 25.0})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'FOREX': 100, 'SYNTH': 100})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
+    monkeypatch.setattr(pipeline, '_probe_symbol', lambda _symbol: (True, ''))
+
+    assert pipeline._detect_top_trending_symbols(limit=1) == ['SYNTH']
+    assert scanned == ['FOREX', 'SYNTH']
 
 
 def test_training_rank_prefers_eligible_expected_return():
@@ -211,6 +306,35 @@ def test_training_rank_prefers_eligible_expected_return():
     approved_high = {'eligible': True, 'expectancy': 0.08, 'win_rate': .52, 'auc': .58, 'f1': .48, 'trades': 12}
 
     assert max([rejected, approved_low, approved_high], key=pipeline._training_rank_key) is approved_high
+
+
+def test_symbol_order_uses_prior_opportunity_history():
+    """Garante que o torneio prioriza símbolos com histórico de entradas simuladas."""
+    history = {
+        'AAA': (0, 0.0, 2, 1.0, .55),
+        'CCC': (0, 0.0, 20, 8.0, .50),
+    }
+    assert pipeline._order_symbols_by_opportunity(['AAA', 'BBB', 'CCC'], history) == ['CCC', 'AAA', 'BBB']
+
+
+def test_market_opportunity_history_reads_candidate_metadata(monkeypatch, tmp_path):
+    """Garante que metadados de candidatos alimentam o histórico por símbolo."""
+    model_path = tmp_path / 'model.pkl'
+    candidate = tmp_path / '.training_candidates' / 'attempt-1'
+    candidate.mkdir(parents=True)
+    metadata = {
+        'symbol': 'R_50',
+        'metrics': {
+            'trades': 0,
+            'auc': .55,
+            'uncalibrated_metrics': {'trades': 12, 'win_rate': .5},
+            'approval_diagnostics': {'component_trades': {'ai_only': 7, 'combined': 0}},
+        },
+    }
+    (candidate / 'model.pkl.metadata.json').write_text(json.dumps(metadata))
+    monkeypatch.setattr(pipeline, 'AI_MODEL_PATH', str(model_path))
+    history = pipeline._load_market_opportunity_history()
+    assert history['R_50'][2] == 12
 
 
 def test_initial_symbol_tournament_promotes_best_approved(monkeypatch, tmp_path):
@@ -269,9 +393,15 @@ def test_initial_symbol_tournament_promotes_best_approved(monkeypatch, tmp_path)
     monkeypatch.setattr(pipeline, '_wait_for_ticks', lambda _min_ticks, collector=None: None)
     monkeypatch.setattr(pipeline, '_run_training', run_training)
     monkeypatch.setattr(pipeline, '_reset_ai_predictor', lambda: None)
+    scans = []
+    def next_market_batch(**kwargs):
+        """Retorna o lote seguinte e registra que o símbolo reprovado foi excluído."""
+        scans.append({**kwargs, 'exclude_symbols': set(kwargs['exclude_symbols'])})
+        return ['LOW', 'BEST']
+    monkeypatch.setattr(pipeline, '_detect_top_trending_symbols', next_market_batch)
 
     winner, metrics = pipeline._run_initial_symbol_tournament(
-        ['LOW', 'BEST', 'BAD'],
+        ['BAD'],
         history_count=100,
         min_ticks=10,
         resources={},
@@ -282,9 +412,10 @@ def test_initial_symbol_tournament_promotes_best_approved(monkeypatch, tmp_path)
     assert active['symbol'] == 'BEST'
     assert model_path.read_text() == 'model-BEST'
     assert Path(str(model_path) + '.metadata.json').read_text() == 'metadata-BEST'
-    assert started == ['LOW', 'BEST', 'BAD']
-    assert stopped == ['LOW', 'BEST', 'BAD']
-    assert [item[0] for item in trained] == ['LOW', 'BEST', 'BAD']
+    assert started == ['BAD', 'LOW', 'BEST']
+    assert stopped == ['BAD', 'LOW', 'BEST']
+    assert [item[0] for item in trained] == ['BAD', 'LOW', 'BEST']
+    assert scans[0]['exclude_symbols'] == {'BAD'}
 
 
 def test_main_session_passes_top_symbols_limit(monkeypatch, tmp_path):
@@ -365,6 +496,9 @@ def test_initial_training_failure_starts_only_bootstrap_retrain(monkeypatch, tmp
         def start(self):
             """Registra a thread iniciada."""
             started_threads.append(self)
+        def join(self, timeout=None):
+            """Thread falsa termina imediatamente."""
+            return None
 
     class Collector:
         """Coletor falso sempre ativo e sem erro fatal."""
@@ -421,6 +555,94 @@ def test_initial_training_failure_starts_only_bootstrap_retrain(monkeypatch, tmp
 
     assert [thread.name for thread in started_threads] == ['RetrainBootstrap']
     assert started_threads[0].kwargs.get('kwargs') == {'bootstrap_until_ready': True}
+    assert captured['bot_run'] is True
+
+
+def test_ai_mode_selects_one_trending_symbol_before_incremental_history(monkeypatch, tmp_path):
+    """Garante que IA seleciona o melhor ativo e só então atualiza o histórico incremental dele."""
+    calls = []
+    captured = {'symbol': 'R_100', 'bot_run': False}
+
+    class FakeThread:
+        """Thread falsa para impedir loops reais de retreino."""
+        def __init__(self, *args, **kwargs):
+            """Guarda somente o nome da thread."""
+            self.name = kwargs.get('name')
+        def start(self):
+            """Não executa thread real."""
+            return None
+
+    class Collector:
+        """Coletor falso sempre vivo."""
+        fatal_error = ''
+        def __init__(self, symbol):
+            """Guarda o símbolo recebido."""
+            calls.append(('collector', symbol))
+        def start(self):
+            """Não inicia conexão real."""
+            return None
+        def stop(self):
+            """Não encerra conexão real."""
+            return None
+        def is_alive(self):
+            """Informa que o coletor está ativo."""
+            return True
+
+    class Bot:
+        """Bot falso que registra execução sem conectar na Deriv."""
+        def __init__(self, **_kwargs):
+            """Ignora argumentos."""
+            pass
+        def run(self):
+            """Registra a execução."""
+            captured['bot_run'] = True
+
+    def wait_symbols(**kwargs):
+        """Confirma seleção de apenas um ativo por tendência."""
+        calls.append(('wait_symbols', kwargs))
+        return ['JD75']
+
+    def set_symbol(symbol):
+        """Atualiza o símbolo runtime simulado."""
+        captured['symbol'] = symbol
+        calls.append(('set_symbol', symbol))
+
+    def fetch_history(_count):
+        """Confirma que o histórico é buscado após a seleção do ativo."""
+        calls.append(('history', captured['symbol']))
+        return 1
+
+    monkeypatch.setattr(pipeline.sys, 'argv', ['pipeline.py', '--demo', '--top-symbols', '5'])
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
+    monkeypatch.setattr(pipeline, 'AI_MODEL_PATH', str(tmp_path / 'model.pkl'))
+    monkeypatch.setattr(pipeline, '_validate_deriv_token', lambda demo: True)
+    monkeypatch.setattr(pipeline, '_wait_for_strong_training_symbols', wait_symbols)
+    monkeypatch.setattr(pipeline, '_ensure_operable_symbol', lambda symbol: symbol)
+    monkeypatch.setattr(pipeline, '_run_initial_symbol_tournament', Mock(side_effect=AssertionError('torneio não deve rodar')))
+    monkeypatch.setattr(pipeline, '_set_runtime_symbol', set_symbol)
+    monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: captured['symbol'])
+    monkeypatch.setattr(pipeline, '_prepare_training_start', lambda **_kwargs: None)
+    monkeypatch.setattr(pipeline, '_banner', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(pipeline, '_ensure_ticks_header', lambda: None)
+    monkeypatch.setattr(pipeline, '_CollectorThread', Collector)
+    monkeypatch.setattr(pipeline, '_fetch_historical_ticks', fetch_history)
+    monkeypatch.setattr(pipeline, '_count_ticks', lambda: 500)
+    monkeypatch.setattr(pipeline, '_wait_for_ticks', lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, '_run_training', lambda **_kwargs: (True, {'eligible': False, 'rejection_reasons': ['x']}))
+    monkeypatch.setattr(pipeline, '_should_promote_model', lambda current, challenger: (False, 'x'))
+    monkeypatch.setattr(pipeline, '_load_latest_final_metrics', lambda: None)
+    monkeypatch.setattr(pipeline, '_wait_for_compatible_model', lambda collector=None: True)
+    monkeypatch.setattr(pipeline, '_uses_bearer_auth', lambda: False)
+    monkeypatch.setattr(pipeline, 'RiskManager', lambda initial_balance: Mock())
+    monkeypatch.setattr(pipeline, 'DerivBot', Bot)
+    monkeypatch.setattr(pipeline, '_check_market_switch', lambda: None)
+    monkeypatch.setattr(pipeline.threading, 'Thread', FakeThread)
+
+    pipeline._main_session({'lock': Mock()})
+
+    assert ('wait_symbols', {'no_scan': False, 'limit': pipeline._TOP_TRENDING_SYMBOLS}) in calls
+    assert ('set_symbol', 'JD75') in calls
+    assert ('history', 'JD75') in calls
     assert captured['bot_run'] is True
 
 
@@ -521,10 +743,10 @@ def test_bootstrap_retrain_requests_market_switch_after_repeated_rejections(monk
         if event.is_set():
             pipeline._shutdown.set()
 
-    def fake_run_training(**_kwargs):
+    def fake_run_training(**kwargs):
         """Conta o treino e devolve candidato inelegível."""
         calls["training"] += 1
-        Path(str(tmp_path / "model.pkl.new")).write_text("candidate")
+        Path(kwargs['model_path']).write_text("candidate")
         return True, {"eligible": False, "rejection_reasons": ["reprovado"]}
 
     monkeypatch.setattr(pipeline.time, "sleep", fake_sleep)
@@ -536,3 +758,38 @@ def test_bootstrap_retrain_requests_market_switch_after_repeated_rejections(monk
     assert calls["training"] == 3
     assert calls["switch"]
     assert calls["switch"][-1][:3] == ("R_100", "bootstrap_model_not_promoted", 3)
+
+
+def test_active_model_requires_matching_approved_shadow_before_retrain_promotion(monkeypatch, tmp_path):
+    """Garante que aprovação shadow de outro bundle/símbolo/timeframe não libera promoção."""
+    import config
+    model_path = tmp_path / 'model.pkl'
+    shadow_path = tmp_path / 'shadow.json'
+    model_path.write_bytes(b'approved model fixture')
+    model_id = pipeline.fingerprint(model_path)
+    metadata = {
+        'approved': True,
+        'symbol': 'R_100',
+        'artifact_sha256': model_id,
+    }
+    (tmp_path / 'model.pkl.metadata.json').write_text(json.dumps(metadata))
+    shadow = {
+        'schema_version': 1,
+        'symbol': 'R_100',
+        'model_id': model_id,
+        'timeframe_sec': config.CANDLE_TIMEFRAME_SEC,
+        'duration_sec': 900,
+        'approved_at_epoch': None,
+    }
+    shadow_path.write_text(json.dumps(shadow))
+    monkeypatch.setattr(pipeline, 'AI_MODEL_PATH', str(model_path))
+    monkeypatch.setattr(pipeline, '_SHADOW_STATE_JSON', shadow_path)
+    monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'R_100')
+
+    assert not pipeline._active_model_shadow_approved()
+    shadow['approved_at_epoch'] = 1_800_000_000
+    shadow_path.write_text(json.dumps(shadow))
+    assert pipeline._active_model_shadow_approved()
+    shadow['timeframe_sec'] = 60
+    shadow_path.write_text(json.dumps(shadow))
+    assert not pipeline._active_model_shadow_approved()

@@ -26,6 +26,18 @@ def _record_to_candle(record):
                 low=record['low'], close=record['price'])
 
 
+def _limit_training_history(records):
+    """Mantém somente os candles alinhados da janela de treino mais recente."""
+    timeframe = config.CANDLE_TIMEFRAME_SEC
+    candle_count = config.TRAINING_HISTORY_DAYS * 24 * 60 * 60 // timeframe
+    if not records or candle_count <= 0:
+        return []
+    latest_epoch = max(int(record['epoch']) for record in records)
+    latest_candle = latest_epoch // timeframe * timeframe
+    cutoff = latest_candle - (candle_count - 1) * timeframe
+    return [record for record in records if int(record['epoch']) >= cutoff]
+
+
 def _merge_feature_candles(selected, ticks):
     """Candles históricos aquecem features; ticks reais continuam rotulando contratos."""
     by_epoch = {r['epoch']: _record_to_candle(r) for r in selected if r['kind'] == 'candle'}
@@ -43,6 +55,7 @@ def _load_training_series(ticks_path, symbol):
     if conflicts:
         raise ValueError('preços conflitantes no mesmo instante; requer recuperação')
     selected = [r for r in records if r['symbol'] == symbol]
+    selected = _limit_training_history(selected)
     if any(r['kind'] == 'legacy_unknown' for r in selected):
         raise ValueError('dados legados sem proveniência: não é possível distinguir tick de close histórico')
     ticks = [r for r in selected if r['kind'] == 'tick']

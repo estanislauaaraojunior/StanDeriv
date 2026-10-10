@@ -473,7 +473,8 @@ def test_ai_backtest_shares_executor_economic_gate(monkeypatch, probability, pay
     monkeypatch.setattr(ai_predictor, '_metadata', {'last_seen_epoch': 0})
     report = BacktestEngine(
         _ticks(range(100, 150), symbol=symbol), symbol,
-        _settings(use_ai=True, duration=config.DURATION, duration_unit=config.DURATION_UNIT,
+        _settings(use_ai=True, timeframe_sec=config.CANDLE_TIMEFRAME_SEC,
+              duration=config.DURATION, duration_unit=config.DURATION_UNIT,
                   payout_ratio=payout),
         signal_provider=lambda ctx: ('BUY', {'win_probability': probability}),
     ).run()
@@ -492,7 +493,8 @@ def test_ai_backtest_deducts_hypothetical_costs_before_accepting(monkeypatch):
     monkeypatch.setattr(ai_predictor, '_metadata', {'last_seen_epoch': 0})
     report = BacktestEngine(
         _ticks(range(100, 150), symbol=symbol), symbol,
-        _settings(use_ai=True, duration=config.DURATION, duration_unit=config.DURATION_UNIT,
+        _settings(use_ai=True, timeframe_sec=config.CANDLE_TIMEFRAME_SEC,
+              duration=config.DURATION, duration_unit=config.DURATION_UNIT,
                   payout_ratio=.60, fixed_cost=.01),
         signal_provider=lambda ctx: ('BUY', {'win_probability': .625}),
     ).run()

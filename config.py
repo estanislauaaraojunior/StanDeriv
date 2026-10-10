@@ -230,8 +230,13 @@ BB_STD = 2.0
 # 300  = 5 minutos
 # 900  = 15 minutos
 #
-# 60 = mais candles e avaliações mais frequentes.
-CANDLE_TIMEFRAME_SEC = 60
+# 900 = candles de 15 minutos, usados no treino e na inferência.
+CANDLE_TIMEFRAME_SEC = 900
+TRAINING_HISTORY_DAYS = 7
+ASSET_HISTORY_CANDLES = 336
+SHADOW_MIN_NET_PAYOUT = 0.70
+SHADOW_MIN_ACCURACY = 0.55
+SHADOW_MIN_RESULTS = 30
 
 
 # ----- Price Action -----
@@ -240,9 +245,9 @@ CANDLE_LOOKBACK = 5
 
 PA_SR_TOLERANCE = 0.001
 
-ENTRY_MODE = "opportunity"
+ENTRY_MODE = "balanced"
 
-OPPORTUNITY_SIGNAL_SCORE_MIN = 0.02
+OPPORTUNITY_SIGNAL_SCORE_MIN = 0.05
 OPPORTUNITY_ADX_WEIGHT_FLOOR = 0.35
 
 PRICE_ACTION_FILTER = _env_bool("STANDERIV_PRICE_ACTION_FILTER", False)
@@ -270,7 +275,7 @@ CANDLE_PATTERN_MAX_AGE_SEC = 300
 RSI_OVERSOLD = 38
 RSI_OVERBOUGHT = 62
 
-ADX_MIN = 18
+ADX_MIN = 30
 
 
 # ----- ADX adaptativo -----
@@ -283,6 +288,9 @@ ADX_ADAPTIVE_PERCENTILE = 50
 
 # ----- Gestão de risco -----
 STAKE_PCT = 0.01
+DERIV_MAX_PAYOUT = 100.00
+DERIV_PAYOUT_CAP_SAFETY = 0.98
+DERIV_PAYOUT_CAP_ESTIMATED_MULTIPLIER = 2.0
 
 STOP_LOSS_PCT = 0.25
 TAKE_PROFIT_PCT = 0.50
@@ -303,7 +311,7 @@ ENFORCE_RISK_GATE = False
 # ----- Aquecimento -----
 MIN_TICKS = 50
 
-MIN_CANDLES = 50
+MIN_CANDLES = 150
 
 
 # ----- Buffer de preços -----
@@ -326,7 +334,7 @@ ENFORCE_ENTRY_CADENCE = False
 # ----- Troca de ativo por falta de oportunidade -----
 # Se > 0, troca o ativo após N avaliações fechadas sem condição de entrada.
 # 0 desativa a troca automática para evitar reiniciar coleta/treino cedo demais.
-UNFAVORABLE_SYMBOL_SWITCH_DECISIONS = 5
+UNFAVORABLE_SYMBOL_SWITCH_DECISIONS = 12
 
 UNFAVORABLE_SYMBOL_SWITCH_REASONS = {
     "no_technical_signal",
@@ -395,7 +403,7 @@ AI_SCORE_MIN = 0.30
 # True  = score ponderado por indicador
 USE_WEIGHTED_SIGNAL = _env_bool("STANDERIV_USE_WEIGHTED_SIGNAL", True)
 
-SIGNAL_SCORE_MIN = 0.05
+SIGNAL_SCORE_MIN = 0.06
 
 
 # ----- Detecção de drift -----

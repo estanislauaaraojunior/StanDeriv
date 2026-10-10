@@ -48,6 +48,44 @@ def probability_diagnostics(prob, classes, targets):
         'note': 'Bins usam todas as linhas sobrepostas; não são contratos independentes.'}
 
 
+def _quantiles(values):
+    """Retorna quantis compactos para listas diagnosticas; dict vazio sem valores."""
+    if not values:
+        return {}
+    arr = np.asarray(values, dtype=float)
+    return {str(q): float(np.quantile(arr, q)) for q in (0., .1, .5, .9, 1.)}
+
+
+def _sample_block(sample, row, *, score, confidence, technical, selected):
+    """Guarda poucas linhas representativas de bloqueios para explicar o gate sem inflar relatórios."""
+    if len(sample) >= 5:
+        return
+    sample.append({
+        'entry_epoch': int(row.entry_epoch),
+        'target': int(row.target),
+        'technical_signal': int(technical),
+        'model_direction': int(selected),
+        'confidence': float(confidence),
+        'tech_score': float(row.tech_score),
+        'combined_score': float(score),
+    })
+
+
+def _approval_summary(result, components):
+    """Resumo legível dos bloqueios que impedem aprovação do bundle."""
+    blockers = result.get('blockers') or {}
+    primary = max(blockers.items(), key=lambda item: item[1])[0] if blockers else None
+    return {
+        'primary_blocker': primary,
+        'combined_trades': int(result.get('trades', 0) or 0),
+        'component_trades': {mode: int(metrics.get('trades', 0) or 0)
+                             for mode, metrics in components.items()},
+        'component_win_rates': {mode: (float(metrics['win_rate']) if metrics.get('trades') else None)
+                                for mode, metrics in components.items()},
+        'blockers': dict(blockers),
+    }
+
+
 def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence_floor=None):
     """Simula entradas sequenciais (risco, cadência, payout e confiança) e retorna métricas e bloqueios por modo."""
     from backtest import BacktestSettings, HistoricalRiskManager
@@ -56,6 +94,8 @@ def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence
         raise ValueError('limiar experimental não pode reduzir o piso operacional')
     risk = HistoricalRiskManager(BacktestSettings(payout_ratio=payout, risk_timezone=EVALUATION_RISK_TIMEZONE))
     blockers, groups = Counter(), defaultdict(lambda: {'trades': 0, 'wins': 0, 'unit_profit': 0.0})
+    blocker_values = defaultdict(lambda: defaultdict(list))
+    blocker_samples = defaultdict(list)
     pending = None
     candles_since_entry = config.ENTRY_CANDLE_INTERVAL
     total = wins = 0
@@ -89,10 +129,14 @@ def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence
             continue
         technical = int(row.technical_signal)
         selected = technical if mode == 'technical_only' else int(direction[i])
-        if mode != 'ai_only' and technical not in (0, 1):
+        model_only = (mode == 'combined' and config.USE_AI_MODEL
+                      and not config.USE_WEIGHTED_SIGNAL
+                      and not config.PRICE_ACTION_FILTER
+                      and not config.CANDLE_PATTERN_FILTER)
+        if mode != 'ai_only' and technical not in (0, 1) and not model_only:
             blockers['no_technical_signal'] += 1
             continue
-        if mode == 'combined' and technical != direction[i]:
+        if mode == 'combined' and not model_only and technical != direction[i]:
             blockers['direction_disagreement'] += 1
             continue
         ratio = payout
@@ -111,6 +155,17 @@ def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence
             score = config.AI_TECH_WEIGHT*min(1., abs(row.tech_score)) + config.AI_MODEL_WEIGHT*confidence[i]
             if mode == 'combined' and score < config.AI_SCORE_MIN:
                 blockers['low_combined_score'] += 1
+                blocker_values['low_combined_score']['combined_score'].append(score)
+                blocker_values['low_combined_score']['confidence'].append(confidence[i])
+                blocker_values['low_combined_score']['abs_tech_score'].append(min(1., abs(row.tech_score)))
+                _sample_block(
+                    blocker_samples['low_combined_score'],
+                    row,
+                    score=score,
+                    confidence=confidence[i],
+                    technical=technical,
+                    selected=selected,
+                )
                 continue
             if confidence[i]*(1+ratio)-1 < MIN_EXPECTED_RETURN:
                 blockers['insufficient_expected_return'] += 1
@@ -134,10 +189,27 @@ def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence
         candles_since_entry = 0
     if pending is not None:
         settle()
+    blocker_diagnostics = {
+        name: {
+            key + '_quantiles': _quantiles(values)
+            for key, values in groups.items()
+        }
+        for name, groups in blocker_values.items()
+    }
+    for name, sample in blocker_samples.items():
+        blocker_diagnostics.setdefault(name, {})['sample'] = sample
+    if 'low_combined_score' in blocker_diagnostics:
+        blocker_diagnostics['low_combined_score']['threshold'] = float(config.AI_SCORE_MIN)
+        blocker_diagnostics['low_combined_score']['formula'] = {
+            'tech_weight': float(config.AI_TECH_WEIGHT),
+            'model_weight': float(config.AI_MODEL_WEIGHT),
+        }
+
     return {'trades': total, 'wins': wins, 'win_rate': wins/total if total else 0.,
             'win_rate_lower95': wilson_lower(wins, total), 'unit_profit': pnl,
             'expectancy': pnl/total if total else 0., 'max_drawdown_pct': max_drawdown*100,
             'final_balance': risk.balance, 'blockers': dict(blockers), 'segments': dict(groups),
+            'blocker_diagnostics': blocker_diagnostics,
             'break_even': max(break_even) if break_even else 1/(1+payout),
             'payout_source': 'observed_asof_no_fallback' if quotes is not None else 'fixed_assumption',
             'evaluation_risk_timezone': EVALUATION_RISK_TIMEZONE,
@@ -179,6 +251,7 @@ def evaluate(model, df, payout=.85, *, features=None, quotes=None):
                   evaluation_end=int(df.expiry_epoch.iloc[-1]), evaluation_kind='deployed_strategy_reference_payout',
                   eligible=not reasons, rejection_reasons=reasons, warnings=warnings,
                   components=components, calibration=calibration)
+    result['approval_diagnostics'] = _approval_summary(result, components)
     result['evaluation_risk_timezone'] = EVALUATION_RISK_TIMEZONE
     return result
 

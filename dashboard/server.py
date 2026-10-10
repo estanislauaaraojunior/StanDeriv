@@ -11,6 +11,7 @@ Acesso: http://localhost:5055
 """
 
 import collections
+import csv
 import datetime as dt
 import json
 import os
@@ -32,7 +33,8 @@ import pandas as pd
 import websocket
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from model_contract import minimum_history_candles
+import config
+from model_contract import FEATURE_WINDOW, minimum_history_candles
 
 try:
     import psutil
@@ -137,6 +139,8 @@ _backtest_process: subprocess.Popen | None = None
 _backtest_log_buffer: collections.deque = collections.deque(maxlen=200)
 _backtest_lock = threading.RLock()
 _backtest_state: dict = {}
+_csv_count_cache: dict = {}
+_csv_count_lock = threading.Lock()
 
 
 def _read_bot_output(proc: subprocess.Popen) -> None:
@@ -213,6 +217,62 @@ def _read_csv_safe(path, **kwargs):
         return df_no_header
     except Exception:
         return pd.DataFrame()
+
+
+def _count_csv_rows(path, *, minimum_epoch: int | None = None) -> int:
+    """Conta linhas de dados incrementalmente, processando apenas bytes novos após a primeira leitura."""
+    try:
+        file_path = Path(path)
+        stat = file_path.stat()
+        cache_key = (str(file_path.resolve()), minimum_epoch)
+        with _csv_count_lock:
+            cached = _csv_count_cache.get(cache_key)
+            reset = (
+                cached is None
+                or cached["inode"] != stat.st_ino
+                or stat.st_size < cached["offset"]
+                or (stat.st_size == cached["offset"] and cached["mtime_ns"] != stat.st_mtime_ns)
+            )
+            if reset:
+                with file_path.open("rb") as file:
+                    header = next(csv.reader([file.readline().decode("utf-8", errors="replace")]), [])
+                    offset = file.tell()
+                cached = {
+                    "inode": stat.st_ino,
+                    "offset": offset,
+                    "mtime_ns": stat.st_mtime_ns,
+                    "epoch_index": header.index("epoch") if "epoch" in header else None,
+                    "count": 0,
+                    "pending": b"",
+                }
+
+            if stat.st_size > cached["offset"]:
+                with file_path.open("rb") as file:
+                    file.seek(cached["offset"])
+                    appended = cached["pending"] + file.read()
+                    cached["offset"] = file.tell()
+                complete_lines = appended.split(b"\n")
+                cached["pending"] = complete_lines.pop() if complete_lines and not appended.endswith(b"\n") else b""
+                if appended.endswith(b"\n") and complete_lines:
+                    complete_lines.append(b"")
+                for raw_line in complete_lines:
+                    if not raw_line.strip():
+                        continue
+                    row = next(csv.reader([raw_line.decode("utf-8", errors="replace")]), [])
+                    epoch_index = cached["epoch_index"]
+                    if minimum_epoch is not None and epoch_index is not None:
+                        try:
+                            if int(float(row[epoch_index])) < minimum_epoch:
+                                continue
+                        except (IndexError, TypeError, ValueError):
+                            continue
+                    cached["count"] += 1
+                cached["mtime_ns"] = stat.st_mtime_ns
+
+            _csv_count_cache[cache_key] = cached
+            return int(cached["count"])
+    except (OSError, csv.Error):
+        return 0
 
 
 def _last_local_contract() -> dict | None:
@@ -397,7 +457,56 @@ def _deriv_contract_report(limit: int = 100, *, force: bool = False) -> list[dic
 
 def _contracts_frame(limit: int = 500) -> pd.DataFrame:
     """Relatório de contratos como DataFrame."""
-    return pd.DataFrame(_deriv_contract_report(limit=limit))
+    records, _source, _error = _contract_records_for_dashboard(limit=limit)
+    return pd.DataFrame(records)
+
+
+def _local_contract_records(limit: int = 500) -> list[dict]:
+    """Contratos locais normalizados a partir de operacoes_v2.csv."""
+    df = _read_csv_safe(OPERATIONS_CSV)
+    if df.empty:
+        return []
+    records = []
+    for row in df.tail(limit).to_dict("records"):
+        try:
+            profit = float(row.get("profit", 0.0) or 0.0)
+        except Exception:
+            profit = 0.0
+        records.append({
+            "timestamp": str(row.get("timestamp", "") or ""),
+            "symbol": str(row.get("symbol", "") or ""),
+            "direction": str(row.get("direction", "") or ""),
+            "stake": float(row.get("stake", row.get("buy_price", 0.0)) or 0.0),
+            "sell_price": float(row.get("sell_price", row.get("payout", 0.0)) or 0.0),
+            "duration": int(float(row.get("duration", 0) or 0)),
+            "duration_unit": str(row.get("duration_unit", "m") or "m"),
+            "result": str(row.get("result", "WIN" if profit > 0 else "LOSS" if profit < 0 else "DRAW") or ""),
+            "profit": round(profit, 2),
+            "balance_after": row.get("balance_after"),
+            "ema9": float(row.get("ema9", 0.0) or 0.0),
+            "ema21": float(row.get("ema21", 0.0) or 0.0),
+            "rsi": float(row.get("rsi", 0.0) or 0.0),
+            "adx": float(row.get("adx", 0.0) or 0.0),
+            "macd_hist": float(row.get("macd_hist", 0.0) or 0.0),
+            "ai_confidence": float(row.get("ai_confidence", 0.0) or 0.0),
+            "ai_score": float(row.get("ai_score", 0.0) or 0.0),
+            "market_condition": str(row.get("market_condition", "") or ""),
+            "contract_id": str(row.get("contract_id", "") or ""),
+            "payout": float(row.get("payout", 0.0) or 0.0),
+        })
+    return list(reversed(records))
+
+
+def _contract_records_for_dashboard(limit: int = 500, *, force: bool = False) -> tuple[list[dict], str, str]:
+    """Retorna contratos para UI, preferindo Deriv e usando CSV local como fallback identificado."""
+    records = _deriv_contract_report(limit=limit, force=force)
+    error = str(_deriv_contract_cache.get("error", ""))
+    if records or not error:
+        return records[:limit], "deriv_profit_table", error
+    local_records = _local_contract_records(limit=limit)
+    if local_records:
+        return local_records[:limit], "local_operations_fallback", error
+    return [], "deriv_profit_table", error
 
 
 def _bot_pid() -> int | None:
@@ -587,6 +696,30 @@ def _mark_bot_stopped(returncode: int | None = None, *, requested: bool = False)
     return state
 
 
+def _terminate_bot_process(pid: int, *, timeout: float = 3.0) -> None:
+    """Encerra o pipeline e seus filhos, escalando para kill se o SIGTERM não bastar."""
+    if _PSUTIL:
+        proc = psutil.Process(pid)
+        targets = proc.children(recursive=True) + [proc]
+        for target in targets:
+            try:
+                target.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        gone, alive = psutil.wait_procs(targets, timeout=timeout)
+        for target in alive:
+            try:
+                target.kill()
+            except psutil.NoSuchProcess:
+                pass
+        return
+
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        os.kill(pid, signal.SIGTERM)
+
+
 def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> dict:
     """Reconcilia o status persistido com a existência real do processo, marcando queda quando necessário."""
     if running is None:
@@ -598,6 +731,8 @@ def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> 
         known_pid_int = int(known_pid or 0)
     except (TypeError, ValueError):
         known_pid_int = 0
+    if status == "stopping" and not running:
+        return _mark_bot_stopped(state.get("returncode"), requested=True)
     should_mark_crashed = (
         (status in {"starting", "running"} or bool(state.get("running")))
         and not running
@@ -607,6 +742,8 @@ def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> 
     if should_mark_crashed:
         return _mark_bot_stopped(state.get("returncode"), requested=False)
     if running:
+        if status == "stopping":
+            return _set_bot_status(status="stopping", running=True, pid=pid, last_seen_at=_utc_now_iso())
         return _set_bot_status(status="running", running=True, pid=pid, last_seen_at=_utc_now_iso())
     if state.get("running") and status != "stopping":
         return _mark_bot_stopped(state.get("returncode"), requested=False)
@@ -769,11 +906,12 @@ def app_js():
 def api_summary():
     """GET /api/summary: resumo de desempenho a partir dos contratos da Deriv e do estado de risco."""
     risk_state = _read_json_safe(RISK_STATE_JSON)
-    summary = _summary_from_contract_report(_deriv_contract_report(limit=500), risk_state)
+    records, source, source_error = _contract_records_for_dashboard(limit=500)
+    summary = _summary_from_contract_report(records, risk_state)
     summary["risk_state"] = risk_state
-    summary["source"] = "deriv_profit_table"
-    if _deriv_contract_cache.get("error"):
-        summary["source_error"] = _deriv_contract_cache["error"]
+    summary["source"] = source
+    if source_error:
+        summary["source_error"] = source_error
     return jsonify(summary)
 
 
@@ -791,7 +929,7 @@ def api_ticks():
             from_epoch = int(from_epoch_raw)
         except (TypeError, ValueError):
             from_epoch = None
-    df = _read_csv_safe(TICKS_CSV)
+    df = _tail_csv(TICKS_CSV, n, symbol=symbol, from_epoch=from_epoch)
 
     if df.empty:
         return jsonify([])
@@ -800,18 +938,8 @@ def api_ticks():
     if "price" not in df.columns:
         df.columns = ["epoch", "price"] if len(df.columns) == 2 else list(df.columns)
 
-    if symbol and "symbol" in df.columns:
-        df = df[df["symbol"].astype(str) == symbol]
-
-    if from_epoch is not None and "epoch" in df.columns:
-        try:
-            df = df[df["epoch"].astype(int) >= from_epoch]
-        except Exception:
-            pass
-
-    tail = df.tail(n)
     result = []
-    for _, row in tail.iterrows():
+    for _, row in df.iterrows():
         result.append({
             "epoch": int(row.get("epoch", 0)),
             "price": float(row.get("price", 0)),
@@ -827,10 +955,10 @@ def api_trades():
     """GET /api/trades: últimos `n` contratos da Deriv (máx. 500) e o erro de consulta, se houver."""
     n = min(int(request.args.get("n", 50)), 500)
     force = str(request.args.get("force", "")).lower() in {"1", "true", "yes"}
-    records = _deriv_contract_report(limit=n, force=force)[:n]
+    records, source, error = _contract_records_for_dashboard(limit=n, force=force)
     return jsonify({
-        "source": "deriv_profit_table",
-        "error": str(_deriv_contract_cache.get("error", "")),
+        "source": source,
+        "error": error,
         "trades": records,
     })
 
@@ -839,23 +967,8 @@ def api_trades():
 
 @app.route("/api/indicators")
 def api_indicators():
-    """GET /api/indicators: indicadores registrados na última operação local."""
-    df = _read_csv_safe(OPERATIONS_CSV)
-
-    if df.empty:
-        return jsonify({})
-
-    last = df.iloc[-1]
-    return jsonify({
-        "ema9":          float(last.get("ema9", 0)),
-        "ema21":         float(last.get("ema21", 0)),
-        "rsi":           float(last.get("rsi", 0)),
-        "adx":           float(last.get("adx", 0)),
-        "macd_hist":     float(last.get("macd_hist", 0)),
-        "ai_confidence": float(last.get("ai_confidence", 0)),
-        "ai_score":      float(last.get("ai_score", 0)),
-        "market_condition": str(last.get("market_condition", "unknown")),
-    })
+    """GET /api/indicators: indicadores ao vivo calculados de ticks, com fallback para última operação."""
+    return jsonify(_current_indicators())
 
 
 # ─── API: Informações dos modelos ─────────────────────────────────────────────
@@ -895,6 +1008,13 @@ def api_bot_status():
     """GET /api/bot/status: situação do processo do bot, uptime e últimas decisões."""
     running, pid = _bot_running()
     status = _refresh_bot_status(running, pid)
+    risk_state = _read_json_safe(RISK_STATE_JSON)
+    state = _read_json_safe(STATE_JSON)
+    diagnostics = _operational_diagnostics(
+        bot_status=status,
+        risk_state=risk_state,
+        state=state,
+    )
 
     uptime_sec = None
     mode = "unknown"
@@ -921,6 +1041,12 @@ def api_bot_status():
         "last_decision": status.get("last_decision", {}),
         "decision_counts": status.get("decision_counts", {}),
         "no_entry_for_sec": status.get("no_entry_for_sec", 0),
+        "candle_count": status.get("candle_count", 0),
+        "min_candles": status.get("min_candles", config.MIN_CANDLES),
+        "warmup_remaining_candles": status.get("warmup_remaining_candles", 0),
+        "model_feature_window": status.get("model_feature_window", FEATURE_WINDOW),
+        "shadow": status.get("shadow", {}),
+        "diagnostics": diagnostics,
     })
 
 
@@ -1036,6 +1162,9 @@ def api_bot_start():
             use_weighted_signal=use_weighted_signal,
             use_price_action_filter=use_price_action_filter,
             use_candle_pattern_filter=use_candle_pattern_filter,
+            min_candles=config.MIN_CANDLES,
+            model_feature_window=FEATURE_WINDOW,
+            warmup_remaining_candles=config.MIN_CANDLES,
         )
         threading.Thread(target=_read_bot_output, args=(proc,), daemon=True).start()
         PID_FILE.write_text(str(proc.pid))
@@ -1064,26 +1193,14 @@ def api_bot_stop():
         return jsonify({"ok": False, "msg": "Bot não está rodando."}), 409
 
     try:
-        if _PSUTIL:
-            proc = psutil.Process(pid)
-            children = proc.children(recursive=True)
-            for child in children:
-                child.terminate()
-            proc.terminate()
-        else:
-            os.kill(pid, signal.SIGTERM)
-
-        # Remove PID file
-        if PID_FILE.exists():
-            PID_FILE.unlink()
-
         _set_bot_status(
             status="stopping",
-            running=False,
+            running=True,
             pid=pid,
             stopped_at=_utc_now_iso(),
             last_error="",
         )
+        _terminate_bot_process(pid)
 
         # O encerramento do processo não liquida o contrato na corretora.
         return jsonify({"ok": True, "pid": pid})
@@ -1187,7 +1304,7 @@ def api_backtest_start():
     if not BACKTEST_PY.exists() or not TICKS_CSV.exists():
         return jsonify({
             "ok": False,
-            "msg": "backtest.py ou ticks.csv não encontrado.",
+            "msg": f"backtest.py ou {TICKS_CSV.name} não encontrado.",
         }), 404
 
     data = request.get_json(silent=True) or {}
@@ -1426,80 +1543,102 @@ def api_equity():
 @app.route("/api/candle-patterns")
 def api_candle_patterns():
     """Retorna padrões de vela detectados a partir dos ticks mais recentes."""
-    try:
-        import indicators as ind
-        from config import CANDLE_SIZE, PA_SR_TOLERANCE
+    symbol = str(request.args.get("symbol", "")).strip()
+    now = time.monotonic()
+    with _candle_patterns_lock:
+        cached = _candle_patterns_cache.get(symbol)
+        if cached and now - cached["ts"] < _CANDLE_CACHE_TTL:
+            return jsonify(cached["data"])
+        try:
+            import indicators as ind
+            from config import CANDLE_SIZE, PA_SR_TOLERANCE
 
-        df = _read_csv_safe(TICKS_CSV)
-        if df.empty:
-            return jsonify([])
+            df = _tail_csv(TICKS_CSV, 500, symbol=symbol)
+            if df.empty:
+                result = []
+            else:
+                if "price" in df.columns:
+                    prices = df["price"].astype(float).tolist()
+                elif df.shape[1] >= 4:
+                    prices = df.iloc[:, 3].astype(float).tolist()
+                else:
+                    prices = df.iloc[:, -1].astype(float).tolist()
 
-        if "price" in df.columns:
-            prices = df["price"].astype(float).tolist()
-        elif df.shape[1] >= 4:
-            prices = df.iloc[:, 3].astype(float).tolist()
-        else:
-            prices = df.iloc[:, -1].astype(float).tolist()
+                candles = ind.ticks_to_candles(prices[-500:], CANDLE_SIZE)
+                result = []
+                if len(candles) >= 4:
+                    patterns = ind.detect_candle_patterns(candles)
+                    pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
+                    for pattern in patterns:
+                        context_parts = []
+                        if pa is not None:
+                            if pa["pa_demand_zone"] > 0.3:
+                                context_parts.append("Demand Zone")
+                            if pa["pa_supply_zone"] > 0.3:
+                                context_parts.append("Supply Zone")
+                            if pa["pa_sr_distance"] < 0.3:
+                                position = pa["pa_sr_position"]
+                                context_parts.append(
+                                    "Suporte" if position < -0.3
+                                    else "Resistência" if position > 0.3
+                                    else "S/R"
+                                )
+                        result.append({
+                            "name": pattern["name"],
+                            "direction": pattern["direction"],
+                            "strength": pattern["strength"],
+                            "price": round(prices[-1], 4),
+                            "context": " + ".join(context_parts) if context_parts else "",
+                        })
 
-        # Usar últimos 500 ticks
-        prices = prices[-500:]
-        candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
-
-        if len(candles) < 4:
-            return jsonify([])
-
-        patterns = ind.detect_candle_patterns(candles)
-        pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
-
-        result = []
-        for p in patterns:
-            context_parts = []
-            if pa is not None:
-                if pa["pa_demand_zone"] > 0.3:
-                    context_parts.append("Demand Zone")
-                if pa["pa_supply_zone"] > 0.3:
-                    context_parts.append("Supply Zone")
-                if pa["pa_sr_distance"] < 0.3:
-                    pos = pa["pa_sr_position"]
-                    context_parts.append("Suporte" if pos < -0.3 else "Resistência" if pos > 0.3 else "S/R")
-
-            result.append({
-                "name": p["name"],
-                "direction": p["direction"],
-                "strength": p["strength"],
-                "price": round(prices[-1], 4),
-                "context": " + ".join(context_parts) if context_parts else "",
-            })
-
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            _candle_patterns_cache[symbol] = {"ts": time.monotonic(), "data": result}
+            return jsonify(result)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
 
 
 # ─── Fase 3: helpers de leitura eficiente ────────────────────────────────────
 
-def _tail_csv(path, n: int) -> pd.DataFrame:
-    """Lê apenas as últimas `n` linhas de um CSV sem carregar o arquivo inteiro."""
+def _tail_csv(path, n: int, *, symbol: str = "", from_epoch: int | None = None) -> pd.DataFrame:
+    """Lê a cauda necessária de um CSV, ampliando a leitura para completar filtros."""
     try:
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             return pd.DataFrame()
-        with open(path, "rb") as f:
-            # Lê cabeçalho
-            header = f.readline().decode("utf-8", errors="replace").rstrip()
-            cols = header.split(",")
-            # Busca final do arquivo e lê últimas n linhas
-            f.seek(0, 2)
-            file_size = f.tell()
-            chunk = min(file_size, n * 80)  # estimativa de ~80 bytes por linha
-            f.seek(max(0, file_size - chunk))
-            raw = f.read().decode("utf-8", errors="replace")
-        lines = [l for l in raw.splitlines() if l.strip()]
-        # Remove cabeçalho se apareceu no meio
-        data_lines = [l for l in lines if not l.startswith(cols[0])]
-        tail_lines = data_lines[-n:]
-        import io
-        csv_text = header + "\n" + "\n".join(tail_lines)
-        return pd.read_csv(io.StringIO(csv_text))
+        target = max(1, int(n))
+        with open(path, "rb") as file:
+            header = file.readline().decode("utf-8", errors="replace").rstrip("\r\n")
+            header_end = file.tell()
+            file.seek(0, 2)
+            file_size = file.tell()
+            available = max(0, file_size - header_end)
+            chunk_size = min(available, max(4096, target * 80))
+
+            while True:
+                start = max(header_end, file_size - chunk_size)
+                file.seek(start)
+                raw = file.read(file_size - start).decode("utf-8", errors="replace")
+                lines = raw.splitlines()
+                if start > header_end and lines:
+                    lines = lines[1:]
+                data_lines = [line for line in lines if line.strip()]
+
+                import io
+                csv_text = header + "\n" + "\n".join(data_lines)
+                frame = pd.read_csv(io.StringIO(csv_text))
+                if symbol and "symbol" in frame.columns:
+                    frame = frame[frame["symbol"].astype(str) == symbol]
+                reached_epoch = (
+                    from_epoch is not None
+                    and "epoch" in frame.columns
+                    and not frame.empty
+                    and int(pd.to_numeric(frame["epoch"], errors="coerce").min()) <= from_epoch
+                )
+                if from_epoch is not None and "epoch" in frame.columns:
+                    frame = frame[pd.to_numeric(frame["epoch"], errors="coerce") >= from_epoch]
+
+                if len(frame) >= target or reached_epoch or start <= header_end:
+                    return frame.tail(target).reset_index(drop=True)
+                chunk_size = min(available, chunk_size * 2)
     except Exception:
         return _read_csv_safe(path)
 
@@ -1515,7 +1654,8 @@ def _read_json_safe(path) -> dict:
     return {}
 
 
-_candle_patterns_cache: dict = {"ts": 0.0, "data": []}
+_candle_patterns_cache: dict = {}
+_candle_patterns_lock = threading.Lock()
 _CANDLE_CACHE_TTL = 5.0  # segundos
 
 
@@ -1583,6 +1723,144 @@ def _summary_from_contract_report(records: list[dict], risk_state: dict) -> dict
     }
 
 
+def _last_trade_indicators(records: list[dict] | None = None) -> dict:
+    """Indicadores da última operação conhecida, usados como fallback e campos de IA."""
+    if records:
+        last = records[0]
+        return {
+            "ema9": float(last.get("ema9", 0) or 0),
+            "ema21": float(last.get("ema21", 0) or 0),
+            "rsi": float(last.get("rsi", 0) or 0),
+            "adx": float(last.get("adx", 0) or 0),
+            "macd_hist": float(last.get("macd_hist", 0) or 0),
+            "ai_confidence": float(last.get("ai_confidence", 0) or 0),
+            "ai_score": float(last.get("ai_score", 0) or 0),
+            "market_condition": str(last.get("market_condition", "unknown") or "unknown"),
+            "source": "contracts",
+        }
+
+    df = _read_csv_safe(OPERATIONS_CSV)
+    if df.empty:
+        return {}
+    last = df.iloc[-1]
+    return {
+        "ema9": float(last.get("ema9", 0) or 0),
+        "ema21": float(last.get("ema21", 0) or 0),
+        "rsi": float(last.get("rsi", 0) or 0),
+        "adx": float(last.get("adx", 0) or 0),
+        "macd_hist": float(last.get("macd_hist", 0) or 0),
+        "ai_confidence": float(last.get("ai_confidence", 0) or 0),
+        "ai_score": float(last.get("ai_score", 0) or 0),
+        "market_condition": str(last.get("market_condition", "unknown") or "unknown"),
+        "source": "local_operation",
+    }
+
+
+def _current_indicators(records: list[dict] | None = None) -> dict:
+    """Indicadores atuais: calcula de ticks recentes e preserva IA/score da última operação."""
+    fallback = _last_trade_indicators(records)
+    try:
+        from feature_engine import compute_feature_map
+        df_ticks = _tail_csv(TICKS_CSV, 500)
+        if df_ticks.empty:
+            return fallback
+        if "price" not in df_ticks.columns and df_ticks.shape[1] >= 2:
+            df_ticks.columns = ["epoch", "price"] if df_ticks.shape[1] == 2 else list(df_ticks.columns)
+        prices = df_ticks["price"].astype(float).tolist() if "price" in df_ticks.columns else []
+        if len(prices) < 50:
+            return fallback
+        fm = compute_feature_map(prices)
+        if fm is None:
+            return fallback
+        return {
+            "ema9": round(fm["ema9"], 5),
+            "ema21": round(fm["ema21"], 5),
+            "rsi": round(fm["rsi"], 2),
+            "adx": round(fm["adx"], 2),
+            "macd_hist": round(fm["macd_hist"], 6),
+            "ai_confidence": fallback.get("ai_confidence", 0),
+            "ai_score": fallback.get("ai_score", 0),
+            "market_condition": fallback.get("market_condition", "unknown"),
+            "source": "ticks_live",
+        }
+    except Exception as exc:
+        fallback["error"] = str(exc)
+        return fallback
+
+
+def _model_publication_status(state: dict) -> dict:
+    """Retorna status do bundle publicado sem promover candidatos nem alterar artefatos."""
+    symbol = state.get("symbol", "") if isinstance(state, dict) else ""
+    metrics_history = _read_json_safe(MODEL_METRICS_JSON)
+    status = {
+        "ready": False,
+        "symbol": symbol,
+        "metrics_missing": not MODEL_METRICS_JSON.exists(),
+        "candidate_metrics_count": len(metrics_history) if isinstance(metrics_history, list) else 0,
+        "blocked_reason": "Modelo sem validação compatível com o ativo e vencimento",
+    }
+    try:
+        from model_contract import fingerprint, usable
+        manifest = _read_json_safe(Path(str(MODEL_PKL) + ".metadata.json"))
+        valid = (
+            MODEL_PKL.exists()
+            and isinstance(manifest, dict)
+            and manifest.get("approved")
+            and usable(manifest, symbol)
+            and manifest.get("artifact_sha256") == fingerprint(MODEL_PKL)
+        )
+        status["ready"] = bool(valid)
+        status["manifest_symbol"] = manifest.get("symbol", "") if isinstance(manifest, dict) else ""
+        status["blocked_reason"] = "" if valid else status["blocked_reason"]
+    except Exception:
+        status["blocked_reason"] = "Modelo não validado"
+    return status
+
+
+def _operational_diagnostics(
+    *, bot_status: dict, risk_state: dict, state: dict, model_status: dict | None = None
+) -> dict:
+    """Explica bloqueios externos sem alterar a regra dos módulos de decisão."""
+    risk_paused = (
+        bool(risk_state.get("is_paused", False))
+        or int(risk_state.get("pause_remaining_sec", 0) or 0) > 0
+        or int(risk_state.get("consec_losses", 0) or 0) >= 3
+    )
+    warmup_remaining = int(bot_status.get("warmup_remaining_candles", 0) or 0)
+    last_decision = bot_status.get("last_decision", {})
+    decision_reason = str(last_decision.get("reason", "") if isinstance(last_decision, dict) else "")
+    shadow = bot_status.get("shadow", {})
+    if not isinstance(shadow, dict):
+        shadow = {}
+    model_status = model_status or _model_publication_status(state)
+
+    blockers = []
+    if risk_paused:
+        blockers.append("risk_paused")
+    if warmup_remaining > 0:
+        blockers.append("warmup")
+    if model_status.get("metrics_missing"):
+        blockers.append("model_metrics_missing")
+    if not model_status.get("ready"):
+        blockers.append("model_not_ready")
+    if shadow.get("reason") == "missing_observed_payout":
+        blockers.append("shadow_missing_observed_payout")
+    if decision_reason:
+        blockers.append(f"last_decision:{decision_reason}")
+
+    weighted_signal_isolated = True
+    return {
+        "primary_blocker": blockers[0] if blockers else "",
+        "blockers": blockers,
+        "weighted_score_logic_changed": False,
+        "weighted_score_shadow_independent": weighted_signal_isolated,
+        "risk_paused": risk_paused,
+        "warmup_remaining_candles": warmup_remaining,
+        "model": model_status,
+        "shadow": shadow,
+    }
+
+
 # ─── API: Estado consolidado (/api/state) ─────────────────────────────────────
 
 @app.route("/api/state")
@@ -1592,7 +1870,7 @@ def api_state():
     bot_status = _refresh_bot_status(running, pid)
 
     # — Resumo de operações vindo do relatório oficial de contratos da Deriv —
-    contract_records = _deriv_contract_report(limit=500)
+    contract_records, contract_source, contract_error = _contract_records_for_dashboard(limit=500)
     df_ops_all = pd.DataFrame(contract_records)
     active_state_pre = _read_json_safe(STATE_JSON)
     risk_state = _read_json_safe(RISK_STATE_JSON)
@@ -1607,40 +1885,8 @@ def api_state():
         except Exception:
             pass
     summary = _summary_from_contract_report(df_ops.to_dict("records"), risk_state)
-    last_trade_indicators = {}
-    if not df_ops.empty:
-        last = df_ops.iloc[-1]
-        last_trade_indicators = {
-            "ema9": float(last.get("ema9", 0)), "ema21": float(last.get("ema21", 0)),
-            "rsi": float(last.get("rsi", 0)), "adx": float(last.get("adx", 0)),
-            "macd_hist": float(last.get("macd_hist", 0)),
-            "ai_confidence": float(last.get("ai_confidence", 0)),
-            "ai_score": float(last.get("ai_score", 0)),
-            "market_condition": str(last.get("market_condition", "unknown")),
-        }
-
-    # — Indicadores ao vivo (últimos 500 ticks) —
-    live_indicators = last_trade_indicators.copy()
-    try:
-        from feature_engine import compute_feature_map
-        df_ticks = _tail_csv(TICKS_CSV, 500)
-        if not df_ticks.empty:
-            if "price" not in df_ticks.columns and df_ticks.shape[1] >= 2:
-                df_ticks.columns = ["epoch", "price"] if df_ticks.shape[1] == 2 else list(df_ticks.columns)
-            prices = df_ticks["price"].astype(float).tolist() if "price" in df_ticks.columns else []
-            if len(prices) >= 50:
-                fm = compute_feature_map(prices)
-                if fm is not None:
-                    live_indicators = {
-                        "ema9": round(fm["ema9"], 5), "ema21": round(fm["ema21"], 5),
-                        "rsi": round(fm["rsi"], 2), "adx": round(fm["adx"], 2),
-                        "macd_hist": round(fm["macd_hist"], 6),
-                        "ai_confidence": last_trade_indicators.get("ai_confidence", 0),
-                        "ai_score": last_trade_indicators.get("ai_score", 0),
-                        "market_condition": last_trade_indicators.get("market_condition", "unknown"),
-                    }
-    except Exception:
-        pass
+    # — Indicadores ao vivo (últimos 500 ticks), com fallback para última operação —
+    live_indicators = _current_indicators(df_ops.to_dict("records"))
 
     # — Modelo —
     model_info = {
@@ -1652,22 +1898,14 @@ def api_state():
         "dataset_rows": 0,
         "min_ticks_target": 500,
     }
-    try:
-        df_t = _read_csv_safe(TICKS_CSV)
-        if not df_t.empty:
-            if session_start_str and "epoch" in df_t.columns:
-                try:
-                    _ss_epoch = int(pd.Timestamp(session_start_str).timestamp())
-                    model_info["ticks_count"] = int((df_t["epoch"].astype(int) >= _ss_epoch).sum())
-                except Exception:
-                    model_info["ticks_count"] = len(df_t)
-            else:
-                model_info["ticks_count"] = len(df_t)
-        df_d = _read_csv_safe(DATASET_CSV)
-        if not df_d.empty:
-            model_info["dataset_rows"] = len(df_d)
-    except Exception:
-        pass
+    minimum_epoch = None
+    if session_start_str:
+        try:
+            minimum_epoch = int(pd.Timestamp(session_start_str).timestamp())
+        except (TypeError, ValueError, OverflowError):
+            pass
+    model_info["ticks_count"] = _count_csv_rows(TICKS_CSV, minimum_epoch=minimum_epoch)
+    model_info["dataset_rows"] = _count_csv_rows(DATASET_CSV)
 
     try:
         model_info["min_ticks_target"] = int(active_state_pre.get("min_ticks_target", 500) or 500)
@@ -1675,15 +1913,14 @@ def api_state():
         model_info["min_ticks_target"] = 500
 
     # Métrica ativa precisa pertencer ao bundle publicado; candidatos ficam separados.
+    model_status = _model_publication_status(active_state_pre)
     try:
-        from model_contract import fingerprint, usable
         manifest=_read_json_safe(Path(str(MODEL_PKL)+'.metadata.json'))
-        symbol=active_state_pre.get('symbol','')
-        valid=(MODEL_PKL.exists() and isinstance(manifest,dict) and manifest.get('approved')
-               and usable(manifest,symbol) and manifest.get('artifact_sha256')==fingerprint(MODEL_PKL))
-        model_info['ready']=bool(valid)
-        model_info['last_metrics']=manifest.get('metrics',{}) if valid else {}
-        model_info['blocked_reason']='' if valid else 'Modelo sem validação compatível com o ativo e vencimento'
+        model_info['ready']=bool(model_status.get('ready'))
+        model_info['last_metrics']=manifest.get('metrics',{}) if model_status.get('ready') and isinstance(manifest, dict) else {}
+        model_info['blocked_reason']=model_status.get('blocked_reason', '')
+        model_info['metrics_missing']=bool(model_status.get('metrics_missing'))
+        model_info['candidate_metrics_count']=int(model_status.get('candidate_metrics_count', 0) or 0)
         candidates=_read_json_safe(MODEL_METRICS_JSON)
         model_info['last_candidate_metrics']=candidates[-1] if isinstance(candidates,list) and candidates else {}
     except Exception:
@@ -1693,6 +1930,12 @@ def api_state():
     active_contract = active_state.get("active_contract")
     if not isinstance(active_contract, dict):
         active_contract = {"has_active": False}
+    diagnostics = _operational_diagnostics(
+        bot_status=bot_status,
+        risk_state=risk_state,
+        state=active_state,
+        model_status=model_status,
+    )
 
     # — Bot status —
     uptime_sec = None
@@ -1717,10 +1960,18 @@ def api_state():
             "last_decision": bot_status.get("last_decision", {}),
             "decision_counts": bot_status.get("decision_counts", {}),
             "no_entry_for_sec": bot_status.get("no_entry_for_sec", 0),
+            "candle_count": bot_status.get("candle_count", 0),
+            "min_candles": bot_status.get("min_candles", config.MIN_CANDLES),
+            "warmup_remaining_candles": bot_status.get("warmup_remaining_candles", 0),
+            "model_feature_window": bot_status.get("model_feature_window", FEATURE_WINDOW),
+            "shadow": bot_status.get("shadow", {}),
         },
         "summary": summary,
+        "contracts_source": contract_source,
+        "contracts_source_error": contract_error,
         "indicators": live_indicators,
         "model": model_info,
+        "diagnostics": diagnostics,
         "risk_state": risk_state,
         "active_symbol": active_state.get("symbol", ""),
         "active_contract": active_contract,

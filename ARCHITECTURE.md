@@ -31,14 +31,25 @@ O diagrama representa responsabilidades, não uma ordem estrita de chamadas.
 execução. `bot.py` é um entrypoint alternativo para execução; `collector.py`
 também pode ser executado separadamente.
 
+O contrato de treino vigente usa candles de 15 minutos e uma janela móvel de
+sete dias (672 candles), com 50 candles por amostra. O scanner consulta o
+catálogo `active_symbols`, exige ADX atualizado >= 25 e prioriza ativos não
+sintéticos; só tenta sintéticos abertos quando nenhum não sintético é elegível.
+`Histórico Ativos/` mantém candles OHLC independentes por símbolo, com merge
+incremental e retenção semanal; o treino ainda exige ticks identificados. Um
+bundle aprovado offline ainda
+precisa validar 30 resultados shadow não sobrepostos, acerto >= 55% e payout
+líquido observado >= 70%. O fluxo de modelos treinados pode abrir contratos
+somente em conta demo.
+
 ## Responsabilidades
 
 | Área | Módulos e responsabilidade |
 |---|---|
 | Configuração e sessão | `config.py` concentra parâmetros; `deriv_session.py` gerencia autenticação Deriv legada e Bearer/PAT. |
-| Dados e features | `collector.py` coleta; `market_data.py` valida e persiste; `indicators.py` calcula indicadores e Price Action; `feature_engine.py` calcula o mapa canônico de 27 features; `dataset_builder.py` constrói datasets temporais. |
+| Dados e features | `collector.py` coleta; `market_data.py` valida e persiste; `asset_history.py` mantém candles compartilhados por ativo; `indicators.py` calcula indicadores e Price Action; `feature_engine.py` calcula o mapa canônico de 27 features; `dataset_builder.py` constrói datasets temporais. |
 | Modelos | `train_model.py`, `training_evaluation.py` e `training_experiments.py` treinam/avaliam candidatos; `model_contract.py` valida compatibilidade e persistência de bundles. |
-| Decisão e execução | `ai_predictor.py` faz inferência; `strategy.py` combina sinais; `risk_manager.py` controla limites persistentes; `executor.py` acompanha proposals e contratos; `pipeline.py` orquestra o fluxo. |
+| Decisão e execução | `ai_predictor.py` faz inferência; `strategy.py` executa módulos independentes e exige maioria estrita na mesma direção; `risk_manager.py` controla limites persistentes; `executor.py` acompanha proposals e contratos; `pipeline.py` orquestra o fluxo. |
 | Simulação e interface | `backtest.py` executa simulações offline; `dashboard/server.py` serve API e frontend para monitoramento e ações autorizadas. |
 | Verificação | `tests/` cobre contratos, estratégia, risco, pipeline, execução, treino e endpoints do dashboard. |
 

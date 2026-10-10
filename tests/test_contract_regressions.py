@@ -22,15 +22,15 @@ from risk_manager import RiskManager
 def test_ai_disagreement_abstention_and_invalid_probability_block(direction, confidence):
     """Garante que discordância, abstenção ou probabilidade inválida da IA bloqueiam o sinal."""
     with patch('strategy.ind.price_action_features', return_value = None), patch('ai_predictor.predict', return_value = (direction, confidence)):
-        signal, values = strategy._apply_ai_filter('BUY', [100] * 100, {'tech_score': .8}, use_ai_model = True)
+        signal, values = strategy._apply_ai_filter('BUY', [100] * FEATURE_WINDOW, {'tech_score': .8}, use_ai_model = True)
     assert signal is None and 'win_probability' not in values
 
 
 def test_ai_score_preserves_actual_technical_strength():
     """Garante que o ai_score combina a força técnica real com a probabilidade do modelo."""
     with patch('strategy.ind.price_action_features', return_value = None), patch('ai_predictor.predict', return_value = ('BUY', .8)):
-        _, weak = strategy._apply_ai_filter('BUY', [100] * 100, {'tech_score': .05}, use_ai_model = True)
-        _, strong = strategy._apply_ai_filter('BUY', [100] * 100, {'tech_score': .9}, use_ai_model = True)
+        _, weak = strategy._apply_ai_filter('BUY', [100] * FEATURE_WINDOW, {'tech_score': .05}, use_ai_model = True)
+        _, strong = strategy._apply_ai_filter('BUY', [100] * FEATURE_WINDOW, {'tech_score': .9}, use_ai_model = True)
     assert weak['ai_score'] < strong['ai_score']
     assert weak['ai_score'] == round(.55 * .05 + .45 * .8, 4)
 
@@ -58,6 +58,20 @@ def test_conflicting_prices_quarantined_instead_of_arbitrarily_selected(tmp_path
     assert len(clean) == 1 and len(conflicts) == 2 and duplicates == 0
 
 
+def test_candle_epoch_must_match_timeframe(tmp_path):
+    """Garante que candles desalinhados ao timeframe não entram na série utilizável."""
+    p = tmp_path / 'ticks.csv'
+    p.write_text(
+        'epoch,datetime,symbol,price,kind,timeframe,open,high,low\n'
+        '1790878563,,frxUSDJPY,158.231,candle,900,158.206,158.25,158.124\n'
+    )
+
+    records, rejected = read_records(p)
+
+    assert records == []
+    assert len(rejected) == 1
+
+
 def test_legacy_data_cannot_silently_train(tmp_path):
     """Garante que dados legados sem proveniência fazem build_dataset levantar ValueError."""
     p = tmp_path / 'ticks.csv'
@@ -66,7 +80,7 @@ def test_legacy_data_cannot_silently_train(tmp_path):
         build_dataset(p, tmp_path / 'dataset.csv')
 
 
-def write_ticks(path, minutes = 130, price_fn = None):
+def write_ticks(path, minutes = 14 * 60, price_fn = None):
     """Grava um CSV v2 de ticks sintéticos de R_100 a cada 2 segundos."""
     base = 1_800_000_000
     with path.open('w', newline = '') as f:
@@ -81,21 +95,23 @@ def test_labels_use_entry_and_expiry_not_mean_next_two_prices(tmp_path):
     """Garante que os rótulos usam preço de entrada e de vencimento, e não a média dos próximos preços."""
     source = tmp_path / 'ticks.csv'
     out = tmp_path / 'dataset.csv'
-    # Primeira entrada ocorre no segundo 6000, após 100 candles completos.
+    feature_span = FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC
+    # Primeira entrada ocorre após FEATURE_WINDOW candles completos.
     def price(t):
         """Define preço 100 na entrada, 101 até o vencimento e 99 depois dele."""
-        if t < 6000:
+        if t < feature_span:
             return 100 + math.sin(t / 50)
-        if t == 6000:
+        if t == feature_span:
             return 100
-        if t < 6900:
+        if t < feature_span + 900:
             return 101
         return 99
     write_ticks(source, price_fn = price)
     build_dataset(source, out)
     df = pd.read_csv(out)
     first = df.iloc[0]
-    assert first.entry_epoch == 1_800_006_000 and first.expiry_epoch == 1_800_006_900
+    assert first.entry_epoch == 1_800_000_000 + feature_span
+    assert first.expiry_epoch == 1_800_000_000 + feature_span + 900
     assert first.target == 0 and first.entry_price == 100 and first.exit_price == 99
     metadata = json.loads(Path(str(out) + '.metadata.json').read_text())
     assert compatible(metadata, 'R_100')
@@ -109,7 +125,7 @@ def test_ties_kept_as_separate_outcome_without_future_noise_filter(tmp_path):
     build_dataset(source, out)
     df = pd.read_csv(out)
     assert set(df.target) == {2}
-    assert len(df) > 1 and (df.signal_epoch.diff().dropna() == 60).all()
+    assert len(df) > 1 and (df.signal_epoch.diff().dropna() == config.CANDLE_TIMEFRAME_SEC).all()
 
 
 def test_train_and_inference_features_are_identical_and_pa_available(tmp_path):
@@ -120,7 +136,7 @@ def test_train_and_inference_features_are_identical_and_pa_available(tmp_path):
     build_dataset(source, out)
     from indicators import ticks_to_candles_by_time
     records, _ = read_records(source)
-    candles = ticks_to_candles_by_time(records, 60)[: FEATURE_WINDOW]
+    candles = ticks_to_candles_by_time(records, config.CANDLE_TIMEFRAME_SEC)[: FEATURE_WINDOW]
     prices = [c['close'] for c in candles]
     live = ai_predictor._extract_features(prices, candles)
     trained = pd.read_csv(out).iloc[0][feature_engine.FEATURES].astype(float).values
@@ -246,8 +262,9 @@ def test_outbox_recovers_csv_after_interrupted_append(monkeypatch):
 def test_training_partitions_purge_overlapping_labels_and_features():
     """Garante que as partições temporais eliminam sobreposição entre rótulos e features posteriores."""
     from train_model import temporal_partitions
-    epochs = np.arange(4000) * 60
-    frame = pd.DataFrame(dict(signal_epoch = epochs, feature_start_epoch = epochs - 6000,
+    epochs = np.arange(4000) * config.CANDLE_TIMEFRAME_SEC
+    frame = pd.DataFrame(dict(signal_epoch = epochs,
+                            feature_start_epoch = epochs - FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC,
                             entry_epoch = epochs, expiry_epoch = epochs + 900, target = np.arange(4000) % 2))
     parts = temporal_partitions(frame)
     for earlier, later in zip(parts, parts[1:]):
@@ -278,7 +295,7 @@ def test_model_loader_refuses_legacy_and_mismatching_contract(tmp_path, monkeypa
         joblib.dump(payload, path)
         ai_predictor.reset()
         assert ai_predictor.status()['ready'] is False
-        assert ai_predictor.predict([100] * 100)[0] is None
+        assert ai_predictor.predict([100] * FEATURE_WINDOW)[0] is None
 
 
 def test_model_loader_checks_sidecar_before_pickle(tmp_path, monkeypatch):
@@ -334,7 +351,7 @@ def test_writer_refuses_to_append_v2_rows_to_legacy_file(tmp_path):
     assert path.read_bytes() == original
 
 
-def test_scanner_requests_time_candles(monkeypatch):
+def test_scanner_requests_time_candles(tmp_path, monkeypatch):
     """Garante que o scanner pede velas por tempo com a granularidade configurada."""
     import pipeline
     sent = []
@@ -362,63 +379,54 @@ def test_scanner_requests_time_candles(monkeypatch):
     monkeypatch.setattr(pipeline, '_get_ws_url', lambda: 'offline')
     monkeypatch.setattr(pipeline, '_uses_bearer_auth', lambda: False)
     monkeypatch.setattr(pipeline.websocket, 'WebSocketApp', FakeSocket)
+    from asset_history import AssetHistoryStore
+    monkeypatch.setattr(pipeline, '_asset_history_store', AssetHistoryStore(tmp_path / 'asset-history', config.CANDLE_TIMEFRAME_SEC))
     pipeline._fetch_prices_for_symbol('R_100', 100)
     request = next(m for m in sent if 'ticks_history' in m)
     assert request['style'] == 'candles' and request['granularity'] == config.CANDLE_TIMEFRAME_SEC
 
 
 def test_history_fetch_paginates_and_counts_candles(tmp_path, monkeypatch):
-    """Garante que o histórico é buscado em páginas de até 1000 velas e gravado como velas sem erros."""
+    """Garante que o histórico atualiza a base incremental por ativo sem regravar ticks.csv."""
     import pipeline
-    sent = []
-    now = 1_800_200_000
+    now = (1_800_200_000 // config.CANDLE_TIMEFRAME_SEC + 1) * config.CANDLE_TIMEFRAME_SEC
 
-    def candles(end, amount):
-        """Gera amount velas consecutivas terminando em end (ou na última vela fechada)."""
-        latest = now - config.CANDLE_TIMEFRAME_SEC if end == 'latest' else int(end)
-        start = latest - (amount - 1) * config.CANDLE_TIMEFRAME_SEC
+    calls = []
+
+    def fetch(symbol, start, end):
+        """Gera velas consecutivas somente para a lacuna solicitada."""
+        calls.append((symbol, start, end))
         return [
             {'epoch': epoch, 'open': 100, 'high': 101, 'low': 99, 'close': 100}
-            for epoch in range(start, latest + 1, config.CANDLE_TIMEFRAME_SEC)
+            for epoch in range(start, end + 1, config.CANDLE_TIMEFRAME_SEC)
         ]
-
-    class FakeSocket:
-        """WebSocket falso que autentica e responde páginas de velas conforme count e end."""
-        def __init__(self, url, on_open, on_message, on_error, on_close):
-            """Guarda os callbacks de abertura, mensagem e fechamento."""
-            self.on_open = on_open
-            self.on_message = on_message
-            self.on_close = on_close
-        def run_forever(self):
-            """Simula a abertura da conexão."""
-            self.on_open(self)
-        def send(self, raw):
-            """Registra a requisição e responde com autorização ou com uma página de velas."""
-            message = json.loads(raw)
-            sent.append(message)
-            if 'authorize' in message:
-                self.on_message(self, json.dumps({'msg_type': 'authorize'}))
-                return
-            amount = min(int(message['count']), 1000)
-            self.on_message(self, json.dumps({'msg_type': 'candles', 'candles': candles(message['end'], amount)}))
-        def close(self):
-            """Dispara o callback de fechamento."""
-            self.on_close(self, None, None)
 
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
     monkeypatch.setattr(pipeline, 'SYMBOL', 'frxEURAUD')
-    monkeypatch.setattr(pipeline, '_get_ws_url', lambda: 'offline')
-    monkeypatch.setattr(pipeline, '_uses_bearer_auth', lambda: False)
+    monkeypatch.setattr(pipeline, '_set_runtime_symbol', lambda symbol: None)
+    monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'frxEURAUD')
     monkeypatch.setattr(pipeline, '_probe_symbol', lambda symbol: (True, ''))
-    monkeypatch.setattr(pipeline.websocket, 'WebSocketApp', FakeSocket)
+    monkeypatch.setattr(pipeline, '_fetch_candles_for_symbol', fetch)
     monkeypatch.setattr(pipeline.time, 'time', lambda: now)
+    from asset_history import AssetHistoryStore
+    monkeypatch.setattr(
+        pipeline,
+        '_asset_history_store',
+        AssetHistoryStore(
+            tmp_path / 'asset-history',
+            config.CANDLE_TIMEFRAME_SEC,
+            max_candles=config.ASSET_HISTORY_CANDLES,
+            page_limit=400,
+        ),
+    )
 
-    assert pipeline._fetch_historical_ticks(1200) == 1200
-    requests = [m for m in sent if 'ticks_history' in m]
-    assert [r['count'] for r in requests] == [1000, 200]
-    records, rejected = read_records(tmp_path / 'ticks.csv')
+    assert pipeline._fetch_historical_ticks(1200) == config.ASSET_HISTORY_CANDLES
+    assert len(calls) == 1
+    records, rejected = read_records(
+        pipeline._history_store().path_for('frxEURAUD')
+    )
     assert not rejected
-    assert len(records) == 1200 and {r['kind'] for r in records} == {'candle'}
+    assert len(records) == config.ASSET_HISTORY_CANDLES and {r['kind'] for r in records} == {'candle'}
 
 
 def test_history_fetch_refuses_closed_market_before_request(tmp_path, monkeypatch):
@@ -436,11 +444,16 @@ def test_history_fetch_refuses_closed_market_before_request(tmp_path, monkeypatc
     assert pipeline._fetch_historical_ticks(10) == 0
 
 
-def test_scan_skips_locally_closed_market_before_fetch(monkeypatch):
-    """Garante que o scanner pontua com 0 e não busca preços de mercado fechado localmente."""
+def test_scan_skips_catalog_closed_market_before_fetch(monkeypatch):
+    """Garante que o scanner não busca preços de mercado fechado no catálogo oficial."""
     import pipeline
     fetched = []
-    monkeypatch.setattr(pipeline, '_local_market_open', lambda symbol: symbol != 'frxEURUSD')
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        'frxEURUSD': {'market': 'forex', 'underlying_symbol_type': 'forex',
+                      'exchange_is_open': False, 'is_trading_suspended': False},
+        'R_100': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                  'exchange_is_open': True, 'is_trading_suspended': False},
+    })
     monkeypatch.setattr(pipeline, '_fetch_prices_for_symbol',
                         lambda symbol, count: fetched.append(symbol) or [100 + i for i in range(60)])
     results = pipeline._scan_group(['frxEURUSD', 'R_100'])
@@ -494,6 +507,15 @@ def test_pipeline_fallback_uses_open_synthetic_when_default_unavailable(monkeypa
         return (symbol == 'R_25'), ('closed' if symbol != 'R_25' else '')
 
     monkeypatch.setattr(pipeline, '_probe_symbol', fake_probe)
+    monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
+    monkeypatch.setattr(pipeline, '_catalog_scan_candidates', lambda: ['R_25'])
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', {
+        'R_25': {'market': 'synthetic_index', 'underlying_symbol_type': 'synthetic_index',
+                 'is_synthetic': True, 'exchange_is_open': True, 'is_trading_suspended': False},
+    })
+    monkeypatch.setattr(pipeline, '_scan_adx_values', {'R_25': 25.0})
+    monkeypatch.setattr(pipeline, '_scan_adx_epochs', {'R_25': 100})
+    monkeypatch.setattr(pipeline, '_adx_is_fresh', lambda _symbol: True)
     assert pipeline._detect_trending_symbol() == 'R_25'
 
 
@@ -502,7 +524,7 @@ def test_pipeline_raises_history_to_feature_warmup_minimum():
     import pipeline
     assert pipeline._minimum_history_candles() > FEATURE_WINDOW
     assert pipeline._effective_history_count(1) == pipeline._minimum_history_candles()
-    assert pipeline._effective_history_count(pipeline._minimum_history_candles() + 10) == pipeline._minimum_history_candles() + 10
+    assert pipeline._effective_history_count(pipeline._minimum_history_candles() + 10) == pipeline._minimum_history_candles()
     assert pipeline._effective_history_count(0) == 0
 
 
@@ -521,11 +543,30 @@ def test_startup_minimum_survives_temporal_embargo():
     assert len(parts[-1]) * config.CANDLE_TIMEFRAME_SEC >= 30 * horizon
 
 
-def test_training_starts_with_2280_rows_after_market_gaps(monkeypatch):
-    """Garante que 2280 contratos rotuláveis bastam para iniciar o treino sem aguardar o orçamento de coleta."""
+def test_training_history_is_limited_to_configured_aligned_candles(monkeypatch):
+    """Garante que o dataset usa no máximo a janela de treino configurada."""
+    import dataset_builder
+    from model_contract import minimum_history_candles
+    timeframe = config.CANDLE_TIMEFRAME_SEC
+    latest = 1_800_000_000 // timeframe * timeframe
+    records = [
+        {'epoch': latest - offset * timeframe, 'symbol': 'R_100', 'kind': 'candle'}
+        for offset in range(minimum_history_candles() + 20)
+    ]
+
+    selected = dataset_builder._limit_training_history(records)
+
+    assert len(selected) == 672
+    assert selected[0]['epoch'] == latest
+    assert selected[-1]['epoch'] == latest - 671 * timeframe
+
+
+def test_training_starts_at_operational_temporal_minimum(monkeypatch):
+    """Garante que o piso de linhas rotuláveis inicia treino dentro da janela operacional."""
     import pipeline
+    from model_contract import minimum_training_rows
     monkeypatch.setattr(pipeline, '_count_ticks', lambda: 150492)
-    monkeypatch.setattr(pipeline, '_count_labelable_contracts_for_training', lambda: 2280)
+    monkeypatch.setattr(pipeline, '_count_labelable_contracts_for_training', minimum_training_rows)
     def unexpected_wait(*args):
         """Falha o teste se o pipeline dormir aguardando coleta."""
         pytest.fail('Dados suficientes ficaram aguardando o orcamento de coleta')
@@ -547,7 +588,7 @@ def test_new_training_start_archives_learning_only(tmp_path, monkeypatch):
                    '.env', 'pipeline.log']
     for name in learning + operational:
         (tmp_path / name).write_text(name)
-    archive = pipeline._prepare_training_start()
+    archive = pipeline._prepare_training_start(fresh_collect=True)
     manifest = json.loads((archive / 'manifest.json').read_text())
     assert len(manifest) == len(learning)
     for entry in manifest:
@@ -555,7 +596,22 @@ def test_new_training_start_archives_learning_only(tmp_path, monkeypatch):
         assert not Path(entry['source']).exists()
     for name in operational:
         assert (tmp_path / name).read_text() == name
-    assert pipeline._prepare_training_start() is None
+    assert pipeline._prepare_training_start(fresh_collect=True) is None
+
+
+def test_default_training_start_keeps_ticks_for_incremental_backfill(tmp_path, monkeypatch):
+    """Garante que o início padrão arquiva modelos/dataset mas preserva os ticks para baixar só o faltante."""
+    import pipeline
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', 'ticks_v2.csv')
+    monkeypatch.setattr(pipeline, 'DATASET_CSV', 'dataset_v2.csv')
+    monkeypatch.setattr(pipeline, 'AI_MODEL_PATH', 'model.pkl')
+    for name in ('ticks_v2.csv', 'dataset_v2.csv', 'model.pkl'):
+        (tmp_path / name).write_text(name)
+    archive = pipeline._prepare_training_start()
+    archived = {Path(e['source']).name for e in json.loads((archive / 'manifest.json').read_text())}
+    assert archived == {'dataset_v2.csv', 'model.pkl'}
+    assert (tmp_path / 'ticks_v2.csv').read_text() == 'ticks_v2.csv'
 
 
 @pytest.mark.parametrize('options', [dict(pending={'symbol': 'R_100'}),
@@ -588,6 +644,9 @@ def test_collector_backfills_while_live_ticks_continue(tmp_path, monkeypatch):
     ensure_header(path)
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(path))
     monkeypatch.setattr(pipeline, '_minimum_history_candles', lambda: 2)
+    monkeypatch.setattr(pipeline, '_TICK_BACKFILL_WORKERS', 1)
+    monkeypatch.setattr(pipeline, '_COLLECTOR_TICK_BACKFILL_ENABLED', True)
+    monkeypatch.setattr(pipeline, 'CANDLE_TIMEFRAME_SEC', 60)
     base = 1_800_000_000
     collector = pipeline._CollectorThread('R_100')
     ws = Mock()
@@ -634,7 +693,7 @@ def test_dataset_training_does_not_apply_live_candle_blocker(tmp_path, monkeypat
         writer = csv.writer(f)
         writer.writerow(FIELDS)
         for i in range(9000):
-            writer.writerow([base + i, '', 'R_100', 100 + i * .001, 'tick', 0, '', '', ''])
+            writer.writerow([base + i * 6, '', 'R_100', 100 + i * .001, 'tick', 0, '', '', ''])
 
     calls = []
     original_get_signal = dataset_builder.strategy.get_signal
@@ -668,7 +727,7 @@ def test_pipeline_waits_for_compatible_model_before_executor(monkeypatch):
 
 
 def test_pipeline_refreshes_latest_history_even_when_old_candles_exist(tmp_path, monkeypatch):
-    """Garante que o pipeline busca o histórico mínimo recente mesmo havendo velas antigas no arquivo."""
+    """Garante que a inicialização não solicita uma carga fixa de candles."""
     import pipeline
     path = tmp_path / 'ticks.csv'
     base = 1_800_000_000
@@ -683,7 +742,7 @@ def test_pipeline_refreshes_latest_history_even_when_old_candles_exist(tmp_path,
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(path))
     monkeypatch.setattr(pipeline, 'SYMBOL', 'R_100')
     assert pipeline._count_candles() == 2000
-    assert pipeline._history_fetch_count_for_start(1) == pipeline._minimum_history_candles()
+    assert pipeline._history_fetch_count_for_start(1) == 0
 
 
 def test_minimum_quality_gate_uses_nonoverlapping_contracts():
@@ -735,10 +794,10 @@ def test_training_calibration_and_serialization_on_synthetic_data(tmp_path, monk
     frame['technical_signal'] = labels
     frame['tech_score'] = .9
     frame['symbol'] = config.get_active_symbol()
-    frame['signal_epoch'] = 1_800_000_000 + np.arange(n) * 60
+    frame['signal_epoch'] = 1_800_000_000 + np.arange(n) * config.CANDLE_TIMEFRAME_SEC
     frame['entry_epoch'] = frame.signal_epoch
     frame['expiry_epoch'] = frame.entry_epoch + 900
-    frame['feature_start_epoch'] = frame.signal_epoch - 6000
+    frame['feature_start_epoch'] = frame.signal_epoch - FEATURE_WINDOW * config.CANDLE_TIMEFRAME_SEC
     source = tmp_path / 'synthetic.csv'
     frame.to_csv(source, index = False)
     write_json_atomic(str(source) + '.metadata.json', dict(specification(config.get_active_symbol()), dataset_sha256 = fingerprint(source)))
@@ -747,7 +806,7 @@ def test_training_calibration_and_serialization_on_synthetic_data(tmp_path, monk
     payload = joblib.load(dest)
     assert payload['model'].__class__.__module__ == 'train_model'
     assert result['eligible'] and payload['metadata']['approved']
-    assert result['n_test'] == 800 and result['trades'] < 100
+    assert result['n_test'] == 800 and 30 <= result['trades'] <= result['n_test']
     monkeypatch.setattr(config, 'AI_MODEL_PATH', str(dest))
     ai_predictor.reset()
     assert ai_predictor.status()['ready']

@@ -79,7 +79,7 @@
       <span id="lastUpdate" class="last-update">—</span>
       <button id="btnStart" class="btn btn-green" onclick="botStart()">▶ Iniciar</button>
       <button id="btnStop"  class="btn btn-red"   onclick="botStop()"  style="display:none">■ Parar</button>
-      <button id="btnClearData" class="btn btn-outline" onclick="clearData()" title="Apaga operacoes_log.csv, risk_state.json e state.json">🧹 Limpar Dados</button>
+      <button id="btnClearData" class="btn btn-outline" onclick="clearData()" title="Reinicia a visualização da sessão; preserva histórico e risco">↻ Reiniciar Sessão</button>
     </div>
   </header>
 
@@ -585,7 +585,7 @@
           </tr>
         </thead>
         <tbody id="histBody">
-          <tr><td colspan="8" class="empty-msg">Carregando...</td></tr>
+          <tr><td colspan="9" class="empty-msg">Carregando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -708,7 +708,7 @@
         <input type="number" id="balanceInput" value="1000" min="10" step="10" />
       </label>
       <label class="checkbox-label">
-        <input type="checkbox" id="skipCollect" /> Pular coleta (usar ticks.csv existente)
+            <input type="checkbox" id="skipCollect" /> Pular coleta (usar ticks_v2.csv existente)
       </label>
 
       <div class="execution-mode-box">
@@ -737,9 +737,6 @@
         <div class="advanced-body">
           <label class="checkbox-label">
             <input type="checkbox" id="noScan" /> Pular scan de tendência
-          </label>
-          <label>Intervalo de re-treino (min)
-            <input type="number" id="retrainInterval" value="10" min="1" step="1" />
           </label>
           <label>Mín. de ticks para treino
             <input type="number" id="minTicks" value="500" min="100" step="100" />

@@ -75,6 +75,9 @@ def test_adx_min_range():
     assert 10 <= config.ADX_MIN <= 40, (
         f"ADX_MIN fora da faixa razoável [10, 40]: {config.ADX_MIN}"
     )
+    assert config.ADX_MIN >= 30, (
+        f"ADX_MIN deve exigir tendência forte na configuração atual: {config.ADX_MIN}"
+    )
 
 
 def test_adx_adaptive_percentile_range():
@@ -93,10 +96,10 @@ def test_signal_score_min_range():
     )
 
 
-def test_entry_mode_opportunity_configuration():
-    """Garante que ENTRY_MODE é opportunity e seus parâmetros são coerentes com SIGNAL_SCORE_MIN."""
+def test_entry_mode_balanced_configuration():
+    """Garante que ENTRY_MODE usa confluência balanceada com score coerente."""
     assert config.ENTRY_MODE in {"balanced", "opportunity", "conservative"}
-    assert config.ENTRY_MODE == "opportunity"
+    assert config.ENTRY_MODE == "balanced"
     assert 0 < config.OPPORTUNITY_SIGNAL_SCORE_MIN <= config.SIGNAL_SCORE_MIN
     assert 0 <= config.OPPORTUNITY_ADX_WEIGHT_FLOOR <= 1
 
@@ -105,6 +108,17 @@ def test_signal_score_min_not_too_low():
     """Garante que SIGNAL_SCORE_MIN não fica abaixo de 0.03."""
     assert config.SIGNAL_SCORE_MIN >= 0.03, (
         f"SIGNAL_SCORE_MIN muito permissivo ({config.SIGNAL_SCORE_MIN}), mínimo recomendado: 0.03"
+    )
+    assert config.SIGNAL_SCORE_MIN >= 0.05, (
+        f"SIGNAL_SCORE_MIN deve preservar confluência técnica mínima: {config.SIGNAL_SCORE_MIN}"
+    )
+
+
+def test_unfavorable_symbol_switch_not_too_eager():
+    """Garante que a troca automática tenha paciência com a configuração seletiva."""
+    assert config.UNFAVORABLE_SYMBOL_SWITCH_DECISIONS >= 10, (
+        "UNFAVORABLE_SYMBOL_SWITCH_DECISIONS muito baixo para ADX_MIN=30: "
+        f"{config.UNFAVORABLE_SYMBOL_SWITCH_DECISIONS}"
     )
 
 
@@ -125,9 +139,9 @@ def test_target_lookforward_min():
 
 
 def test_min_candles_positive():
-    """Garante que MIN_CANDLES é de pelo menos 5."""
-    assert config.MIN_CANDLES >= 5, (
-        f"MIN_CANDLES muito baixo ({config.MIN_CANDLES}), mínimo recomendado: 5"
+    """Garante que MIN_CANDLES cobre a janela operacional de contratos 15m."""
+    assert config.MIN_CANDLES >= 150, (
+        f"MIN_CANDLES muito baixo ({config.MIN_CANDLES}), mínimo recomendado: 150"
     )
 
 
@@ -164,9 +178,9 @@ def test_recommended_candle_timeframe():
 
 
 def test_recommended_target_lookforward():
-    """Horizonte de 2+ candles é mais estável que 1 para índices sintéticos."""
-    assert config.TARGET_LOOKFORWARD >= 2, (
-        f"Estratégia recomenda TARGET_LOOKFORWARD >= 2, atual: {config.TARGET_LOOKFORWARD}"
+    """Target acompanha um vencimento de 15m sobre candles de 15m."""
+    assert config.CANDLE_TIMEFRAME_SEC == 900 and config.TARGET_LOOKFORWARD == 1, (
+        f"Esperado TARGET_LOOKFORWARD=1 em 15m, atual: {config.TARGET_LOOKFORWARD}"
     )
 
 

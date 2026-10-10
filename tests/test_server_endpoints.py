@@ -89,6 +89,28 @@ def test_favicon_no_error(client):
     assert r.status_code in (200, 204, 404)  # qualquer coisa menos 500
 
 
+def test_frontend_uses_same_origin_api_base(client):
+    """Garante que o frontend não fixa localhost e funciona por IP, proxy ou túnel."""
+    text = client.get("/app.js").get_data(as_text=True)
+    assert "localhost:5055" not in text
+    assert "window.STANDERIV_API_BASE_URL || ''" in text
+
+
+def test_frontend_keeps_controls_alive_without_chart_cdn(client):
+    """Garante fallback quando Chart.js externo não carrega."""
+    text = client.get("/app.js").get_data(as_text=True)
+    assert "class ChartFallback" in text
+    assert "gráficos desativados, controles e APIs continuam ativos" in text
+
+
+def test_frontend_records_poll_errors(client):
+    """Garante que erros de polling deixam rastros visíveis e não somem em catch vazio."""
+    text = client.get("/app.js").get_data(as_text=True)
+    assert "function _recordPollError" in text
+    assert "Falha ao atualizar:" in text
+    assert "async function _fetchJson" in text
+
+
 # ─── /api/summary ─────────────────────────────────────────────────────────────
 
 def test_summary_returns_200(client):
@@ -220,6 +242,65 @@ def test_ticks_n_capped_at_2000(client):
     assert r.status_code == 200  # não deve explodir
 
 
+def test_ticks_filters_symbol_before_returning_tail(monkeypatch, tmp_path):
+    """Garante que a cauda do endpoint contém somente ticks do símbolo solicitado."""
+    import dashboard.server as srv
+
+    ticks = tmp_path / "ticks_v2.csv"
+    ticks.write_text(
+        "epoch,symbol,price\n"
+        "1000,R_100,10\n"
+        "1001,R_75,20\n"
+        "1002,R_100,11\n"
+        "1003,R_100,12\n"
+    )
+    monkeypatch.setattr(srv, "TICKS_CSV", ticks)
+
+    with srv.app.test_client() as test_client:
+        records = test_client.get("/api/ticks?n=2&symbol=R_100").get_json()
+
+    assert [record["price"] for record in records] == [11.0, 12.0]
+
+
+def test_csv_row_counter_updates_incrementally_and_filters_epoch(tmp_path):
+    """Garante contagem por sessão e atualização após novas linhas anexadas."""
+    import dashboard.server as srv
+
+    ticks = tmp_path / "ticks.csv"
+    ticks.write_text("epoch,symbol,price\n1000,R_100,10\n2000,R_100,11\n")
+
+    assert srv._count_csv_rows(ticks) == 2
+    assert srv._count_csv_rows(ticks, minimum_epoch=1500) == 1
+
+    with ticks.open("a") as data_file:
+        data_file.write("3000,R_100,12\n")
+
+    assert srv._count_csv_rows(ticks) == 3
+    assert srv._count_csv_rows(ticks, minimum_epoch=1500) == 2
+
+
+def test_candle_patterns_reuses_recent_symbol_result(monkeypatch):
+    """Garante que polls repetidos compartilham o cálculo de padrões por ativo."""
+    import pandas as pd
+    import dashboard.server as srv
+    import indicators
+
+    read_tail = MagicMock(return_value=pd.DataFrame({"price": [1, 2, 3, 4]}))
+    monkeypatch.setattr(srv, "_tail_csv", read_tail)
+    monkeypatch.setattr(srv, "_candle_patterns_cache", {})
+    monkeypatch.setattr(indicators, "ticks_to_candles", lambda prices, size: [1, 2, 3, 4])
+    monkeypatch.setattr(indicators, "detect_candle_patterns", lambda candles: [])
+    monkeypatch.setattr(indicators, "price_action_features", lambda candles, tolerance: None)
+
+    with srv.app.test_client() as test_client:
+        first = test_client.get("/api/candle-patterns?symbol=R_TEST")
+        second = test_client.get("/api/candle-patterns?symbol=R_TEST")
+
+    assert first.get_json() == []
+    assert second.get_json() == []
+    read_tail.assert_called_once_with(srv.TICKS_CSV, 500, symbol="R_TEST")
+
+
 # ─── /api/trades ──────────────────────────────────────────────────────────────
 
 def test_trades_returns_200(client):
@@ -283,6 +364,33 @@ def test_trades_reports_deriv_error(monkeypatch):
     assert "Deriv indisponível" in data["error"]
 
 
+def test_trades_falls_back_to_local_operations_when_deriv_fails(monkeypatch, tmp_path):
+    """Garante fallback identificado para CSV local quando a Deriv falha."""
+    import dashboard.server as srv
+
+    ops = tmp_path / "operacoes_v2.csv"
+    ops.write_text(
+        "timestamp,symbol,direction,stake,duration,result,profit,contract_id\n"
+        "2026-09-21T09:30:00,R_100,BUY,10,15,WIN,8,abc123\n"
+    )
+    monkeypatch.setattr(srv, "_deriv_contract_cache", {"ts": 0.0, "records": [], "error": ""})
+
+    def fail(limit=100):
+        """Simula indisponibilidade da Deriv."""
+        raise RuntimeError("Deriv indisponível")
+
+    monkeypatch.setattr(srv, "_request_deriv_profit_table", fail)
+    with patch.object(srv, "OPERATIONS_CSV", ops):
+        srv.app.config["TESTING"] = True
+        with srv.app.test_client() as c:
+            data = c.get("/api/trades?n=5&force=1").get_json()
+
+    assert data["source"] == "local_operations_fallback"
+    assert "Deriv indisponível" in data["error"]
+    assert data["trades"][0]["contract_id"] == "abc123"
+    assert data["trades"][0]["profit"] == 8
+
+
 # ─── /api/indicators ─────────────────────────────────────────────────────────
 
 def test_indicators_returns_200(client):
@@ -295,6 +403,36 @@ def test_indicators_returns_dict(client):
     """Garante que /api/indicators retorna um dict."""
     data = json.loads(client.get("/api/indicators").data)
     assert isinstance(data, dict)
+
+
+def test_indicators_use_live_ticks_before_last_operation(monkeypatch, tmp_path):
+    """Garante que /api/indicators calcula indicadores de ticks atuais quando possível."""
+    import dashboard.server as srv
+    import feature_engine
+
+    ticks = tmp_path / "ticks_v2.csv"
+    ticks.write_text(
+        "epoch,symbol,price\n" +
+        "\n".join(f"{1700000000 + i},R_100,{100 + i * 0.01}" for i in range(80))
+    )
+    ops = tmp_path / "operacoes_v2.csv"
+    ops.write_text("")
+    monkeypatch.setattr(feature_engine, "compute_feature_map", lambda prices: {
+        "ema9": 101.1,
+        "ema21": 100.9,
+        "rsi": 55.5,
+        "adx": 22.2,
+        "macd_hist": 0.123456,
+    })
+
+    with patch.object(srv, "TICKS_CSV", ticks), patch.object(srv, "OPERATIONS_CSV", ops):
+        srv.app.config["TESTING"] = True
+        with srv.app.test_client() as c:
+            data = c.get("/api/indicators").get_json()
+
+    assert data["source"] == "ticks_live"
+    assert data["rsi"] == 55.5
+    assert data["adx"] == 22.2
 
 
 # ─── /api/model ───────────────────────────────────────────────────────────────
@@ -359,6 +497,27 @@ def test_bot_status_marks_missing_running_process_as_crashed(client):
     assert data["last_error"]
 
 
+def test_bot_status_preserves_stopping_while_process_is_alive(client):
+    """Garante que polling não transforma parada solicitada em running enquanto o processo encerra."""
+    import dashboard.server as srv
+    srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "stopping", "running": True, "pid": 123}))
+    with patch.object(srv, "_bot_running", return_value=(True, 123)):
+        data = client.get("/api/bot/status").get_json()
+    assert data["status"] == "stopping"
+    assert data["running"] is True
+
+
+def test_bot_status_marks_stopping_dead_process_as_stopped(client):
+    """Garante que processo ausente após stop vira stopped, não crashed."""
+    import dashboard.server as srv
+    srv.BOT_STATUS_JSON.write_text(json.dumps({"status": "stopping", "running": True, "pid": 123}))
+    with patch.object(srv, "_bot_running", return_value=(False, None)):
+        data = client.get("/api/bot/status").get_json()
+    assert data["status"] == "stopped"
+    assert data["running"] is False
+    assert data["last_error"] == ""
+
+
 def test_bot_status_uses_status_pid_when_pid_file_is_missing(client):
     """Garante que, sem arquivo de PID, o PID do status inexistente resulta em crashed e pid nulo."""
     import dashboard.server as srv
@@ -410,12 +569,21 @@ def test_bot_status_includes_last_decision_diagnostics(client):
         "last_decision": {"reason": "candle_conflict", "signal": None},
         "decision_counts": {"candle_conflict": 2},
         "no_entry_for_sec": 1800,
+        "candle_count": 120,
+        "min_candles": 150,
+        "warmup_remaining_candles": 30,
+        "model_feature_window": 150,
     }))
     with patch.object(srv, "_bot_running", return_value=(True, 123)):
         data = client.get("/api/bot/status").get_json()
     assert data["last_decision"]["reason"] == "candle_conflict"
     assert data["decision_counts"]["candle_conflict"] == 2
     assert data["no_entry_for_sec"] == 1800
+    assert data["candle_count"] == 120
+    assert data["min_candles"] == 150
+    assert data["warmup_remaining_candles"] == 30
+    assert data["model_feature_window"] == 150
+    assert data["diagnostics"]["weighted_score_logic_changed"] is False
 
 
 def test_state_includes_bot_crash_status(client):
@@ -438,6 +606,10 @@ def test_state_includes_decision_diagnostics(client):
         "last_decision": {"reason": "ai_disagreement_or_low_confidence"},
         "decision_counts": {"no_technical_signal": 4},
         "no_entry_for_sec": 600,
+        "candle_count": 120,
+        "min_candles": 150,
+        "warmup_remaining_candles": 30,
+        "model_feature_window": 150,
     }))
     with patch.object(srv, "_bot_running", return_value=(True, 123)), \
          patch.object(srv, "_deriv_contract_report", return_value=[]):
@@ -445,6 +617,56 @@ def test_state_includes_decision_diagnostics(client):
     assert data["bot"]["last_decision"]["reason"] == "ai_disagreement_or_low_confidence"
     assert data["bot"]["decision_counts"]["no_technical_signal"] == 4
     assert data["bot"]["no_entry_for_sec"] == 600
+    assert data["bot"]["candle_count"] == 120
+    assert data["bot"]["min_candles"] == 150
+    assert data["bot"]["warmup_remaining_candles"] == 30
+    assert data["bot"]["model_feature_window"] == 150
+    assert data["diagnostics"]["weighted_score_logic_changed"] is False
+
+
+def test_state_reports_missing_model_metrics_without_changing_weighted_score(client, monkeypatch, tmp_path):
+    """Garante que métricas ausentes viram diagnóstico operacional, não mudança no score ponderado."""
+    import dashboard.server as srv
+
+    missing_metrics = tmp_path / "missing_model_metrics.json"
+    monkeypatch.setattr(srv, "MODEL_METRICS_JSON", missing_metrics)
+    srv.BOT_STATUS_JSON.write_text(json.dumps({
+        "last_decision": {
+            "reason": "signal_ready",
+            "signal": "BUY",
+            "indicators": {
+                "decision_modules": ["weighted_score"],
+                "decision_source": "weighted_score",
+            },
+        },
+        "decision_counts": {"signal_ready": 1},
+        "warmup_remaining_candles": 0,
+        "shadow": {"reason": "missing_observed_payout"},
+    }))
+
+    with patch.object(srv, "_deriv_contract_report", return_value=[]):
+        data = client.get("/api/state").get_json()
+
+    assert data["diagnostics"]["model"]["metrics_missing"] is True
+    assert data["diagnostics"]["weighted_score_logic_changed"] is False
+    assert data["diagnostics"]["weighted_score_shadow_independent"] is True
+    assert "model_metrics_missing" in data["diagnostics"]["blockers"]
+
+
+def test_bot_stop_sets_stopping_and_terminates_process(client):
+    """Garante que /api/bot/stop marca stopping e chama o encerramento robusto."""
+    import dashboard.server as srv
+    with patch.object(srv, "_bot_running", return_value=(True, 123)), \
+         patch.object(srv, "_terminate_bot_process") as terminate:
+        response = client.post("/api/bot/stop")
+    data = response.get_json()
+    status = json.loads(srv.BOT_STATUS_JSON.read_text())
+    assert response.status_code == 200
+    assert data["ok"] is True
+    terminate.assert_called_once_with(123)
+    assert status["status"] == "stopping"
+    assert status["running"] is True
+    assert status["pid"] == 123
 
 
 # ─── /api/bot/start — autenticação ───────────────────────────────────────────

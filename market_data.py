@@ -45,6 +45,8 @@ def read_records(path):
                         item[key] = float(row[key])
                     if item['timeframe'] <= 0 or any(not math.isfinite(item[k]) or item[k] <= 0 for k in ('open', 'high', 'low')):
                         raise ValueError('OHLC inválido')
+                    if epoch % item['timeframe']:
+                        raise ValueError('candle desalinhado ao timeframe')
                     if not item['low'] <= min(item['open'], price) <= max(item['open'], price) <= item['high']:
                         raise ValueError('OHLC inconsistente')
                 records.append(item)
@@ -105,6 +107,25 @@ def append_record(path, epoch, symbol, price, * , kind = 'tick', timeframe = 0, 
                                candle.get('open', ''), candle.get('high', ''), candle.get('low', '')])
         f.flush()
 
+
+def append_records(path, rows):
+    """Anexa ticks `(epoch, symbol, price)` em lote, com um único lock e validação de cabeçalho."""
+    import fcntl
+    rows = list(rows)
+    if not rows:
+        return 0
+    with Path(path).open('a+', newline = '') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        header = next(csv.reader(f), None)
+        if header is None:
+            csv.writer(f).writerow(FIELDS)
+        elif header != FIELDS:
+            raise ValueError('esquema legado; gravar somente em um arquivo v2')
+        f.seek(0, 2)
+        csv.writer(f).writerows([epoch, '', symbol, price, 'tick', 0, '', '', ''] for epoch, symbol, price in rows)
+        f.flush()
+    return len(rows)
 
 
 def recover(source, output_dir):

@@ -20,6 +20,7 @@ import collections
 import json
 import signal
 import sys
+import time
 import websocket
 from datetime import datetime
 
@@ -162,12 +163,16 @@ def on_message(ws, message: str) -> None:
 
 
 def on_error(ws, error) -> None:
-    """Imprime erros do WebSocket."""
+    """Imprime erros do WebSocket e fecha a sessão atual para reconectar com nova URL."""
     print(f"\n[COLETOR] Erro WebSocket: {error}")
+    try:
+        ws.close()
+    except Exception:
+        pass
 
 
 def on_close(ws, close_status_code, close_msg) -> None:
-    """Informa o encerramento da conexão (a reconexão é feita por `run_forever`)."""
+    """Informa o encerramento da conexão; o loop principal recria a sessão."""
     print(f"\n[COLETOR] Conexão encerrada (código: {close_status_code}) — reconectando...")
 
 
@@ -200,15 +205,22 @@ def main() -> None:
     print("  Pressione Ctrl+C para encerrar")
     print("=" * 55)
 
-    ws = websocket.WebSocketApp(
-        _get_ws_url(),
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-    )
-    _ws_instance = ws
-    ws.run_forever(reconnect=5)
+    while True:
+        try:
+            ws = websocket.WebSocketApp(
+                _get_ws_url(),
+                on_open=on_open,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+            )
+            _ws_instance = ws
+            ws.run_forever()
+        except KeyboardInterrupt:
+            _handle_interrupt(None, None)
+        except Exception as exc:
+            print(f"\n[COLETOR] Exceção inesperada: {exc} — reconectando em 5s")
+        time.sleep(5)
 
 
 if __name__ == "__main__":

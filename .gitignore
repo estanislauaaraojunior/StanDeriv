@@ -35,3 +35,5 @@ dataset_v2.csv.tmp
 
 payout_quotes.csv
 training_reports/
+.training_candidates/
+shadow_state.json

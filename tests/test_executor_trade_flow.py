@@ -2,6 +2,7 @@
 import csv
 import json
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,19 +13,24 @@ from risk_manager import RiskManager
 
 
 @pytest.fixture
-def bot():
+def bot(tmp_path, monkeypatch):
     """Cria um DerivBot autenticado, com conta vinculada e tick recente."""
     risk = RiskManager(1000.)
     risk.bind_account('test-account', 1000.)
     b = DerivBot(risk)
+    monkeypatch.setattr(executor, '_SHADOW_STATE_JSON', tmp_path/'shadow.json')
     b._auth_verified = True
     b._last_tick_epoch = int(time.time())
     b._last_tick_price = 100.
+    b._shadow_monitor = SimpleNamespace(approved=True)
+    b._shadow_model_id = 'offline'
+    b._shadow_symbol = b.symbol
     return b
 
 
 def proposal(bot, ws, direction = 'BUY'):
     """Envia uma proposta com probabilidade 0.8 e retorna o req_id correlacionado."""
+    bot._shadow_symbol = bot.symbol
     bot._send_proposal(ws, direction, {'win_probability': .8, 'ai_confidence': .8, 'model_id': 'offline'})
     return bot._proposal_req_id
 
@@ -86,6 +92,42 @@ def test_non_model_decision_can_reach_buy_without_ai_metadata(bot):
     assert json.loads(ws.send.call_args.args[0])['buy'] == 'technical-proposal'
 
 
+def test_weighted_score_proposal_does_not_consult_ai_duration(bot, monkeypatch):
+    """Garante que score ponderado puro não usa IA para decidir abertura."""
+    ws = MagicMock()
+    monkeypatch.setattr(
+        executor.ai_predictor,
+        'predict_duration',
+        lambda *_args, **_kwargs: pytest.fail('score ponderado nao deve consultar IA'),
+    )
+
+    sent = bot._send_proposal(
+        ws,
+        'BUY',
+        {'decision_modules': ['weighted_score'], 'decision_source': 'weighted_score'},
+    )
+
+    assert sent is True
+    proposal = json.loads(ws.send.call_args.args[0])
+    assert proposal['duration'] == config.DURATION
+
+
+def test_weighted_score_proposal_does_not_consult_shadow_gate(bot):
+    """Garante que score ponderado puro não depende da validação shadow do modelo."""
+    ws = MagicMock()
+    bot._shadow_monitor.approved = False
+
+    sent = bot._send_proposal(
+        ws,
+        'BUY',
+        {'decision_modules': ['weighted_score'], 'decision_source': 'weighted_score'},
+    )
+
+    assert sent is True
+    assert bot._phase == 'proposal'
+    assert json.loads(ws.send.call_args.args[0])['contract_type'] == 'CALL'
+
+
 def test_non_model_decision_still_obeys_minimum_payout(bot):
     """Garante que decisão sem IA continua rejeitando propostas com payout abaixo do mínimo."""
     ws = MagicMock()
@@ -102,6 +144,83 @@ def test_non_model_decision_still_obeys_minimum_payout(bot):
     )
 
     assert sent is True
+    assert ws.send.call_count == 1
+    assert not bot._in_trade
+
+
+def test_model_decision_is_blocked_until_shadow_is_approved(bot):
+    """Garante que um modelo sem validação forward não envia proposta."""
+    bot._shadow_monitor.approved = False
+    ws = MagicMock()
+
+    sent = bot._send_proposal(ws, 'BUY', {'model_id': 'offline', 'win_probability': .8})
+
+    assert sent is False
+    ws.send.assert_not_called()
+
+
+def test_model_decision_is_blocked_on_real_account(bot):
+    """Garante que o novo fluxo shadow não libera compras em conta real."""
+    bot.demo = False
+    ws = MagicMock()
+
+    sent = bot._send_proposal(ws, 'BUY', {'model_id': 'offline', 'win_probability': .8})
+
+    assert sent is False
+    ws.send.assert_not_called()
+
+
+def test_executor_records_shadow_prediction_with_prior_observed_quote(bot, tmp_path, monkeypatch):
+    """Garante que a previsão shadow usa payout observado antes da entrada e não compra."""
+    from payout_quotes import FIELDS
+    import executor as executor_module
+    ticks_path = tmp_path / 'ticks.csv'
+    quotes_path = tmp_path / 'payout_quotes.csv'
+    entry_epoch = 1_800_000_000
+    monkeypatch.setattr(executor_module, 'TICKS_CSV', str(ticks_path))
+    with quotes_path.open('w', newline='') as handle:
+        writer = csv.writer(handle)
+        writer.writerow(FIELDS)
+        writer.writerow([entry_epoch - 1, bot.symbol, config.DURATION, config.DURATION_UNIT,
+                         'CALL', config.CURRENCY, 10, 18, .8, 'sampled_proposal'])
+    monkeypatch.setattr(executor_module.ai_predictor, 'status', lambda: {'ready': True, 'model_id': 'model-shadow'})
+    monkeypatch.setattr(executor_module.ai_predictor, 'predict', lambda *_args, **_kwargs: ('BUY', .8))
+    monkeypatch.setattr(executor_module.ai_predictor, 'prediction_model_id', lambda: 'model-shadow')
+    bot._candle_closes.extend([100.0] * 50)
+    bot._candles.extend([{'epoch': i * config.CANDLE_TIMEFRAME_SEC, 'close': 100.0} for i in range(50)])
+
+    bot._capture_shadow_prediction(100.0, entry_epoch)
+
+    assert bot._shadow_monitor.state['pending']['direction'] == 1
+    assert bot._shadow_monitor.state['pending']['net_payout'] == pytest.approx(.8)
+    assert bot._shadow_monitor.result_count == 0
+
+
+def test_shadow_rejection_requests_market_switch(bot, tmp_path, monkeypatch):
+    """Garante que a liquidação shadow reprovada solicita troca de mercado."""
+    callback = MagicMock()
+    monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
+    monkeypatch.setattr(executor.ai_predictor, 'model_id', lambda: 'offline')
+    bot._shadow_monitor = SimpleNamespace(settle_tick=lambda **_kwargs: 'rejected')
+    bot._shadow_model_id = 'offline'
+    bot._shadow_symbol = bot.symbol
+    bot.on_shadow_rejected = callback
+
+    bot._handle_tick(
+        MagicMock(),
+        {'symbol': bot.symbol, 'epoch': bot._last_tick_epoch + 1, 'quote': 100.0},
+    )
+
+    callback.assert_called_once_with(bot.symbol)
+
+
+def test_model_proposal_requires_observed_net_payout_of_70_percent(bot):
+    """Garante que o payout bruto da proposal equivale a pelo menos 70% líquido antes da compra."""
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+
+    bot._handle_proposal(ws, {'id': 'low-shadow-payout', 'ask_price': 10, 'payout': 16.9}, req_id=rid)
+
     assert ws.send.call_count == 1
     assert not bot._in_trade
 
@@ -137,7 +256,7 @@ def test_proposal_retries_once_with_lower_stake_when_payout_exceeds_api_cap(bot,
     bot._ws = ws
     rid = proposal(bot, ws, 'SELL')
     first = json.loads(ws.send.call_args.args[0])
-    assert first['amount'] == pytest.approx(75.67)
+    assert first['amount'] == pytest.approx(49.0)
     bot._handle_api_error({'req_id': rid, 'error': {
         'code': 'ContractBuyValidationError',
         'message': 'Minimum stake of 0.50 and maximum payout of 100.00. Current payout is 142.26.',
@@ -146,10 +265,22 @@ def test_proposal_retries_once_with_lower_stake_when_payout_exceeds_api_cap(bot,
     assert bot._proposal_retry_count == 1
     assert ws.send.call_count == 2
     second = json.loads(ws.send.call_args.args[0])
-    assert second['amount'] == pytest.approx(52.12)
+    assert second['amount'] == pytest.approx(33.75)
     assert second['amount'] < first['amount']
     assert second['req_id'] == bot._proposal_req_id != rid
     assert bot._decision_history[-1]['reason'] == 'proposal_retry_payout_cap'
+
+
+def test_initial_proposal_caps_stake_to_avoid_api_payout_limit(bot):
+    """Garante que a primeira proposta já respeita o teto preventivo de payout."""
+    ws = MagicMock()
+    bot.risk_manager.balance = 7726.39
+
+    proposal(bot, ws, 'BUY')
+
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent['amount'] == pytest.approx(49.0)
+    assert sent['amount'] < 77.26
 
 
 def test_repeated_payout_cap_rejections_request_market_switch(bot, monkeypatch):
@@ -280,8 +411,8 @@ def test_expired_proposal_is_rejected(bot):
 
 @pytest.mark.parametrize('probability,payout,accepted', [
     (.56, 18.5, True),   # Ganho esperado positivo.
-    (.60, 16.8, True),   # 0,8% positivo, abaixo da margem antiga de 2%.
-    (.625, 16.0, True),  # Equilíbrio exato.
+    (.60, 16.8, False),  # Payout líquido abaixo do piso shadow de 70%.
+    (.625, 16.0, False), # Payout líquido abaixo do piso shadow de 70%.
     (.6249, 16.0, False),
     (.56, 17.0, False),  # Confiança >55% não basta para este payout.
 ])
@@ -401,11 +532,78 @@ def test_wrong_account_mode_refused(bot):
 
 def test_history_is_merged_without_duplicates(bot):
     """Garante que o histórico de velas é mesclado sem duplicatas e em ordem."""
-    candles = [dict(epoch = i * 60, open = 100 + i, high = 101 + i, low = 99 + i, close = 100 + i) for i in range(200)]
+    candles = [dict(epoch = i * config.CANDLE_TIMEFRAME_SEC, open = 100 + i, high = 101 + i, low = 99 + i, close = 100 + i) for i in range(200)]
     bot._merge_candles(candles)
     bot._merge_candles(candles[-99:])
     assert len(bot._candles) == 200 and len(set(bot._candle_epochs)) == 200
     assert list(bot._candle_epochs) == sorted(bot._candle_epochs)
+
+
+def test_preload_ignores_invalid_local_history(bot, tmp_path, monkeypatch, capsys):
+    """Garante que CSV local inválido não derruba o bot antes do histórico autenticado."""
+    import asset_history
+
+    class EmptyStore:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def read(self, _symbol):
+            return []
+
+    ticks_path = tmp_path / 'ticks.csv'
+    ticks_path.write_text(
+        'epoch,datetime,symbol,price,kind,timeframe,open,high,low\n'
+        '1790878563,,R_100,158.231,candle,900,158.206,158.25,158.124\n'
+    )
+    monkeypatch.setattr(executor, 'TICKS_CSV', str(ticks_path))
+    monkeypatch.setattr(asset_history, 'AssetHistoryStore', EmptyStore)
+
+    bot._preload_candles_from_csv()
+
+    assert list(bot._candles) == []
+    assert 'Histórico local inválido' in capsys.readouterr().out
+
+
+def test_preload_uses_shared_asset_history_when_ticks_csv_is_absent(bot, monkeypatch):
+    """O buffer comum do executor recebe candles do histórico isolado do ativo."""
+    import asset_history
+    from pathlib import Path
+
+    rows = [
+        {'epoch': 1_800_000_000 + index * config.CANDLE_TIMEFRAME_SEC,
+         'open': 100 + index, 'high': 101 + index, 'low': 99 + index,
+         'price': 100.5 + index}
+        for index in range(3)
+    ]
+
+    class Store:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def read(self, symbol):
+            assert symbol == bot.symbol
+            return rows
+
+    monkeypatch.setattr(asset_history, 'AssetHistoryStore', Store)
+    monkeypatch.setattr(executor, 'TICKS_CSV', str(Path('/nonexistent/ticks_v2.csv')))
+    monkeypatch.setattr(executor.time, 'time', lambda: 1_800_010_000)
+
+    bot._preload_candles_from_csv()
+
+    assert list(bot._candle_epochs) == [row['epoch'] for row in rows]
+    assert list(bot._candle_closes) == [row['price'] for row in rows]
+
+
+def test_active_model_module_keeps_executor_gates_even_without_majority_vote():
+    """IA ativa mantém os gates do executor mesmo quando não apoiou a direção vencedora."""
+    assert executor.DerivBot._uses_model_decision({
+        'enabled_decision_modules': ['trained_model', 'weighted_score'],
+        'decision_modules': ['weighted_score'],
+    })
+    assert not executor.DerivBot._uses_model_decision({
+        'enabled_decision_modules': ['weighted_score', 'price_action'],
+        'decision_modules': ['weighted_score', 'price_action'],
+    })
 
 
 def test_wrong_symbol_tick_does_not_contaminate_buffer(bot):
@@ -617,10 +815,12 @@ def test_market_switch_keeps_uncertain_purchase_for_reconciliation(bot):
     assert not bot._market_switch_ready()
 
 
-@pytest.mark.parametrize('demo',[True,False])
-@pytest.mark.parametrize('payout,accepted',[(15.99,False),(16,True),(18.5,True)])
-def test_payout_floor_applies_to_demo_and_real(bot,demo,payout,accepted):
-    """Garante que o piso de payout vale igualmente para conta demo e real."""
+@pytest.mark.parametrize('demo,payout,accepted', [
+    (True, 15.99, False), (True, 16, False), (True, 17, True), (True, 18.5, True),
+    (False, 15.99, False), (False, 16, False), (False, 17, False), (False, 18.5, False),
+])
+def test_model_shadow_gate_requires_demo_and_70_percent_net_payout(bot,demo,payout,accepted):
+    """Garante demo-only e payout líquido mínimo de 70% para modelos validados em shadow."""
     bot.demo=demo
     ws=MagicMock()
     rid=proposal(bot,ws)
