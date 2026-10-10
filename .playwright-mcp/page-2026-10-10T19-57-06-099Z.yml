@@ -1,0 +1,88 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: ◈
+      - generic [ref=e5]: Deriv Bot
+    - list [ref=e6]:
+      - listitem [ref=e7] [cursor=pointer]:
+        - generic [ref=e8]: ⬡
+        - generic [ref=e9]: Overview
+      - listitem [ref=e10] [cursor=pointer]:
+        - generic [ref=e11]: ⬢
+        - generic [ref=e12]: Análise Técnica
+      - listitem [ref=e13] [cursor=pointer]:
+        - generic [ref=e14]: ◈
+        - generic [ref=e15]: IA & Risco
+      - listitem [ref=e16] [cursor=pointer]:
+        - generic [ref=e17]: ☰
+        - generic [ref=e18]: Histórico
+      - listitem [ref=e19] [cursor=pointer]:
+        - generic [ref=e20]: ◉
+        - generic [ref=e21]: Estatísticas
+      - listitem [ref=e22] [cursor=pointer]:
+        - generic [ref=e23]: ◫
+        - generic [ref=e24]: Backtest
+      - listitem [ref=e25] [cursor=pointer]:
+        - generic [ref=e26]: ▤
+        - generic [ref=e27]: Pipeline Logs
+    - generic [ref=e28]: Verificando...
+  - main [ref=e31]:
+    - generic [ref=e32]:
+      - generic [ref=e33]: Overview
+      - generic [ref=e34]:
+        - generic [ref=e35]: —
+        - button "▶ Iniciar" [ref=e36] [cursor=pointer]
+        - button "↻ Reiniciar Sessão" [ref=e37] [cursor=pointer]
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - generic [ref=e41]: Saldo Atual
+          - generic [ref=e42]: —
+          - generic [ref=e43]: USD
+        - generic [ref=e44]:
+          - generic [ref=e45]: P&L Hoje
+          - generic [ref=e46]: —
+          - generic [ref=e47]: —%
+        - generic [ref=e48]:
+          - generic [ref=e49]: Win Rate
+          - generic [ref=e50]: —
+          - generic [ref=e51]: — / — trades
+        - generic [ref=e52]:
+          - generic [ref=e53]: Status
+          - generic [ref=e54]: —
+          - generic [ref=e55]: —
+      - generic [ref=e56]:
+        - generic [ref=e57]: Curva de Equity
+        - generic [ref=e61]:
+          - generic [ref=e62]: Últimas Operações
+          - generic [ref=e64]: WIN LOSS
+          - generic [ref=e67]:
+            - generic [ref=e68]: ✔ 0 WIN
+            - generic [ref=e69]: ✘ 0 LOSS
+      - generic [ref=e70]:
+        - generic [ref=e71]:
+          - text: Contrato em Tempo Real
+          - generic [ref=e72]: Aguardando contrato
+        - generic [ref=e73]:
+          - generic [ref=e74]: —
+          - generic [ref=e75]: —
+        - generic [ref=e77]: Sem contrato ativo no momento.
+      - generic [ref=e80]:
+        - generic [ref=e81]:
+          - generic [ref=e82]: Ticks coletados
+          - generic [ref=e83]: —
+        - generic [ref=e84]:
+          - generic [ref=e85]: Linhas dataset
+          - generic [ref=e86]: —
+        - generic [ref=e87]:
+          - generic [ref=e88]: Modelo RF/XGB
+          - generic [ref=e89]: —
+        - generic [ref=e90]:
+          - generic [ref=e91]: Transformer (TFT)
+          - generic [ref=e92]: —
+        - generic [ref=e93]:
+          - generic [ref=e94]: Último treino
+          - generic [ref=e95]: —
+      - generic [ref=e96]:
+        - generic [ref=e97]: 🕯️ Padrões de Vela Detectados
+        - generic [ref=e98]: Aguardando dados...

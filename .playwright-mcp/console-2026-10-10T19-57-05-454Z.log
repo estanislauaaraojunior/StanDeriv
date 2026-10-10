@@ -1,0 +1,119 @@
+[  328037ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  328037ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  329500ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/state:0
+[  329500ms] [WARNING] [dashboard:state] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollState (http://127.0.0.1:5055/app.js:735:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  329546ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/system:0
+[  329546ms] [WARNING] [dashboard:system] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollSystem (http://127.0.0.1:5055/app.js:1949:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  330039ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  330039ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  332041ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  332041ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  334043ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  334043ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  334502ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/state:0
+[  334502ms] [WARNING] [dashboard:state] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollState (http://127.0.0.1:5055/app.js:735:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  334548ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/system:0
+[  334548ms] [WARNING] [dashboard:system] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollSystem (http://127.0.0.1:5055/app.js:1949:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  336045ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  336045ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  338047ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  338047ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  339504ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/state:0
+[  339505ms] [WARNING] [dashboard:state] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollState (http://127.0.0.1:5055/app.js:735:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  339550ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/system:0
+[  339550ms] [WARNING] [dashboard:system] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollSystem (http://127.0.0.1:5055/app.js:1949:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  340049ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  340049ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  342052ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  342052ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  344054ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  344054ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  344507ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/state:0
+[  344507ms] [WARNING] [dashboard:state] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollState (http://127.0.0.1:5055/app.js:735:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  344552ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/system:0
+[  344552ms] [WARNING] [dashboard:system] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollSystem (http://127.0.0.1:5055/app.js:1949:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  346056ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  346056ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  348058ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/bot/logs:0
+[  348058ms] [WARNING] [dashboard:logs] TypeError: Failed to fetch
+    at pollLogs (http://127.0.0.1:5055/app.js:1742:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
+[  348444ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/contract-active:0
+[  348444ms] [WARNING] [rtContract] TypeError: Failed to fetch
+    at pollContractRealtime (http://127.0.0.1:5055/app.js:1165:24)
+    at run (http://127.0.0.1:5055/app.js:65:13)
+    at _startPoller (http://127.0.0.1:5055/app.js:77:3)
+    at _syncTabPollers (http://127.0.0.1:5055/app.js:119:5)
+    at HTMLLIElement.<anonymous> (http://127.0.0.1:5055/app.js:203:5) @ http://127.0.0.1:5055/app.js:1217
+[  348444ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/equity:0
+[  348444ms] [WARNING] [dashboard:equity] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollEquity (http://127.0.0.1:5055/app.js:1227:24)
+    at run (http://127.0.0.1:5055/app.js:65:13)
+    at _startPoller (http://127.0.0.1:5055/app.js:77:3)
+    at _syncTabPollers (http://127.0.0.1:5055/app.js:119:5)
+    at HTMLLIElement.<anonymous> (http://127.0.0.1:5055/app.js:203:5) @ http://127.0.0.1:5055/app.js:1006
+[  348445ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/trades?n=50:0
+[  348445ms] [WARNING] [dashboard:history] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at loadHistory (http://127.0.0.1:5055/app.js:1342:27)
+    at run (http://127.0.0.1:5055/app.js:65:13)
+    at _startPoller (http://127.0.0.1:5055/app.js:77:3)
+    at _syncTabPollers (http://127.0.0.1:5055/app.js:119:5)
+    at HTMLLIElement.<anonymous> (http://127.0.0.1:5055/app.js:203:5) @ http://127.0.0.1:5055/app.js:1006
+[  348446ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/candle-patterns?symbol=R_25:0
+[  348446ms] [WARNING] [dashboard:candle-patterns] TypeError: Failed to fetch
+    at pollCandlePatterns (http://127.0.0.1:5055/app.js:2258:23)
+    at run (http://127.0.0.1:5055/app.js:65:13)
+    at _startPoller (http://127.0.0.1:5055/app.js:77:3)
+    at _syncTabPollers (http://127.0.0.1:5055/app.js:119:5)
+    at HTMLLIElement.<anonymous> (http://127.0.0.1:5055/app.js:203:5) @ http://127.0.0.1:5055/app.js:1006
+[  349509ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5055/api/state:0
+[  349509ms] [WARNING] [dashboard:state] TypeError: Failed to fetch
+    at _fetchJson (http://127.0.0.1:5055/app.js:1014:26)
+    at pollState (http://127.0.0.1:5055/app.js:735:21)
+    at run (http://127.0.0.1:5055/app.js:65:13) @ http://127.0.0.1:5055/app.js:1006
