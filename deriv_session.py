@@ -21,6 +21,19 @@ class DerivAPIError(RuntimeError):
         self.code = code
 
 
+def is_rate_limit_error(exc: Exception) -> bool:
+    """Indica se o erro representa limite de requisições HTTP/API."""
+    return (
+        isinstance(exc, DerivAPIError)
+        and (
+            exc.status == 429
+            or "1015" in str(exc)
+            or "rate limit" in str(exc).lower()
+            or str(exc.code).lower() in ("ratelimit", "rate_limit")
+        )
+    )
+
+
 def is_bearer_token(token: str, auth_mode: str = "auto") -> bool:
     """Detecta tokens do fluxo novo da Deriv (PAT/OAuth Bearer).
 
@@ -125,12 +138,7 @@ def get_options_accounts(*, app_id: str, token: str, timeout_sec: int = 15) -> l
         except DerivAPIError as exc:
             last_err = exc
             # 429 / Cloudflare 1015 (rate limit) — backoff exponencial
-            is_rate_limit = (
-                exc.status in (429,)
-                or "1015" in str(exc)
-                or str(exc.code).lower() in ("ratelimit", "rate_limit")
-            )
-            if is_rate_limit and attempt < 2:
+            if is_rate_limit_error(exc) and attempt < 2:
                 wait = 2 ** (attempt + 1)  # 2s, 4s
                 time.sleep(wait)
                 continue
@@ -198,7 +206,10 @@ def get_options_ws_url(
             last_error = exc
             if attempt >= max_attempts - 1:
                 raise
-            time.sleep(0.5 * (attempt + 1))
+            if is_rate_limit_error(exc):
+                time.sleep(min(30, 5 * (2 ** attempt)))
+            else:
+                time.sleep(0.5 * (attempt + 1))
     else:
         raise last_error or DerivAPIError("Unable to obtain Options WebSocket URL")
 

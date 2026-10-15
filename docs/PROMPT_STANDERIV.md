@@ -7,6 +7,10 @@
 > responsabilidades vigentes, priorize `README.md`, `ARCHITECTURE.md`,
 > `docs/GUIA_TECNICO.md`, o código e os testes.
 
+> Score Ponderado e coleta foram homologados em 15/10/2026 e estão congelados.
+> Consulte [o escopo homologado](HOMOLOGACAO_SCORE_COLETA_2026-10-15.md) antes de
+> usar sugestões históricas deste prompt para modificar esses módulos.
+
 ---
 
 ## 1. IDIOMA

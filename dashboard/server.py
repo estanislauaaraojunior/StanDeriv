@@ -35,6 +35,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import config
 from model_contract import FEATURE_WINDOW, minimum_history_candles
+from runtime_status import update_status
+from operational_diagnostics import safe_detail
 
 try:
     import psutil
@@ -419,6 +421,7 @@ def _normalize_deriv_contract(transaction: dict) -> dict:
         "stake": buy_price,
         "sell_price": sell_price,
         "duration": duration_min,
+        "duration_unit": "m",
         "result": result,
         "profit": round(profit, 2),
         "balance_after": None,
@@ -663,10 +666,8 @@ def _get_bot_status() -> dict:
 
 def _set_bot_status(**updates) -> dict:
     """Mescla `updates` ao status persistido do bot e o retorna."""
-    state = _get_bot_status()
-    state.update(updates)
-    _persist_bot_status(state)
-    return state
+    with _bot_status_lock:
+        return update_status(BOT_STATUS_JSON, updates, owner='dashboard')
 
 
 def _mark_bot_stopped(returncode: int | None = None, *, requested: bool = False) -> dict:
@@ -743,8 +744,8 @@ def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> 
         return _mark_bot_stopped(state.get("returncode"), requested=False)
     if running:
         if status == "stopping":
-            return _set_bot_status(status="stopping", running=True, pid=pid, last_seen_at=_utc_now_iso())
-        return _set_bot_status(status="running", running=True, pid=pid, last_seen_at=_utc_now_iso())
+            return _set_bot_status(status="stopping", running=True, pid=pid)
+        return _set_bot_status(status="running", running=True, pid=pid)
     if state.get("running") and status != "stopping":
         return _mark_bot_stopped(state.get("returncode"), requested=False)
     return state
@@ -1030,7 +1031,7 @@ def api_bot_status():
         "running":    running,
         "pid":        pid,
         "uptime_sec": uptime_sec,
-        "mode":       "demo",  # lido em tempo real do config.py se disponível
+        "mode":       status.get("mode", "unknown"),
         "status":     status.get("status", "running" if running else "idle"),
         "started_at": status.get("started_at"),
         "stopped_at": status.get("stopped_at"),
@@ -1129,6 +1130,11 @@ def api_bot_start():
         env["STANDERIV_USE_WEIGHTED_SIGNAL"] = "1" if use_weighted_signal else "0"
         env["STANDERIV_PRICE_ACTION_FILTER"] = "1" if use_price_action_filter else "0"
         env["STANDERIV_CANDLE_PATTERN_FILTER"] = "1" if use_candle_pattern_filter else "0"
+        session_id = uuid.uuid4().hex
+        env['STANDERIV_SESSION_ID'] = session_id
+        _set_bot_status(session_id=session_id, status='starting', running=True,
+                        pid=None, symbol=None, mode=mode,
+                        min_candles=config.MIN_CANDLES)
         proc = subprocess.Popen(
             cmd,
             cwd=str(_ROOT),
@@ -1164,7 +1170,6 @@ def api_bot_start():
             use_candle_pattern_filter=use_candle_pattern_filter,
             min_candles=config.MIN_CANDLES,
             model_feature_window=FEATURE_WINDOW,
-            warmup_remaining_candles=config.MIN_CANDLES,
         )
         threading.Thread(target=_read_bot_output, args=(proc,), daemon=True).start()
         PID_FILE.write_text(str(proc.pid))
@@ -1179,6 +1184,9 @@ def api_bot_start():
             "use_candle_pattern_filter": use_candle_pattern_filter,
         })
     except Exception as e:
+        if 'session_id' in locals() and 'proc' not in locals():
+            _set_bot_status(status='crashed', running=False, pid=None,
+                            finished_at=_utc_now_iso(), last_error=safe_detail(e))
         return jsonify({"ok": False, "msg": str(e)}), 500
 
 
@@ -1521,6 +1529,19 @@ def api_backtest_result():
 def api_equity():
     """GET /api/equity: curva de saldo reconstruída a partir dos contratos e do saldo atual."""
     records = list(reversed(_deriv_contract_report(limit=500)))
+    session_start_value = _read_json_safe(STATE_JSON).get("session_start", "")
+    if session_start_value:
+        session_start = pd.to_datetime(session_start_value, errors="coerce")
+        if pd.notna(session_start):
+            timestamps = pd.to_datetime(
+                [record.get("timestamp", "") for record in records],
+                errors="coerce",
+            )
+            records = [
+                record
+                for record, timestamp in zip(records, timestamps)
+                if pd.notna(timestamp) and timestamp >= session_start
+            ]
     if not records:
         return jsonify([])
     risk_state = _read_json_safe(RISK_STATE_JSON)
@@ -1959,6 +1980,10 @@ def api_state():
             "returncode": bot_status.get("returncode"),
             "last_decision": bot_status.get("last_decision", {}),
             "decision_counts": bot_status.get("decision_counts", {}),
+            "use_trained_model": bool(bot_status.get("use_trained_model", True)),
+            "use_weighted_signal": bool(bot_status.get("use_weighted_signal", True)),
+            "use_price_action_filter": bool(bot_status.get("use_price_action_filter", False)),
+            "use_candle_pattern_filter": bool(bot_status.get("use_candle_pattern_filter", False)),
             "no_entry_for_sec": bot_status.get("no_entry_for_sec", 0),
             "candle_count": bot_status.get("candle_count", 0),
             "min_candles": bot_status.get("min_candles", config.MIN_CANDLES),

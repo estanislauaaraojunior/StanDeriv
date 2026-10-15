@@ -14,9 +14,16 @@ def isolated_operations(tmp_path, monkeypatch):
     import config, risk_manager, executor, ai_predictor
     monkeypatch.setattr(risk_manager,'OPERATIONS_LOG',str(tmp_path/'operations.csv'))
     monkeypatch.setattr(executor,'_STATE_JSON',tmp_path/'state.json')
+    monkeypatch.setattr(executor,'_BOT_STATUS_JSON',tmp_path/'bot_status.json')
     monkeypatch.setattr(executor.threading,'Timer',MagicMock())
     monkeypatch.setattr(config,'AI_MODEL_PATH',str(tmp_path/'model.pkl'))
     monkeypatch.setattr(config,'_active_symbol',config.SYMBOL)
+    import pipeline
+    from api_keepalive import ApiKeepalive
+    monkeypatch.setattr(ApiKeepalive, 'start', MagicMock())
+    from market_calendar import MarketCalendar
+    monkeypatch.setattr(pipeline, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
+    monkeypatch.setattr(pipeline, '_market_calendar', MarketCalendar(lambda _request: {'trading_times': {'markets': []}}))
     ai_predictor.reset()
     yield
     ai_predictor.reset()

@@ -122,7 +122,8 @@ Versao minima de Python:
 Python >= 3.11
 ```
 
-Use `pyproject.toml` como referencia oficial quando houver divergencia.
+O checkout atual nao possui `pyproject.toml`; consulte `requirements.txt`
+para dependencias e registre a versao efetivamente usada na validacao.
 
 ## 5. REGRA FUNDAMENTAL — DESCOBRIR ONDE O PROJETO PAROU
 
@@ -288,8 +289,13 @@ Regras obrigatorias:
 
 O StanDeriv usa contrato v2 para dados e validacao de modelos.
 
-Modelos legados nao autorizam novas entradas. Sem modelo compativel, o pipeline
-deve manter somente a coleta.
+Modelos legados nao autorizam o voto da IA. Com USE_AI_MODEL=True, a execucao
+exige bundle compativel e os gates de modelo/shadow/demo. Com IA desligada,
+o pipeline pode operar pelos modulos tecnicos habilitados sem treinar modelos.
+Score Ponderado e coleta estao homologados e congelados desde 15/10/2026;
+leia docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md. Nao altere sua logica,
+parametros, base temporal ou persistencia sem nova autorizacao explicita,
+inclusive por modificacoes em dependencias compartilhadas.
 
 Antes de mexer em treino, inferencia, dataset, modelo ou execucao, consulte a
 documentacao relacionada a correcoes e migracao de contratos, alem dos testes

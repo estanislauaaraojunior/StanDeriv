@@ -2,14 +2,22 @@
 
 Consulte somente as áreas afetadas pela tarefa. Caminhos abaixo são relativos à raiz. Leia a implementação antes de tomar os nomes ou descrições como contratos definitivos.
 
+Score Ponderado e coleta de dados estão homologados e congelados desde
+15/10/2026. A leitura do [registro de homologação](HOMOLOGACAO_SCORE_COLETA_2026-10-15.md)
+é obrigatória antes de tocar essas áreas ou seus consumidores. Não altere seus
+resultados por refatoração, ajuste de parâmetros ou atualização de dependências.
+
 ## Mapa de leitura e validação
 
 | Área da tarefa | Código a consultar | Testes existentes a consultar |
 | --- | --- | --- |
 | Configuração e limites | `config.py` e consumidores dos parâmetros alterados | `tests/test_config_thresholds.py` |
-| Indicadores e sinais | `indicators.py`, `strategy.py`, `feature_engine.py` | `tests/test_indicators.py`, `tests/test_strategy.py`, `tests/test_strategy_edge_cases.py` |
+| Indicadores e sinais | `indicators.py`, `strategy.py`, `feature_engine.py`, `docs/SCORE_PONDERADO_BOLLINGER.md` | `tests/test_indicators.py`, `tests/test_strategy.py`, `tests/test_strategy_edge_cases.py`, `tests/test_weighted_bollinger.py`, `tests/test_entry_recovery.py` |
 | Coleta, features e modelos | `market_data.py`, `model_contract.py`, `collector.py`, `dataset_builder.py`, `feature_engine.py`, `train_model.py`, `training_evaluation.py`, `training_experiments.py`, `payout_quotes.py`, `ai_predictor.py` | `tests/test_training_evaluation.py`, `tests/test_contract_regressions.py`, `tests/test_indicators.py`, `tests/test_pipeline_integration.py`, `tests/test_tick_backfill.py`; conferir a cobertura real e criar regressão específica se necessário |
 | Histórico OHLC por ativo | `asset_history.py`, `market_data.py`, `pipeline.py`, `executor.py` | `tests/test_tick_backfill.py`, `tests/test_executor_trade_flow.py` |
+| Calendário e pausas de mercado | `market_calendar.py`, `asset_history.py`, `pipeline.py`, `executor.py` | `tests/test_market_calendar.py`, `tests/test_tick_backfill.py`, `tests/test_executor_trade_flow.py` |
+| Keepalive e recuperação de lacunas | `api_keepalive.py`, `asset_history.py`, `executor.py`, `pipeline.py`, `request_throttle.py`, `operational_diagnostics.py` | `tests/test_history_recovery.py`, `tests/test_entry_recovery.py`, `tests/test_executor_trade_flow.py`, `tests/test_pipeline_live_feed.py`, `tests/test_scan_rate_limit.py`, `tests/test_operational_diagnostics.py` |
+| Status por sessão e aquecimento | `runtime_status.py`, `executor.py`, `pipeline.py`, `dashboard/server.py` | `tests/test_runtime_status.py`, `tests/test_executor_trade_flow.py`, `tests/test_server_endpoints.py` |
 | Autenticação e execução | `deriv_session.py`, `executor.py`, `bot.py`, `config.py` | `tests/test_executor_trade_flow.py`; autenticação pode exigir cobertura adicional com mocks |
 | Risco e persistência | `risk_manager.py`, `executor.py` | `tests/test_risk_manager.py`, `tests/test_executor_trade_flow.py` |
 | Orquestração e seleção de símbolos | `pipeline.py`, `collector.py`, `executor.py`, `config.py` | `tests/test_pipeline_integration.py`, `tests/test_pipeline_live_feed.py`, `tests/test_market_failover.py`, `tests/test_executor_trade_flow.py` |
@@ -17,6 +25,12 @@ Consulte somente as áreas afetadas pela tarefa. Caminhos abaixo são relativos 
 | Dashboard | `dashboard/server.py`, `dashboard/app.js`, `dashboard/index.html`, `dashboard/style.css`, `dashboard/start.sh` | `tests/test_server_endpoints.py`, `tests/test_backtest.py` quando envolver simulação |
 
 ## Execução, risco e orquestração
+
+O código atual mantém `ENFORCE_RISK_GATE=False`: pausas e stops são registrados,
+mas não impedem novas ordens. A homologação de Score/coleta não aprova essa
+política. Não deduza bloqueio de ordens somente do estado de pausa no painel.
+O executor e o backtest recebem fechamentos de candles para o Score; tick é
+um evento de avaliação, não a unidade dos indicadores operacionais.
 
 Verifique o ciclo proposta → compra → acompanhamento → fechamento, inclusive erros, timeouts, mensagens repetidas e reconexão. Preserve a coerência entre contrato ativo, símbolo, duração, saldo e registro de resultado. Não flexibilize stops, stake, pausas ou filtros apenas para aumentar entradas ou fazer testes passarem.
 
@@ -56,7 +70,7 @@ Para alterações apenas em Markdown, confira caminhos, links, comandos citados 
 
 ## Contratos v2
 
-Consulte `docs/CORRECOES_CONTRATOS_2026-09-08.md` para recuperação, esquema temporal e limitações. Novos dados usam `ticks_v2.csv`, `dataset_v2.csv` e `operacoes_v2.csv`; preserve também esses arquivos, metadados, `recovered_data/`, `risk_accounts.json` e `executor.lock`. A origem `legacy_unknown` não pode ser promovida a tick por inferência de espaçamento. Treino e inferência usam `model_contract.py` e 150 candles OHLC; mudanças exigem nova versão de esquema e validação. A suíte dispõe de `tests/conftest.py` para isolar artefatos, mas novas fixtures continuam exigindo inspeção.
+Consulte `docs/CORRECOES_CONTRATOS_2026-09-08.md` para recuperação, esquema temporal e limitações. Novos dados usam `ticks_v2.csv`, `dataset_v2.csv` e `operacoes_v2.csv`; preserve também esses arquivos, metadados, `recovered_data/`, `risk_accounts.json` e `executor.lock`. A origem `legacy_unknown` não pode ser promovida a tick por inferência de espaçamento. Treino e inferência usam `model_contract.py` com janela de 50 candles OHLC; o executor exige aquecimento de 150 candles. Mudanças de esquema exigem nova versão e validação; a homologação limita alterações de Score/coleta. A suíte dispõe de `tests/conftest.py` para isolar artefatos, mas novas fixtures continuam exigindo inspeção.
 
 O contrato operacional v4 usa 50 candles OHLC de 15 minutos por amostra, com dataset limitado aos 672 candles mais recentes. O piso estrutural é calculado para caber em uma semana e o trainer deve rejeitar partições, classes ou operações insuficientes sem aumentar a janela automaticamente. As features experimentais de contexto ficam em `feature_engine.py`, são gravadas pelo dataset e avaliadas apenas no development por `training_experiments.py`; não alteram as 27 features operacionais. `payout_quotes.py` consulta propostas sem comprar; `QuoteHistory` rejeita uso de cotações futuras ou com mais de 900 segundos. Preserve `payout_quotes.csv`, `shadow_state.json` e `training_reports/` como artefatos.
 

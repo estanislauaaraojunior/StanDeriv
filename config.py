@@ -337,6 +337,10 @@ ENFORCE_ENTRY_CADENCE = False
 UNFAVORABLE_SYMBOL_SWITCH_DECISIONS = 12
 
 UNFAVORABLE_SYMBOL_SWITCH_REASONS = {
+    "module_consensus_no_majority",
+    "technical_score_below_min",
+    "technical_component_no_majority",
+    "adx_below_min",
     "no_technical_signal",
     "ai_disagreement_or_low_confidence",
     "candle_conflict",

@@ -670,8 +670,8 @@ function _botOperationalCard(bot = {}, model = {}, riskState = {}, summary = {},
   const pnlPct = Number(riskState.daily_pnl_pct ?? 0);
   const pauseRemaining = Number(riskState.pause_remaining_sec ?? 0);
   const isPaused = !!summary.is_paused || pauseRemaining > 0;
-  const hasModelInfo = Object.prototype.hasOwnProperty.call(model, 'model_exists');
-  const hasModel = hasModelInfo ? !!model.model_exists : null;
+  const useTrainedModel = bot.use_trained_model !== false;
+  const modelReady = model.ready === true;
   const ticksCount = Number(model.ticks_count ?? 0);
   const datasetRows = Number(model.dataset_rows ?? 0);
   const minTicksTarget = Math.max(1, Number(model.min_ticks_target ?? 500));
@@ -697,22 +697,27 @@ function _botOperationalCard(bot = {}, model = {}, riskState = {}, summary = {},
     const suffix = minCandles > 0 ? ` | ${candleCount} / ${minCandles} candles` : '';
     return ['COLETANDO', 'card-value', `${ticksCount} / ${minTicksTarget} ticks coletados${suffix}`];
   }
-  if (['training', 'waiting_model'].includes(status) || (hasModel === false && ticksCount >= minTicksTarget)) {
+  if (useTrainedModel && ['training', 'waiting_model'].includes(status)) {
     const detail = warmupRemaining > 0
       ? `Warm-up: faltam ${warmupRemaining} candles`
       : `IA aprendendo (${datasetRows} linhas)`;
     return ['TREINANDO', 'card-value warning', detail];
   }
-  if (hasModel === false && ticksCount < minTicksTarget) {
-    return ['COLETANDO', 'card-value', `${ticksCount} / ${minTicksTarget} ticks coletados`];
-  }
-  if (hasModel !== true) {
-    return ['RODANDO', 'card-value positive', fmtUptime(bot.uptime_sec)];
+  if (useTrainedModel && !modelReady) {
+    const candidate = model.last_candidate_metrics ?? {};
+    const reason = (candidate.rejection_reasons ?? []).join('; ')
+      || model.blocked_reason
+      || `Aguardando bundle aprovado (${ticksCount} ticks, ${datasetRows} linhas)`;
+    return ['IA BLOQUEADA', 'card-value warning', reason];
   }
   return [
     'OPERANDO',
     'card-value positive',
-    hasActiveContract ? 'Contrato ativo em andamento' : 'Procurando entrada para o contrato',
+    hasActiveContract
+      ? 'Contrato ativo em andamento'
+      : useTrainedModel
+        ? 'Procurando entrada com modelo aprovado'
+        : 'Aguardando oportunidade dos módulos técnicos',
   ];
 }
 
@@ -816,7 +821,6 @@ async function pollState() {
       el('infoModel').style.color = m.ready ? '#00ff88' : '#ffb830';
       el('infoModel').title = (candidate.rejection_reasons ?? []).join('; ') || m.blocked_reason || '';
     }
-    if (el('infoTft')) { el('infoTft').textContent = m.tft_exists ? '✓ OK' : '✗ Ausente'; el('infoTft').style.color = m.tft_exists ? '#00ff88' : '#ff4757'; }
     if (el('infoModelMtime') && m.model_mtime) el('infoModelMtime').textContent = new Date(m.model_mtime * 1000).toLocaleString('pt-BR');
 
     // — Métricas do último treino (via /api/state para atualização a cada 5s) —
@@ -1310,27 +1314,6 @@ async function pollIndicators() {
 
 // ─── Polling: Model info ──────────────────────────────────────────────────────
 
-/** Consulta /api/model e atualiza informações de ticks, dataset e arquivos do modelo. */
-async function pollModel() {
-  try {
-    const r = await fetch(API_BASE_URL + '/api/model');
-    const d = await r.json();
-
-    el('infoTicks').textContent   = d.ticks_count?.toLocaleString('pt-BR') ?? '—';
-    el('infoDataset').textContent = d.dataset_rows?.toLocaleString('pt-BR') ?? '—';
-    el('infoModel').textContent   = d.model_exists ? '✓ OK' : '✗ Ausente';
-    el('infoModel').style.color   = d.model_exists ? '#00ff88' : '#ff4757';
-    el('infoTft').textContent     = d.tft_exists   ? '✓ OK' : '✗ Ausente';
-    el('infoTft').style.color     = d.tft_exists   ? '#00ff88' : '#ff4757';
-
-    if (d.model_mtime) {
-      el('infoModelMtime').textContent = new Date(d.model_mtime * 1000).toLocaleString('pt-BR');
-    } else {
-      el('infoModelMtime').textContent = '—';
-    }
-  } catch (_) {}
-}
-
 // ─── Histórico de trades ──────────────────────────────────────────────────────
 
 /**
@@ -1373,7 +1356,7 @@ function renderHistory() {
     const msg = state.historyError
       ? `Não foi possível consultar o relatório de contratos da Deriv: ${escapeHtml(state.historyError)}`
       : 'Nenhum contrato encontrado na Deriv.';
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-msg">${msg}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-msg">${msg}</td></tr>`;
     el('histSummary').textContent = state.historyError ? 'Fonte: Deriv profit_table' : '';
     return;
   }
@@ -1390,7 +1373,7 @@ function renderHistory() {
       <td><span class="badge badge-${t.direction?.toLowerCase()}">${t.direction || '—'}</span></td>
       <td class="td-mono">${fmtUsd(t.stake)}</td>
       <td class="td-mono">${fmtUsd(t.sell_price)}</td>
-      <td class="td-mono">${t.duration ?? '—'}t</td>
+      <td class="td-mono">${t.duration ?? '—'}${escapeHtml(t.duration_unit || 'm')}</td>
       <td><span class="badge badge-${t.result?.toLowerCase()}">${t.result || '—'}</span></td>
       <td class="td-mono ${t.profit >= 0 ? 'positive' : 'negative'}">${(t.profit >= 0 ? '+' : '') + fmtUsd(t.profit)}</td>
     </tr>
@@ -1774,7 +1757,7 @@ function renderLogs() {
 
 /** Retorna a classe CSS de uma linha de log conforme padrões de texto ('' se nenhum). */
 function _logLineClass(line) {
-  if (/erro|error|falha|fail|exception|traceback/i.test(line)) return 'log-err';
+  if (/erro|error|falha|fail|exception|traceback|rejeitad[ao]|invalidcontractproposal|unknown contract proposal|rate.?limit/i.test(line)) return 'log-err';
   if (/warn|aviso/i.test(line))                                 return 'log-warn';
   if (/\[BOT\]|\[PIPELINE\]|\[EXECUTOR\]/i.test(line))         return 'log-bot';
   if (/\[TREINO\]|\[MODEL\]|train|model\.pkl|accuracy/i.test(line)) return 'log-train';

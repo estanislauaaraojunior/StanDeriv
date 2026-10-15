@@ -1,3 +1,110 @@
-[AUTH] Validando token Deriv...
-[AUTH] Falha na autenticação: Handshake status 520 <none> -+-+- {'date': 'Sat, 10 Oct 2026 20:04:02 GMT', 'content-type': 'text/plain; charset=UTF-8', 'content-length': '16', 'connection': 'keep-alive', 'cache-control': 'private, max-age=0, no-store, no-cache, must-revalidate, post-check=0, pre-check=0', 'expires': 'Thu, 01 Jan 1970 00:00:01 GMT', 'referrer-policy': 'same-origin', 'x-frame-options': 'SAMEORIGIN', 'server': 'cloudflare', 'cf-ray': 'a4883b3b6ecdc03f-GIG'} -+-+- error code: 520
-[BOT] Processo encerrado inesperadamente: processo encerrado com returncode 1
+[AUTH] Token PAT detectado (fluxo novo da Deriv).
+[AUTH] Token Bearer validado | Conta Options: [ACCOUNT REDACTED] (demo) | Saldo: 7294.84 USD
+[PIPELINE] Módulos de decisão ativos: score ponderado
+[TENDENCIA] Scan de 40 ativos classificados pelo catálogo Deriv.
+  OTC_AEX      score=  0.00 ADX= 0.00 ↑
+  OTC_DJI      score= 59.69 ADX=33.16 ↑
+  OTC_FCHI     score=  0.00 ADX= 0.00 ↑
+  OTC_AS51     score=  0.00 ADX= 0.00 ↑
+  OTC_FTSE     score=  0.00 ADX= 0.00 ↑
+  OTC_GDAXI    score=  0.00 ADX= 0.00 ↑
+  OTC_NDX      score= 53.05 ADX=29.47 ↑
+  OTC_N225     score= 40.25 ADX=22.36 ↑
+  OTC_SPC      score= 37.81 ADX=21.98 ↑
+  OTC_SSMI     score=  0.00 ADX= 0.00 ↑
+  frxAUDCAD    score= 80.90 ADX=60.11 ↓
+  frxAUDCHF    score= 52.26 ADX=36.69 ↓
+  OTC_SX5E     score=  0.00 ADX= 0.00 ↑
+  frxAUDJPY    score= 64.44 ADX=35.80 ↑
+  frxAUDNZD    score= 51.92 ADX=45.32 ↓
+  frxAUDUSD    score= 68.87 ADX=48.43 ↓
+  frxEURAUD    score= 71.35 ADX=47.60 ↑
+  frxEURCAD    score= 33.74 ADX=24.50 ↓
+  frxEURCHF    score= 30.40 ADX=23.57 ↓
+  frxEURGBP    score= 44.51 ADX=34.89 ↓
+  frxEURJPY    score= 28.92 ADX=21.65 ↑
+  frxEURNZD    score= 46.95 ADX=28.90 ↓
+  frxEURUSD    score= 21.49 ADX=16.52 ↓
+  frxGBPAUD    score= 69.22 ADX=48.30 ↑
+  frxGBPCAD    score= 24.99 ADX=19.22 ↓
+  frxGBPCHF    score= 23.67 ADX=19.53 ↓
+  frxGBPJPY    score= 36.46 ADX=25.84 ↑
+  frxGBPNZD    score= 65.84 ADX=42.53 ↓
+  frxGBPUSD    score= 24.83 ADX=24.36 ↑
+  frxNZDJPY    score= 37.48 ADX=21.37 ↑
+  frxNZDUSD    score= 29.71 ADX=19.48 ↑
+  frxUSDCAD    score= 26.79 ADX=20.97 ↓
+  frxUSDCHF    score= 24.09 ADX=23.87 ↓
+  frxUSDJPY    score= 22.95 ADX=16.00 ↑
+  frxUSDMXN    score= 39.15 ADX=21.75 ↓
+  frxUSDPLN    score= 18.12 ADX=14.22 ↑
+  frxXAGUSD    score= 64.28 ADX=36.51 ↑
+  frxXAUUSD    score= 25.20 ADX=20.42 ↑
+  frxXPDUSD    score= 48.76 ADX=32.51 ↑
+  frxXPTUSD    score= 23.52 ADX=19.35 ↑
+[TENDÊNCIA] Top símbolos para treino: frxAUDCAD — Australian Dollar / Canadian Dollar
+  frxAUDCAD    score= 80.90 ADX=60.11 ↓
+[TENDÊNCIA] Símbolo alterado: R_100 → frxAUDCAD
+[PIPELINE] IA desligada; preservando dados e artefatos de treinamento.
+============================================================
+  Deriv Pipeline — Orquestrador Automático
+  Modo              : DEMO
+  Símbolo           : frxAUDCAD — Australian Dollar / Canadian Dollar
+  Base do ativo      : incremental por lacunas
+  Candles p/ treino  : 579 contratos rotuláveis (500 ticks reais mínimos)
+  Re-treino          : adaptativo (IA decide automaticamente)
+    › WinRate < 42% | Conf < 55% | +120 contratos rotulados | backstop 60min
+  Pressione Ctrl+C para encerrar tudo
+============================================================
+[HISTÓRICO] Atualizando base incremental de frxAUDCAD — Australian Dollar / Canadian Dollar (15 min)...
+[HISTÓRICO] Base do ativo atualizada: 0 candle(s) novos, 336 na janela local, 0 página(s) consultada(s).
+[PIPELINE] Aviso: histórico não obtido — coletor ao vivo cobrirá os dados.
+[PIPELINE] Fase 1: Coletor iniciado em background (sem duplicatas).
+[PIPELINE] Modelo treinado desativado; treino inicial ignorado.
+[PIPELINE] IA desligada; retreino e promoção de modelo não bloqueiam a execução.
+[PIPELINE] Fase 6: Iniciando bot de trading...
+[COLETOR] Conectado | frxAUDCAD — Australian Dollar / Canadian Dollar
+[COLETOR] Backfill pesado de ticks desativado; coletando somente ticks ao vivo.
+[COLETOR] Ticks:       1 | 0.98191 @ 2026-10-15T12:27:47
+[BOT] CSV v2 contém 20 registro(s) inválido(s); preload seguirá com registros válidos
+=======================================================
+  Deriv Trading Bot — Modo: DEMO
+  Símbolo : frxAUDCAD
+  Duração : 15 m
+  Saldo   : 7294.84 USD
+  Stake   : 72.95 USD (1% do saldo)
+=======================================================
+[BOT] Conectado à Deriv WebSocket API
+[BOT] Histórico local suficiente (336/150); assinando ticks ao vivo.
+[BOT] Recuperando lacuna real ativo=frxAUDCAD faixa=1792077300..1792077300 candles=1 buffer=336/150.
+[BOT] Lacuna faixa=1792077300..1792077300 recebidos=1 ainda_ausentes=0.
+[BOT] Recuperação concluída; buffer=337/150. Assinando ticks.
+[TICK] 0.9818 | EMA9:0.9815 EMA21:0.9819 | RSI:51.9 ADX:53.5 MACD_H:+0.00037 [→ BUY]          [BOT] Latência proposta→compra: 0.229s
+[COLETOR] Ticks:     200 | 0.98183 @ 2026-10-15T12:31:06
+[COLETOR] Ticks:     400 | 0.98171 @ 2026-10-15T12:34:26
+[COLETOR] Ticks:     600 | 0.98156 @ 2026-10-15T12:37:46
+[COLETOR] Ticks:     800 | 0.98146 @ 2026-10-15T12:41:06
+[COLETOR] Ticks:   1,000 | 0.98134 @ 2026-10-15T12:44:26
+[TRADE] LOSS | Profit: -49.00 USD | Saldo: 7245.84
+[TICK] 0.9814 | EMA9:0.9815 EMA21:0.9818 | RSI:42.3 ADX:51.4 MACD_H:+0.00033 [→ SELL]          [BOT] Latência proposta→compra: 0.196s
+[COLETOR] Ticks:   1,200 | 0.98116 @ 2026-10-15T12:47:46
+[COLETOR] Ticks:   1,400 | 0.98142 @ 2026-10-15T12:51:06
+[COLETOR] Ticks:   1,600 | 0.98118 @ 2026-10-15T12:54:26
+[COLETOR] Ticks:   1,800 | 0.9814 @ 2026-10-15T12:57:46
+[TRADE] LOSS | Profit: -49.00 USD | Saldo: 7196.84
+[TICK] 0.9814 | EMA9:0.9815 EMA21:0.9818 | RSI:42.2 ADX:50.6 MACD_H:+0.00029 [→ SELL]          [BOT] Latência proposta→compra: 0.277s
+[COLETOR] Ticks:   2,000 | 0.98149 @ 2026-10-15T13:01:06
+[COLETOR] Ticks:   2,200 | 0.98151 @ 2026-10-15T13:04:26
+[COLETOR] Ticks:   2,400 | 0.98145 @ 2026-10-15T13:07:46
+[COLETOR] Ticks:   2,600 | 0.9814 @ 2026-10-15T13:11:06
+[COLETOR] Ticks:   2,800 | 0.98115 @ 2026-10-15T13:14:26
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 Bearish Engulfing (força: 1.00)
+  Preço: 0.9811 | Contexto: Demand Zone + Supply Zone + FVG Bullish + FVG Bearish
+  Ação sugerida: SELL favorecido
+[VELA] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[TRADE] WIN | Profit: +34.04 USD | Saldo: 7230.88
+[TICK] 0.9811 | EMA9:0.9814 EMA21:0.9817 | RSI:40.1 ADX:47.4 MACD_H:+0.00024 [→ SELL]          [BOT] Latência proposta→compra: 0.302s
+[COLETOR] Ticks:   3,000 | 0.98092 @ 2026-10-15T13:17:46
+[COLETOR] Ticks:   3,200 | 0.98106 @ 2026-10-15T13:21:06
+[COLETOR] Ticks:   3,400 | 0.981 @ 2026-10-15T13:24:26

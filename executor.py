@@ -17,6 +17,7 @@ Fluxo de uma operação:
 
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -26,6 +27,9 @@ from typing import Optional
 
 import websocket
 import deriv_session
+from operational_diagnostics import connection_diagnostic
+from api_keepalive import ApiKeepalive
+from runtime_status import update_status, SESSION_ID
 
 from config import (
     APP_ID,
@@ -64,6 +68,11 @@ import indicators as ind
 _STATE_JSON = Path(__file__).resolve().parent / "state.json"
 _BOT_STATUS_JSON = Path(__file__).resolve().parent / "bot_status.json"
 _SHADOW_STATE_JSON = Path(__file__).resolve().parent / "shadow_state.json"
+_WS_PING_INTERVAL_SEC = 30
+_WS_PING_TIMEOUT_SEC = 10
+_RECONNECT_BASE_DELAY_SEC = 2
+_RECONNECT_MAX_DELAY_SEC = 60
+_RECONNECT_STABLE_SEC = 60
 
 
 class DerivBot:
@@ -93,7 +102,18 @@ class DerivBot:
         self.auth_mode = auth_mode
         self.account_id = account_id
         self._next_ws_url = initial_ws_url
+        self.market_calendar = None
+        self._api_keepalive = None
+        self._history_candles = {}
+        self._history_ranges = deque()
+        self._history_request = None
+        self._history_stream_ready = False
+        self._history_live_recovery = False
+        self._history_retry_at = 0.0
+        self._last_unfavorable_candle_epoch = None
         self._last_status_write: float = 0.0
+        self._status_initialized = False
+        self._status_api_error = {}
 
         self._ws_url = (
             f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
@@ -158,12 +178,14 @@ class DerivBot:
 
         # P9: Watchdog de heartbeat.
         self._watchdog: Optional[threading.Timer] = None
+        self._connection_opened_at: Optional[float] = None
 
         # Cadência de entradas: começa já no limite.
         self._ticks_since_last_entry: int = ENTRY_TICK_INTERVAL
 
         # Histórico de candles já carregado via API.
         self._api_history_loaded: bool = False
+        self._history_recovery_incomplete: bool = False
 
         self._ws: Optional[websocket.WebSocketApp] = None
         self._phase = 'idle'
@@ -258,24 +280,33 @@ class DerivBot:
         if not force and now - self._last_status_write < 5:
             return
         self._last_status_write = now
-        try:
-            status = json.loads(_BOT_STATUS_JSON.read_text()) if _BOT_STATUS_JSON.exists() else {}
-        except Exception:
-            status = {}
-        status.update(
-            status="running",
-            running=True,
-            pid=os.getpid(),
-            symbol=self.symbol,
-            last_loop_at=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.gmtime(now)),
+        if 'last_api_error' in updates:
+            self._status_api_error = updates['last_api_error']
+        count = len(self._candles)
+        status = dict(
+            session_id=SESSION_ID, status='running', running=True,
+            pid=os.getpid(), symbol=self.symbol, mode='demo' if self.demo else 'real',
+            last_seen_at=time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(now)),
+            last_loop_at=time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(now)),
+            candle_count=count, min_candles=MIN_CANDLES,
+            model_feature_window=FEATURE_WINDOW,
+            warmup_remaining_candles=max(0, MIN_CANDLES-count),
+            candle_source='executor', last_api_error=self._status_api_error,
+            last_decision=self._decision_history[-1] if self._decision_history else {},
+            decision_counts=self._decision_counts(),
+            use_trained_model=bool(config.USE_AI_MODEL),
+            use_weighted_signal=bool(config.USE_WEIGHTED_SIGNAL),
+            use_price_action_filter=bool(config.PRICE_ACTION_FILTER),
+            use_candle_pattern_filter=bool(config.CANDLE_PATTERN_FILTER),
         )
         if tick_epoch:
-            status["last_tick_epoch"] = int(tick_epoch)
-            status["last_tick_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.gmtime(int(tick_epoch)))
+            status['last_tick_epoch'] = int(tick_epoch)
+            status['last_tick_at'] = time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(int(tick_epoch)))
         status.update(updates)
         try:
-            write_json_atomic(_BOT_STATUS_JSON, status)
-        except Exception:
+            update_status(_BOT_STATUS_JSON, status, owner='executor', reset=not self._status_initialized)
+            self._status_initialized = True
+        except OSError:
             pass
 
     def _publish_shadow_status(self, *, model_id: str = "", reason: str = "", **updates) -> None:
@@ -348,6 +379,11 @@ class DerivBot:
                     "enabled_decision_modules",
                     "decision_block",
                     "pa_score",
+                    "momentum",
+                    "bb_score",
+                    "module_votes",
+                    "module_details",
+                    "technical_component_votes",
                 )
                 if key in indicators
             }
@@ -387,6 +423,13 @@ class DerivBot:
                 self._unfavorable_switch_requested = False
             return
 
+        # Cada candle fechado contribui uma vez, mesmo avaliando a cada tick.
+        if not self._new_candle_closed:
+            return
+        candle_epoch = int(event["epoch"]) // CANDLE_TIMEFRAME_SEC * CANDLE_TIMEFRAME_SEC
+        if candle_epoch == self._last_unfavorable_candle_epoch:
+            return
+        self._last_unfavorable_candle_epoch = candle_epoch
         self._unfavorable_decision_streak += 1
         if (
             self._unfavorable_switch_requested
@@ -524,6 +567,16 @@ class DerivBot:
         return True
 
     @staticmethod
+    def _is_explicit_buy_rejection(error: dict) -> bool:
+        """Identifica rejeições definitivas da compra, sem resultado financeiro incerto."""
+        code = str(error.get("code") or "")
+        message = str(error.get("message") or "").lower()
+        return (
+            code == "InvalidContractProposal"
+            or "unknown contract proposal" in message
+        )
+
+    @staticmethod
     def _payout_capped_stake(stake: float) -> float:
         """Limita a stake inicial para evitar propostas acima do payout máximo aceito pela API."""
         maximum = float(getattr(config, "DERIV_MAX_PAYOUT", 0) or 0)
@@ -573,6 +626,15 @@ class DerivBot:
             return
 
         if phase == "buy" and req_id == self._buy_req_id:
+            if self._is_explicit_buy_rejection(error):
+                self._record_decision(
+                    reason="buy_rejected_by_api",
+                    signal=self._pending_direction or None,
+                    indicators=self._pending_indicators,
+                    tick_epoch=self._last_tick_epoch,
+                )
+                self._clear_pending()
+                return
             # Resultado financeiro incerto: não repetir a compra automaticamente.
             self._phase = "reconciling"
             self._set_active_contract_state()
@@ -648,8 +710,10 @@ class DerivBot:
         print(f"{'=' * 55}\n")
         self._write_runtime_status(force=True, event="started")
 
+        retry_attempt = 0
         while not self._market_switch_ready():
             self._write_runtime_status(event="loop")
+            self._connection_opened_at = None
             try:
                 ws = websocket.WebSocketApp(
                     self._get_ws_url(),
@@ -661,22 +725,52 @@ class DerivBot:
 
                 self._ws = ws
 
-                ws.run_forever(reconnect=5)
-                time.sleep(1)
+                ws.run_forever(
+                    ping_interval=_WS_PING_INTERVAL_SEC,
+                    ping_timeout=_WS_PING_TIMEOUT_SEC,
+                )
 
             except deriv_session.DerivAPIError as exc:
                 code = f" ({exc.code})" if exc.code else ""
 
                 print(
                     f"[BOT] Falha ao obter WebSocket Options: "
-                    f"{exc}{code} — tentando novamente em 5s"
+                    f"{exc}{code}"
                 )
+            finally:
+                if self._api_keepalive is not None:
+                    self._api_keepalive.stop()
+                if self._watchdog is not None:
+                    self._watchdog.cancel()
+                    self._watchdog = None
 
-                time.sleep(5)
+            if self._market_switch_ready():
+                break
+
+            if (
+                self._connection_opened_at is not None
+                and time.monotonic() - self._connection_opened_at >= _RECONNECT_STABLE_SEC
+            ):
+                retry_attempt = 0
+
+            retry_attempt += 1
+            delay = self._reconnect_delay(retry_attempt)
+            print(f"[BOT] Nova tentativa de conexão em {delay:.1f}s")
+            time.sleep(delay)
+
+    @staticmethod
+    def _reconnect_delay(attempt: int) -> float:
+        """Retorna backoff exponencial limitado, com jitter para evitar tentativas sincronizadas."""
+        ceiling = min(
+            _RECONNECT_MAX_DELAY_SEC,
+            _RECONNECT_BASE_DELAY_SEC * 2 ** max(0, attempt - 1),
+        )
+        return random.uniform(ceiling * 0.8, ceiling)
 
     def _merge_candles(self, candles):
         """Valida e mescla velas fechadas ao buffer (máx. 500), descartando o que precede a última lacuna; ValueError se inválida."""
-        merged = {int(c['epoch']): c for c in self._candles}
+        merged = dict(getattr(self, '_history_candles', {}))
+        merged.update({int(c['epoch']): c for c in self._candles})
         for candle in candles:
             c = {k:float(candle[k]) for k in ('open','high','low','close')}
             c['epoch']=int(candle['epoch'])
@@ -685,15 +779,25 @@ class DerivBot:
                     not c['low'] <= min(c['open'],c['close']) <= max(c['open'],c['close']) <= c['high']):
                 raise ValueError('candle inválido')
             merged[c['epoch']]=c
+        self._history_candles = {k:merged[k] for k in sorted(merged)[-672:]}
         ordered=[merged[k] for k in sorted(merged)][-500:]
-        # Indicadores não atravessam intervalos ausentes (mercado fechado/desconexão).
+        # Lacunas abertas truncam a série; modo técnico admite pausas confirmadas.
         for i in range(len(ordered)-1,0,-1):
-            if ordered[i]['epoch']-ordered[i-1]['epoch'] != CANDLE_TIMEFRAME_SEC:
+            if not self._candles_consecutive(ordered[i-1]['epoch'], ordered[i]['epoch']):
                 ordered=ordered[i:]
                 break
         self._candles=deque(ordered,maxlen=500)
         self._candle_closes=deque((c['close'] for c in ordered),maxlen=500)
         self._candle_epochs=deque((c['epoch'] for c in ordered),maxlen=500)
+
+    def _candles_consecutive(self, earlier, later):
+        if later - earlier == CANDLE_TIMEFRAME_SEC:
+            return True
+        # Bundles de IA mantêm o contrato temporal estrito usado no treinamento.
+        calendar = getattr(self, 'market_calendar', None)
+        if calendar is None or config.USE_AI_MODEL:
+            return False
+        return calendar.consecutive(self.symbol, earlier, later, CANDLE_TIMEFRAME_SEC)
 
     def _warm_adx(self):
         """Recalcula o histórico de ADX a partir dos fechamentos do buffer."""
@@ -711,9 +815,30 @@ class DerivBot:
         if Path(TICKS_CSV).exists():
             records, rejected=read_records(TICKS_CSV)
             records,conflicts,_=canonicalize(records)
-            if rejected or conflicts:
-                print('[BOT] Histórico local inválido; CSV v2 ignorado no preload')
+            if rejected:
+                print(
+                    '[BOT] CSV v2 contém '
+                    f'{len(rejected)} registro(s) inválido(s); '
+                    'preload seguirá com registros válidos'
+                )
+            current_conflicts=[
+                row for row in conflicts
+                if row['symbol']==self.symbol
+                and row['kind']=='candle'
+                and row['timeframe']==CANDLE_TIMEFRAME_SEC
+            ]
+            if current_conflicts:
+                print(
+                    '[BOT] Histórico local do símbolo atual contém '
+                    'conflitos; CSV v2 ignorado no preload'
+                )
             else:
+                if conflicts:
+                    print(
+                        '[BOT] CSV v2 contém '
+                        f'{len(conflicts)} conflito(s) fora do símbolo atual; '
+                        'preload seguirá com registros válidos'
+                    )
                 for row in records:
                     if row['symbol']==self.symbol and row['kind']=='candle' and row['timeframe']==CANDLE_TIMEFRAME_SEC and row['epoch']<cutoff:
                         candles.append(dict(epoch=row['epoch'],open=row['open'],high=row['high'],low=row['low'],close=row['price']))
@@ -740,6 +865,16 @@ class DerivBot:
 
     def _on_open(self, ws) -> None:
         """Ao conectar, verifica a conta Bearer e inicia o fluxo, ou envia `authorize` no modo legado."""
+        self._connection_opened_at = time.monotonic()
+        if self._api_keepalive is not None:
+            self._api_keepalive.stop()
+        self._api_keepalive = ApiKeepalive(ws, 'BOT')
+        self._api_keepalive.start()
+        self._history_ranges.clear()
+        self._history_request = None
+        self._history_stream_ready = False
+        self._history_live_recovery = False
+        self._history_retry_at = 0.0
         print("[BOT] Conectado à Deriv WebSocket API")
         self._write_runtime_status(force=True, event="ws_open")
 
@@ -774,6 +909,12 @@ class DerivBot:
             return
 
         if "error" in data:
+            if (self._history_request is not None
+                    and data.get('req_id') == self._history_request[0]):
+                print(f"[BOT] Recuperação da lacuna falhou: {connection_diagnostic(self._connection_opened_at, error=RuntimeError(data['error'].get('message', 'erro API')))}")
+                self._history_request = None
+                self._send_next_history_range(ws)
+                return
             self._handle_api_error(data)
             return
 
@@ -809,7 +950,11 @@ class DerivBot:
             self._handle_api_candles(
                 ws,
                 data.get("candles", []),
+                req_id=data.get('req_id'),
             )
+
+        elif msg_type == 'ping' and self._api_keepalive is not None:
+            self._api_keepalive.acknowledge(data)
 
         elif msg_type == "proposal_open_contract":
             self._handle_contract_update(
@@ -825,14 +970,22 @@ class DerivBot:
 
     def _on_error(self, ws, error) -> None:
         """Imprime erro do WebSocket."""
-        print(f"[BOT] Erro WebSocket: {error}")
+        detail = connection_diagnostic(
+            getattr(self, '_connection_opened_at', None), error=error
+        )
+        print(f"[BOT] Erro WebSocket: {detail}")
 
     def _on_close(self, ws, code, msg) -> None:
         """Marca a conta como não verificada ao perder a conexão."""
         self._auth_verified=False
+        if getattr(self, '_api_keepalive', None) is not None:
+            self._api_keepalive.stop()
+        detail = connection_diagnostic(
+            getattr(self, '_connection_opened_at', None), code=code, reason=msg
+        )
         print(
             f"[BOT] Conexão encerrada "
-            f"(código: {code}) — tentando reconectar..."
+            f"{detail} — tentando reconectar..."
         )
 
     # ─────────────────────────────────────────────────────────
@@ -859,7 +1012,7 @@ class DerivBot:
         self._auth_verified=True
 
     def _start_authenticated_stream(self, ws) -> None:
-        """Após autenticação, reconcilia/reassina contrato ativo e solicita 100 velas históricas."""
+        """Após autenticação, reconcilia contrato ativo e completa só os candles ausentes."""
         if not self._auth_verified:
             return
         if self._in_trade and not self._open_contract_id:
@@ -887,24 +1040,68 @@ class DerivBot:
                 f"{self._open_contract_id}"
             )
 
-        # Primeira conexão: solicita candles históricos.
-        print(
-            f"[BOT] Baixando 100 candles históricos "
-            f"de {self.symbol} ({CANDLE_TIMEFRAME_SEC}s)..."
-        )
+        self._request_missing_history_or_subscribe(ws)
 
-        ws.send(
-            json.dumps(
-                {
-                    "ticks_history": self.symbol,
-                    "adjust_start_time": 1,
-                    "count": 100,
-                    "end": "latest",
-                    "granularity": CANDLE_TIMEFRAME_SEC,
-                    "style": "candles",
-                }
+    def _request_missing_history_or_subscribe(self, ws, *, live=False) -> None:
+        """Assina ticks se o histórico local já aquece o bot; senão baixa apenas o que falta."""
+        if len(self._candles)<MIN_CANDLES:
+            if self._history_candles:
+                # Reutiliza a fonte já validada: ler milhões de ticks no callback
+                # de abertura bloqueia o processamento de mensagens e pong.
+                self._merge_candles([])
+            else:
+                self._preload_candles_from_csv()
+        missing=max(0,MIN_CANDLES-len(self._candles))
+        if missing<=0 and not live:
+            print(
+                f"[BOT] Histórico local suficiente "
+                f"({len(self._candles)}/{MIN_CANDLES}); assinando ticks ao vivo."
             )
-        )
+            ws.send(json.dumps({'ticks':self.symbol,'subscribe':1}))
+            self._history_stream_ready = True
+            return
+
+        from asset_history import plan_candle_backfill
+        self._history_live_recovery = live
+        self._history_retry_at = time.time() + 60
+        end_epoch = int(time.time()) // CANDLE_TIMEFRAME_SEC * CANDLE_TIMEFRAME_SEC - CANDLE_TIMEFRAME_SEC
+        self._history_ranges = deque(plan_candle_backfill(
+            self._history_candles, CANDLE_TIMEFRAME_SEC, MIN_CANDLES, end_epoch,
+            calendar=self.market_calendar, symbol=self.symbol,
+        ))
+        self._send_next_history_range(ws)
+
+    def _send_next_history_range(self, ws):
+        if not self._history_ranges:
+            self._history_request = None
+            self._history_stream_ready = True
+            from asset_history import plan_candle_backfill
+            end_epoch = int(time.time()) // CANDLE_TIMEFRAME_SEC * CANDLE_TIMEFRAME_SEC - CANDLE_TIMEFRAME_SEC
+            remaining = plan_candle_backfill(
+                self._history_candles, CANDLE_TIMEFRAME_SEC, MIN_CANDLES, end_epoch,
+                calendar=self.market_calendar, symbol=self.symbol,
+            )
+            if len(self._candles) < MIN_CANDLES or remaining:
+                self._history_recovery_incomplete = True
+                print(f'[BOT] Recuperação parcial; buffer={len(self._candles)}/{MIN_CANDLES}, faixas pendentes={len(remaining)}. Entradas bloqueadas; nova tentativa após 60s.')
+            else:
+                self._history_recovery_incomplete = False
+                print(f'[BOT] Recuperação concluída; buffer={len(self._candles)}/{MIN_CANDLES}. Assinando ticks.')
+            if not self._history_live_recovery:
+                ws.send(json.dumps({'ticks':self.symbol,'subscribe':1}))
+            self._history_live_recovery = False
+            return
+        start, end = self._history_ranges.popleft()
+        req_id = self._next_request_id()
+        self._history_request = (req_id, start, end)
+        self._history_retry_at = time.time() + 60
+        count = (end-start)//CANDLE_TIMEFRAME_SEC+1
+        print(f'[BOT] Recuperando lacuna real ativo={self.symbol} faixa={start}..{end} candles={count} buffer={len(self._candles)}/{MIN_CANDLES}.')
+        ws.send(json.dumps({
+            'ticks_history':self.symbol, 'start':start, 'end':str(end),
+            'count':count, 'style':'candles', 'granularity':CANDLE_TIMEFRAME_SEC,
+            'req_id':req_id,
+        }))
 
     def _request_portfolio_reconciliation(self, ws) -> None:
         """Solicita o portfólio para reconciliar uma compra sem confirmação."""
@@ -978,12 +1175,41 @@ class DerivBot:
         )
         self._clear_pending()
 
-    def _handle_api_candles(self, ws, candles):
+    def _handle_api_candles(self, ws, candles, req_id=None):
         """Carrega velas históricas da API, inicia a vela corrente e assina o fluxo de ticks."""
+        pending = self._history_request
+        if pending is None and req_id is not None:
+            return  # resposta atrasada de uma recuperação já concluída
+        if pending is not None:
+            expected_id, start, end = pending
+            if req_id != expected_id:
+                return
+            candles = [c for c in candles if start <= int(c['epoch']) <= end]
         cutoff=int(time.time())//CANDLE_TIMEFRAME_SEC*CANDLE_TIMEFRAME_SEC
         closed=[c for c in candles if int(c['epoch'])+CANDLE_TIMEFRAME_SEC<=cutoff]
-        self._merge_candles(closed)
+        try:
+            self._merge_candles(closed)
+        except ValueError:
+            if pending is None:
+                raise
+            print(f'[BOT] OHLC inválido na lacuna {start}..{end}; dados rejeitados.')
+            self._history_request = None
+            self._send_next_history_range(ws)
+            return
         self._warm_adx()
+        if pending is not None:
+            persist = getattr(self, 'on_history_recovered', None)
+            if closed and persist is not None:
+                try:
+                    persist(closed)
+                except (OSError, ValueError) as exc:
+                    print(f'[BOT] Persistência da recuperação falhou ({type(exc).__name__}); candles permanecem no buffer.')
+            returned = {int(c['epoch']) for c in closed}
+            absent = sum(epoch not in returned for epoch in range(start, end+1, CANDLE_TIMEFRAME_SEC))
+            print(f'[BOT] Lacuna faixa={start}..{end} recebidos={len(returned)} ainda_ausentes={absent}.')
+            self._history_request = None
+            self._send_next_history_range(ws)
+            return
         self._api_history_loaded=True
         self._cur_candle_open=None
         current=next((c for c in candles if int(c['epoch'])==cutoff),None)
@@ -1010,11 +1236,17 @@ class DerivBot:
             return
         if self._last_tick_epoch and epoch-self._last_tick_epoch>MAX_TICK_GAP_SEC:
             self._cur_candle_open=None
-            self._candles.clear()
-            self._candle_closes.clear()
-            self._candle_epochs.clear()
-            self._adx_history.clear()
+            calendar = getattr(self, 'market_calendar', None)
+            scheduled = (not config.USE_AI_MODEL and calendar is not None
+                         and calendar.closed(self.symbol, self._last_tick_epoch + 1, epoch))
+            latest_closed = epoch // CANDLE_TIMEFRAME_SEC * CANDLE_TIMEFRAME_SEC - CANDLE_TIMEFRAME_SEC
+            recovered = (self._history_stream_ready and bool(self._candles)
+                         and self._candles[-1]['epoch'] == latest_closed)
+            if not scheduled and not recovered:
+                # Preserva as duas margens da lacuna para o backfill incremental.
+                self._history_recovery_incomplete = True
             self._candle_alerts.clear()
+        self._history_stream_ready = False
 
         self._last_tick_price = price
 
@@ -1057,6 +1289,16 @@ class DerivBot:
                 self._poll_contract_result(self._open_contract_id)
 
         # ── Montar vela de tempo ──────────────────────────────
+
+        if self._history_request is not None and time.time() >= self._history_retry_at:
+            print('[BOT] Recuperação sem resposta em 60s; repetindo apenas lacunas pendentes.')
+            self._history_request = None
+            self._history_ranges.clear()
+            self._history_recovery_incomplete = True
+        if self._history_recovery_incomplete:
+            if self._history_request is None and time.time() >= self._history_retry_at:
+                self._request_missing_history_or_subscribe(ws, live=True)
+            self._record_decision(reason="history_recovery", tick_epoch=epoch, force=False)
 
         self._new_candle_closed = False
 
@@ -1119,6 +1361,19 @@ class DerivBot:
                 self._check_candle_patterns(price)
 
         n_candles=len(self._candle_closes)
+        latest_closed = epoch // CANDLE_TIMEFRAME_SEC * CANDLE_TIMEFRAME_SEC - CANDLE_TIMEFRAME_SEC
+        stale = (bool(self._candles) and self._candles[-1]['epoch'] < latest_closed
+                 and not self._candles_consecutive(self._candles[-1]['epoch'], latest_closed + CANDLE_TIMEFRAME_SEC))
+        needs_recovery = self._history_recovery_incomplete or stale or (
+            bool(self._history_candles) and n_candles < MIN_CANDLES)
+        if needs_recovery or self._history_request is not None:
+            if self._history_request is None and time.time() >= self._history_retry_at:
+                self._request_missing_history_or_subscribe(ws, live=True)
+            self._record_decision(reason="history_recovery", tick_epoch=epoch, force=False)
+            self._write_runtime_status(tick_epoch=epoch, event="history_recovery",
+                candle_count=len(self._candles),
+                warmup_remaining_candles=max(0, MIN_CANDLES-len(self._candles)))
+            return
         if config.USE_AI_MODEL and self._new_candle_closed:
             self._capture_shadow_prediction(price, epoch)
         if n_candles<MIN_CANDLES:
@@ -1451,6 +1706,9 @@ class DerivBot:
         self._proposal_id=proposal['id']
         self._buy_req_id=self._next_request_id()
         self._phase='buy'
+        latency=max(0.,time.time()-self._pending_timestamp)
+        self._pending_indicators['proposal_to_buy_latency_sec']=latency
+        print(f'[BOT] Latência proposta→compra: {latency:.3f}s')
         self._pending_timestamp=time.time()
         # Persiste a intenção ANTES de enviar; crash não autoriza segunda compra.
         self._set_active_contract_state()
@@ -1538,31 +1796,31 @@ class DerivBot:
 
         self._watchdog = threading.Timer(
             HEARTBEAT_TIMEOUT_SEC,
-            self._on_heartbeat_fail,
+            self._on_tick_timeout,
         )
 
         self._watchdog.daemon = True
         self._watchdog.start()
 
-    def _on_heartbeat_fail(self) -> None:
-        """Callback do watchdog: registra o timeout e fecha o WebSocket para forçar reconexão."""
+    def _on_tick_timeout(self) -> None:
+        """Registra feed sem ticks; ping/pong é responsável por detectar conexão morta."""
+        calendar = getattr(self, 'market_calendar', None)
+        now = int(time.time())
+        if calendar is not None and calendar.closed(self.symbol, now, now + 1):
+            print('[SAÚDE] Mercado em fechamento programado; aguardando reabertura.')
+            self._write_runtime_status(force=True, event='market_closed')
+            self._reset_watchdog()
+            return
         print(
-            f"\n[SAÚDE] Nenhum tick recebido por "
+            f"\n[SAÚDE] Feed sem atualização: nenhum tick recebido por "
             f"{HEARTBEAT_TIMEOUT_SEC}s "
-            "— WebSocket pode estar morto "
-            "ou mercado fechado; forçando reconexão"
+            "— mantendo WebSocket; keepalive verifica a conexão"
         )
         self._write_runtime_status(
             tick_epoch=self._last_tick_epoch,
             force=True,
-            event="heartbeat_timeout",
+            event="feed_stale",
         )
-        ws = self._ws
-        if ws is not None:
-            try:
-                ws.close()
-            except Exception as exc:
-                print(f"[SAÚDE] Falha ao fechar WebSocket morto: {exc}")
 
     # ─────────────────────────────────────────────────────────
     # Detecção de padrões de vela

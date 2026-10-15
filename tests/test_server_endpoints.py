@@ -111,6 +111,40 @@ def test_frontend_records_poll_errors(client):
     assert "async function _fetchJson" in text
 
 
+def test_frontend_marks_deriv_rejections_and_rate_limits_as_errors(client):
+    """Garante que rejeições da API e rate limits não recebam a cor de mensagem normal do bot."""
+    text = client.get("/app.js").get_data(as_text=True)
+    assert "rejeitad[ao]|invalidcontractproposal|unknown contract proposal|rate.?limit" in text
+
+
+def test_frontend_does_not_advertise_legacy_tft_panel(client):
+    """Garante que a interface não mostre o artefato TFT legado como funcionalidade atual."""
+    html = client.get("/").get_data(as_text=True)
+    app_js = client.get("/app.js").get_data(as_text=True)
+
+    assert 'id="infoTft"' not in html
+    assert "Transformer (TFT)" not in html
+    assert "infoTft" not in app_js
+
+
+def test_history_table_uses_contract_duration_unit_and_column_count(client):
+    """Garante unidade fiel à API e alinhamento da linha vazia na tabela de histórico."""
+    app_js = client.get("/app.js").get_data(as_text=True)
+    html = client.get("/").get_data(as_text=True)
+
+    assert "t.duration_unit || 'm'" in app_js
+    assert 'colspan="9" class="empty-msg"' in app_js
+    assert html.count("<th>") >= 9
+
+
+def test_dashboard_css_does_not_reference_undefined_theme_variables(client):
+    """Garante que os estilos usem tokens existentes em vez de variáveis CSS ausentes."""
+    css = client.get("/style.css").get_data(as_text=True)
+
+    assert "var(--card-bg)" not in css
+    assert "var(--text-muted)" not in css
+
+
 # ─── /api/summary ─────────────────────────────────────────────────────────────
 
 def test_summary_returns_200(client):
@@ -342,6 +376,7 @@ def test_trades_returns_deriv_contract_report(monkeypatch):
     assert data["trades"][0]["symbol"] == "R_100"
     assert data["trades"][0]["sell_price"] == 18.5
     assert data["trades"][0]["profit"] == 8.5
+    assert data["trades"][0]["duration_unit"] == "m"
 
 
 def test_trades_reports_deriv_error(monkeypatch):
@@ -624,6 +659,28 @@ def test_state_includes_decision_diagnostics(client):
     assert data["diagnostics"]["weighted_score_logic_changed"] is False
 
 
+def test_state_exposes_decision_module_flags(client):
+    """Garante que o frontend receba os módulos de decisão configurados para a sessão."""
+    import dashboard.server as srv
+
+    bot_status = {
+        "status": "running",
+        "use_trained_model": False,
+        "use_weighted_signal": True,
+        "use_price_action_filter": True,
+        "use_candle_pattern_filter": False,
+    }
+    with patch.object(srv, "_bot_running", return_value=(False, None)), \
+         patch.object(srv, "_refresh_bot_status", return_value=bot_status), \
+         patch.object(srv, "_deriv_contract_report", return_value=[]):
+        data = client.get("/api/state").get_json()
+
+    assert data["bot"]["use_trained_model"] is False
+    assert data["bot"]["use_weighted_signal"] is True
+    assert data["bot"]["use_price_action_filter"] is True
+    assert data["bot"]["use_candle_pattern_filter"] is False
+
+
 def test_state_reports_missing_model_metrics_without_changing_weighted_score(client, monkeypatch, tmp_path):
     """Garante que métricas ausentes viram diagnóstico operacional, não mudança no score ponderado."""
     import dashboard.server as srv
@@ -680,19 +737,26 @@ def test_bot_start_requires_token_when_set(client):
         assert r.status_code == 401
 
 
-def test_bot_start_accepts_correct_token(client):
+def test_bot_start_accepts_correct_token(client, tmp_path):
     """Start com token correto deve passar pela autenticação (409 = bot já roda, não 401)."""
     import dashboard.server as srv
 
+    fake_process = MagicMock()
+    fake_process.pid = 4242
     with patch.object(srv, "_DASHBOARD_TOKEN", "secret123"), \
-         patch.object(srv, "_bot_running", return_value=(False, None)):
+         patch.object(srv, "_bot_running", return_value=(False, None)), \
+         patch.object(srv, "_bot_process", None), \
+         patch.object(srv.subprocess, "Popen", return_value=fake_process), \
+         patch.object(srv, "PID_FILE", tmp_path / "bot.pid"), \
+         patch.object(srv, "PIPELINE_LOG_TXT", tmp_path / "pipeline.log"), \
+         patch.object(srv.threading, "Thread"):
         r = client.post(
             "/api/bot/start",
             json={"mode": "demo", "balance": 1000},
             headers={"X-Auth-Token": "secret123"},
         )
-        # Pode retornar 200 (ok) ou 500 (falha ao iniciar processo) — não deve ser 401
-        assert r.status_code != 401
+        assert r.status_code == 200
+        assert r.get_json()["ok"] is True
 
 
 def test_bot_start_invalid_mode_returns_400(client):
@@ -754,6 +818,30 @@ def test_equity_returns_list(client):
     """Garante que /api/equity retorna uma lista."""
     data = json.loads(client.get("/api/equity").data)
     assert isinstance(data, list)
+
+
+def test_equity_filters_contracts_before_current_session(tmp_path):
+    """Garante que a curva de equity não reexibe contratos de sessões anteriores."""
+    import dashboard.server as srv
+
+    state = tmp_path / "state.json"
+    risk_state = tmp_path / "risk_state.json"
+    state.write_text(json.dumps({"session_start": "2026-10-13T12:00:00"}))
+    risk_state.write_text(json.dumps({"balance": 120.0}))
+    records = [
+        {"timestamp": "2026-10-12T12:00:00", "profit": 10.0, "result": "WIN"},
+        {"timestamp": "2026-10-13T12:30:00", "profit": 10.0, "result": "WIN"},
+    ]
+
+    with patch.object(srv, "STATE_JSON", state), \
+         patch.object(srv, "RISK_STATE_JSON", risk_state), \
+         patch.object(srv, "_deriv_contract_report", return_value=records):
+        with srv.app.test_client() as test_client:
+            curve = test_client.get("/api/equity").get_json()
+
+    assert len(curve) == 1
+    assert curve[0]["timestamp"] == "2026-10-13T12:30:00"
+    assert curve[0]["balance_after"] == 120.0
 
 
 # ─── /api/state ───────────────────────────────────────────────────────────────

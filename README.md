@@ -2,7 +2,27 @@
 
 Bot de contratos CALL/PUT para a Deriv, com análise técnica, Price Action, modelos calibrados e execução com controle persistente de risco.
 
-A manutenção de contratos v2 alterou o esquema dos dados e a validação dos modelos. Leia [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md) antes de iniciar. Modelos legados não autorizam novas entradas; sem modelo compatível, o pipeline mantém somente a coleta. A [auditoria das perdas](docs/historico/ANALISE_LOSSES_2026-09-08.md) é um registro histórico.
+A manutenção de contratos v2 alterou o esquema dos dados e a validação dos modelos. Leia [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md) antes de iniciar. Modelos legados não autorizam votos da IA. Com IA habilitada, a execução depende de bundle compatível e dos gates de modelo; com IA desligada, o Score Ponderado pode gerar entradas técnicas sem treinamento. A [auditoria das perdas](docs/historico/ANALISE_LOSSES_2026-09-08.md) é um registro histórico.
+
+## Homologação de Score Ponderado e coleta — 15/10/2026
+
+O usuário homologou o **Score Ponderado** e a **coleta de dados**, relatando
+funcionamento sem erros e continuidade na abertura dos contratos. Esses módulos
+estão congelados: não alterar cálculo, parâmetros, base temporal, filtros ou
+persistência sem nova autorização explícita. Consulte o
+[registro de homologação e escopo](docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md) e a
+[especificação do Score Ponderado](docs/SCORE_PONDERADO_BOLLINGER.md). A aprovação
+é funcional; não constitui avaliação de rentabilidade nem homologação dos
+controles de risco ou dos modelos treinados.
+
+## Documentação
+
+- [Arquitetura atual](ARCHITECTURE.md): responsabilidades e fluxos vigentes.
+- [Homologação de Score e coleta](docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md): escopo congelado e referências de integridade.
+- [Score Ponderado](docs/SCORE_PONDERADO_BOLLINGER.md): fórmulas, pesos, votos e base temporal.
+- [Guia técnico](docs/GUIA_TECNICO.md) e [instruções de manutenção](AGENTS.md): leitura por área e regras para alterações.
+- [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md): registro cronológico; seções posteriores substituem políticas antigas.
+- [Refatoração](docs/REFATORACAO.md) e `docs/historico/`: evidências das etapas anteriores, sem redefinir os contratos atuais.
 
 ## Instruções para assistentes de IA
 
@@ -93,7 +113,9 @@ DERIV_APP_ID=1089
 DERIV_AUTH_MODE=auto
 ```
 
-2. Ajuste parâmetros em `config.py` conforme necessário.
+2. Consulte `config.py` e as flags da sessão antes de iniciar. Os parâmetros de
+   Score Ponderado e coleta estão congelados pela homologação; não os ajuste
+   como manutenção rotineira.
 
 ### Autenticação Deriv
 
@@ -112,13 +134,18 @@ Para PAT/OAuth, o token precisa do escopo `trade`. Se a conta Options ainda não
 python pipeline.py --demo --balance 1000
 ```
 
-Sem modelo v2 aprovado para o ativo, esse comando mantém apenas a coleta. Treino inicial requer `--force-retrain` e dados suficientes. Nenhum candidato substitui o modelo ativo sem passar pela avaliação temporal. A opção `--demo` é confrontada com a conta autenticada.
+Com `USE_AI_MODEL=True`, a execução exige modelo aprovado compatível e confirmação shadow. Sem IA, o pipeline preserva os artefatos, ignora treino/retreino e permite entradas pelos módulos técnicos habilitados. Com IA ativa e sem bundle compatível, o pipeline tenta treino quando há dados
+suficientes; `--force-retrain` força nova tentativa mesmo com modelo existente. Nenhum candidato substitui o modelo ativo sem passar pela avaliação temporal. A opção `--demo` é confrontada com a conta autenticada.
 
-### Apenas o bot (modelo já treinado)
+### Apenas o bot (módulos configurados)
 
 ```bash
 python bot.py
 ```
+
+O entrypoint aplica as flags de decisão de `config.py`; não presume que a IA
+esteja desligada. Iniciar qualquer comando conectado exige conferir a conta e
+a autorização operacional.
 
 ### Apenas coletar ticks
 
@@ -198,7 +225,13 @@ bot ao vivo estiver parado. Os relatórios ficam isolados por execução em
 | `executor.py` | Cliente WebSocket da Deriv, execução de ordens, notificações de velas |
 | `risk_manager.py` | Gestão de risco: sizing, stop loss/take profit diário, pausa escalável por losses, detecção de drift |
 | `pipeline.py` | Orquestrador: coleta, trend scanning, treino automático, execução e re-treino periódico |
-| `collector.py` | Coleta contínua de ticks via WebSocket com filtro anti-spike |
+| `collector.py` | Coletor autônomo de ticks; o pipeline usa seu próprio `_CollectorThread` |
+| `asset_history.py` | Histórico OHLC por ativo, sincronização incremental e persistência atômica |
+| `market_calendar.py` | Calendário por símbolo e confirmação de pausas de mercado |
+| `api_keepalive.py` | Ping JSON e medição de respostas da API |
+| `request_throttle.py` | Intervalo e backoff de requisições |
+| `runtime_status.py` | Status concorrente por sessão, símbolo e proprietário dos campos |
+| `operational_diagnostics.py` | Diagnóstico de conexão com ocultação de informações sensíveis |
 | `backtest.py` | Simulação offline de sinais, duração, payout, custos, risco e drawdown, com relatórios JSON/CSV |
 | `dashboard/` | Interface web com Flask (server.py), autenticação por token e frontend (HTML/JS/CSS) |
 
@@ -239,7 +272,8 @@ Após aprovação offline, o bundle passa por shadow forward sem compras. A libe
 
 O target representa alta, queda ou empate entre o primeiro tick após o sinal e o primeiro tick no vencimento. Empate perde tanto CALL quanto PUT. A duração atual é fixa em 15 minutos (`DURATION=15`, `DURATION_UNIT="m"`). As duas próximas observações e sua média não são usadas como target.
 
-Abstenção, divergência, falta de dados e modelo incompatível bloqueiam entradas. A força técnica real participa do score; o score não representa probabilidade de vitória. Antes da compra, a probabilidade calibrada da direção é confrontada com preço e payout da proposta.
+No caminho com IA ativa, abstenção, falta de dados e modelo incompatível
+impedem o voto do modelo; entradas dependem também do consenso dos módulos. A força técnica real participa do score; o score não representa probabilidade de vitória. Antes da compra, a probabilidade calibrada da direção é confrontada com preço e payout da proposta.
 
 ## Seleção e histórico de ativos
 
@@ -254,10 +288,42 @@ estar abertos, sem suspensão, atender ao ADX e à sondagem CALL/PUT.
 `Histórico Ativos/` mantém um CSV OHLC no esquema v2 por símbolo, além de
 metadados temporários de epochs sem candle. A sincronização lê primeiro o disco,
 busca gaps e candles posteriores e grava os resultados ordenados e deduplicados
-atomicamente. A retenção é de até sete dias (672 candles); falha de sincronização
+atomicamente. O limite local é `ASSET_HISTORY_CANDLES=336` candles; o orçamento de treino
+continua sendo de sete dias/672 candles. Falha de sincronização
 não remove candles recentes válidos. O executor reutiliza esse histórico no
 buffer compartilhado. O treino continua exigindo ticks identificados; candles
 não são convertidos em ticks.
+
+O calendário oficial `trading_times` é consultado por data UTC e compartilhado
+entre os ativos, com cache em memória de uma hora (falhas por até um minuto).
+Intervalos inteiramente fechados não são solicitados como lacunas. Fins de
+semana e pausas diárias seguem os horários do símbolo, sem tabela fixa de CFDs.
+Sem calendário válido, ou com evento especial ambíguo, a ausência de dados
+continua não confirmada. Dados retornados fora da faixa solicitada por
+`adjust_start_time` são ignorados antes da validação; OHLC inválido dentro da
+faixa continua sendo rejeitado.
+O scanner e o aquecimento técnico podem atravessar somente fechamentos
+confirmados, sem fabricar candles. Bundles de IA preservam a continuidade
+temporal estrita do treinamento.
+Referência: [Trading Times — Deriv](https://developers.deriv.com/docs/system/trading-times/).
+
+Bot e coletor mantêm também um ping JSON da API a cada 30 segundos, além do
+ping/pong do protocolo WebSocket. As confirmações são silenciosas; latência e
+contadores ficam em memória, e falhas continuam no log. A leitura inicial do
+CSV fica fora do callback de reconexão.
+O aquecimento solicita faixas com início/fim explícitos, correlacionadas por
+`req_id`, e preserva os candles dos dois lados das lacunas. Candles recuperados
+são gravados no histórico do ativo; respostas atrasadas ou fora da faixa não
+completam a recuperação. Uma página vazia é registrada como ainda ausente. No executor, a recuperação
+incompleta mantém entradas bloqueadas e permite nova tentativa após 60 segundos.
+Referência: [Ping — Deriv](https://developers.deriv.com/docs/system/ping/).
+
+O status operacional usa um identificador por sessão. Decisões, erros, ticks e
+diagnósticos shadow são reiniciados ao iniciar uma sessão ou trocar de símbolo.
+O executor publica a quantidade real de candles no buffer e o aquecimento
+restante; atualizações do pipeline preservam esses valores. Os escritores usam
+o mesmo lock de arquivo para evitar perda de atualizações. Consultas do
+dashboard preservam o horário de atividade informado pelo processo.
 
 ## Decisão de abertura de contrato
 
@@ -275,13 +341,25 @@ dados, abstenção ou sinal inválido permanece como voto não aprovado no total
 módulos ativos. Só há sinal quando mais da metade aprova a mesma direção; empate,
 divergência ou nenhum módulo ativo bloqueia.
 
+Quando apenas o score ponderado está ativo, o diagnóstico preserva o motivo
+específico da abstenção (score insuficiente, ADX ou votação técnica). A troca
+por avaliações desfavoráveis conta somente candles fechados, uma vez por candle,
+respeitando o limite configurado e as proteções de contrato ativo e cooldown.
+Lacunas no histórico ao vivo bloqueiam novas avaliações de entrada enquanto o
+executor recupera somente os candles ausentes, preservando os dados válidos.
+Respostas parciais, erros e timeouts mantêm o bloqueio e permitem nova tentativa
+após 60 segundos, sem duplicar a assinatura de ticks.
+
 Com `USE_AI_MODEL=True`, `trained_model` só pode votar com bundle v4 compatível,
 50 candles OHLC contínuos, direção válida, `model_id` e confiança acima de
 `AI_CONFIDENCE_MIN`. O voto e os detalhes de uma IA dissidente não são usados
 como probabilidade da direção majoritária.
 
 Com `USE_WEIGHTED_SIGNAL=True`, o módulo `weighted_score` calcula `tech_score`
-com EMA9 versus EMA21, histograma MACD, preço versus EMA9, momentum, RSI e ADX.
+com EMA9 versus EMA21 (25%), histograma MACD (20%), Bollinger (15%), preço
+versus EMA9 (15%), momentum (15%) e RSI (10%), multiplicados pelo ADX normalizado.
+O executor fornece fechamentos de candles de 15 minutos; o cálculo usa os
+últimos 50 fechamentos e Bollinger usa os últimos 20 dessa sequência.
 Score maior ou igual a `SIGNAL_SCORE_MIN` propõe `BUY`; score menor ou igual ao
 negativo do limiar propõe `SELL`. A aprovação interna requer que pelo menos três
 dos cinco componentes direcionais existentes concordem. ADX continua sendo
@@ -377,6 +455,13 @@ A origem não é alterada. Registros sem identificação de tick/candle recebem 
 
 ## Configurações Avançadas
 
+`ENFORCE_RISK_GATE=False` é o valor atual: o gerenciador registra pausas,
+resultados e stake, mas essas pausas e stops não impedem propostas/compras. O
+painel pode exibir pausa enquanto a execução continua. A homologação de Score
+e coleta não aprova essa política nem a altera. O comando Parar encerra o
+processo; não liquida contratos na corretora. Preserve o contrato persistido
+para reconciliação antes de retomar qualquer operação.
+
 ### ADX adaptativo
 
 `ADX_MIN=30` exige tendência forte antes de liberar o score técnico. Com
@@ -388,13 +473,16 @@ de cada vela.
 
 ### Score técnico e IA
 
+O Score Ponderado está homologado; pesos, fórmulas e parâmetros estão descritos
+em [sua especificação](docs/SCORE_PONDERADO_BOLLINGER.md).
 `SIGNAL_SCORE_MIN=0.06` controla a seleção técnica. `ENTRY_MODE="balanced"`
 mantém o ADX mínimo como gate, em vez de apenas penalizar o score. `AI_CONFIDENCE_MIN` segue
-o piso de aprovação (`MIN_APPROVAL_WIN_RATE=0.45`) e a concordância explícita
-entre IA e sinal técnico continua obrigatória quando a IA é usada. A combinação
-usa `AI_TECH_WEIGHT=0.55`, `AI_MODEL_WEIGHT=0.45` e `AI_SCORE_MIN=0.30`.
-Desligar a IA permite análise/backtest técnico, mas não fornece a probabilidade
-exigida para comprar contratos ao vivo.
+o piso de aprovação (`MIN_APPROVAL_WIN_RATE=0.45`). O caminho operacional usa
+votos independentes e maioria estrita: com apenas Score e IA ativos, ambos
+precisam concordar. `AI_TECH_WEIGHT`, `AI_MODEL_WEIGHT` e `AI_SCORE_MIN`
+permanecem no helper auxiliar e não definem a votação atual. Com IA desligada,
+a execução técnica valida preço e payout sem exigir ou inventar probabilidade
+calibrada; treino, promoção e shadow de modelo não liberam nem bloqueiam esse caminho.
 
 ### Candles Baseados em Tempo
 `CANDLE_TIMEFRAME_SEC = 900` define o timeframe operacional atual: candles de 15 minutos. O treino e a inferência usam o mesmo timeframe e vencimento de 15 minutos.
@@ -403,19 +491,23 @@ exigida para comprar contratos ao vivo.
 `PRICE_BUFFER_SIZE = 500` limita o buffer bruto. Features de modelos usam a janela canônica de 50 candles definida em `model_contract.py`.
 
 ### Cadência de Entradas
-`ENTRY_CANDLE_INTERVAL = 1` controla o intervalo mínimo entre entradas em velas fechadas (1 = avalia a cada nova vela).
+`ENFORCE_ENTRY_CADENCE=False` permite reavaliação a cada tick aceito, usando
+os mesmos candles fechados até o próximo fechamento. Se habilitado,
+`ENTRY_CANDLE_INTERVAL=1` exige uma nova vela entre tentativas; após pelo menos
+duas perdas consecutivas, o intervalo aumenta em uma vela. A troca por mercado
+desfavorável continua sendo contada somente nos fechamentos.
 
 ### Promoção de Modelo (Champion-Challenger)
-Além de pelo menos um contrato de teste e taxa de acerto observada mínima de 45% na estratégia completa, o challenger precisa ser comparado com o champion no mesmo período fora da amostra. AUC abaixo de 0,50 é registrada como alerta de probabilidade fraca, mas não bloqueia sozinha a aprovação:
+Além de pelo menos 30 contratos de teste e taxa de acerto observada mínima de 45% na estratégia completa, o challenger precisa ser comparado com o champion no mesmo período fora da amostra. AUC abaixo de 0,50 é registrada como alerta de probabilidade fraca, mas não bloqueia sozinha a aprovação:
 - `MODEL_PROMOTION_MIN_AUC_DELTA = 0.001` — AUC do novo modelo deve ser ≥ AUC atual + delta
 - `MODEL_PROMOTION_MAX_ACC_DROP = 0.02` — queda máxima tolerada de acurácia
 - `MODEL_PROMOTION_MAX_F1_DROP = 0.05` — queda máxima tolerada de F1
 
 ### Filtro Anti-Spike
-`TICK_SPIKE_THRESHOLD = 0.05` rejeita ticks com variação > 5% em relação ao anterior, protegendo os indicadores de dados ruins.
+`TICK_SPIKE_THRESHOLD = 0.05` rejeita ticks com variação >= 5% em relação ao anterior, protegendo os indicadores de dados ruins.
 
 ### Heartbeat / Watchdog
-`HEARTBEAT_TIMEOUT_SEC = 30` — alerta no log se nenhum tick for recebido por 30 segundos (indica possível desconexão WebSocket).
+`HEARTBEAT_TIMEOUT_SEC = 30` — marca o feed como desatualizado se nenhum tick chegar nesse prazo. O keepalive ping/pong detecta conexão sem resposta; ao encerrar, o bot reconecta com backoff progressivo e jitter.
 
 ### Dashboard — Autenticação
 Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com `X-Auth-Token`.
@@ -433,21 +525,21 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `RESUME_ON_WIN` | True | Retoma pausa imediatamente após 1 win |
 | `DRIFT_WINDOW` | 20 | Janela de trades para calcular win rate recente |
 | `DRIFT_WIN_RATE_MIN` | 40% | Alerta se win rate dos últimos N trades cair abaixo |
-| `AI_TECH_WEIGHT` | 0.55 | Peso do sinal técnico no score final |
-| `AI_MODEL_WEIGHT` | 0.45 | Peso do sinal da IA no score final |
-| `AI_SCORE_MIN` | 0.30 | Score mínimo ponderado (IA + técnico) para abrir operação |
+| `AI_TECH_WEIGHT` | 0.55 | Peso técnico no helper auxiliar; não define a maioria dos módulos |
+| `AI_MODEL_WEIGHT` | 0.45 | Peso da IA no helper auxiliar; não define a maioria dos módulos |
+| `AI_SCORE_MIN` | 0.30 | Limiar do helper auxiliar; não define o voto operacional da IA |
 | `SIGNAL_SCORE_MIN` | 0.06 | Limiar mínimo do score técnico ponderado em modo balanceado |
 | `ENTRY_MODE` | `balanced` | Modo de entrada; preserva ADX mínimo como gate antes do score ponderado |
 | `OPPORTUNITY_SIGNAL_SCORE_MIN` | 0.05 | Limiar técnico usado se o modo `opportunity` for reativado |
 | `OPPORTUNITY_ADX_WEIGHT_FLOOR` | 0.35 | Piso do peso de ADX no modo `opportunity`, evitando zerar o score por ADX baixo |
-| `PRICE_ACTION_FILTER` | `False` | Controla se Price Action pode bloquear sinais operacionais; as features continuam calculadas para telemetria e treino |
-| `CANDLE_PATTERN_FILTER` | `False` | Controla se padrões de vela conflitantes podem bloquear sinais; desligado, viram apenas telemetria/alerta |
+| `PRICE_ACTION_FILTER` | `False` | Habilita o voto independente de Price Action no consenso |
+| `CANDLE_PATTERN_FILTER` | `False` | Habilita o voto independente de padrões de vela; alertas continuam separados |
 | `ENFORCE_ENTRY_CADENCE` | `False` | Controla se o executor deve aguardar fechamento/intervalo de vela antes de reavaliar entrada |
 | `ENFORCE_RISK_GATE` | `False` | Controla se `RiskManager.can_trade()` bloqueia envio/compra; desligado, risco ainda calcula stake e registra resultado |
-| `UNFAVORABLE_SYMBOL_SWITCH_DECISIONS` | 12 | Quantidade de avaliações desfavoráveis antes de trocar ativo; `0` desativa a troca automática |
+| `UNFAVORABLE_SYMBOL_SWITCH_DECISIONS` | 12 | Fechamentos de candle com avaliação desfavorável antes de solicitar troca; `0` desativa |
 | `CANDLE_TIMEFRAME_SEC` | 900 | Duração de cada vela de tempo em segundos |
 | `MIN_CANDLES` | 150 | Aquecimento mínimo do executor para contratos de 15 minutos |
-| `PRICE_BUFFER_SIZE` | 500 | Ticks mantidos em memória para indicadores |
+| `PRICE_BUFFER_SIZE` | 500 | Limite do buffer bruto de ticks; a estratégia operacional recebe fechamentos de candles |
 | `ENTRY_CANDLE_INTERVAL` | 1 | Intervalo mínimo entre entradas (em velas) |
 | `DURATION` | 15 | Vencimento fixo do contrato, em minutos |
 | `ADX_MIN` | 30 | Tendência mínima exigida para sinal técnico em modo balanceado |
@@ -455,6 +547,9 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `TARGET_LOOKFORWARD` | 1 | Candles de 15 minutos até o vencimento; o target é calculado por timestamps |
 
 ## Histórico de Mudanças anteriores ao contrato v2
+
+Esta lista preserva decisões antigas; valores, regras e componentes nela
+citados não substituem a configuração e os contratos vigentes acima.
 
 Os itens abaixo registram versões passadas; o comportamento atual está descrito acima e no guia de migração.
 
@@ -499,15 +594,15 @@ Acurácia de classificação e taxa de acerto dos contratos são métricas disti
 Os filtros de retorno esperado, risco e comparação entre modelos permanecem.
 Bundles anteriores exigem reavaliação sob a nova política.
 
-### Regra de entrada: confiança e payout
+## Regra atual de entrada com IA: confiança e payout
 
 A confiança estimada pelo modelo operacional deve ser estritamente maior que
 `AI_CONFIDENCE_MIN`, derivado de `MIN_APPROVAL_WIN_RATE`. Quando a IA atua como
 filtro auxiliar de um sinal técnico na mesma direção, o filtro direto usa piso
 efetivo de 55%. A proposta só permite compra quando
 `probabilidade × payout_total / preço − 1 >= 0`, substituindo a margem anterior
-de 2%. O payout líquido mínimo de 60%, os filtros técnicos e os controles de
-risco continuam ativos. Isso representa retorno esperado não negativo segundo o
+de 2%. O payout líquido mínimo é 60%; os filtros técnicos seguem seus módulos.
+O bloqueio de risco depende de `ENFORCE_RISK_GATE`, atualmente `False`. Isso representa retorno esperado não negativo segundo o
 modelo; não garante ausência de perdas. A confiança de uma previsão difere da
 taxa histórica de acerto: a aprovação do treino exige pelo menos 45% de acertos
 na estratégia completa.
@@ -517,5 +612,5 @@ O backtest com IA aplica a mesma função `profitable_proposal` do executor,
 exigindo `win_probability` válida, confiança acima de `AI_CONFIDENCE_MIN` e
 retorno esperado não negativo. Custos hipotéticos configurados no backtest são
 descontados antes da aceitação. Rejeições aparecem como
-`unprofitable_proposal` no relatório. O modo técnico permanece um comparador sem
-previsão probabilística.
+`unprofitable_proposal` no relatório. O backtest técnico permanece sem previsão probabilística. No executor,
+o caminho sem IA também pode comprar propostas com payout válido.

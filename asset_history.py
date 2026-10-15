@@ -13,6 +13,32 @@ import time
 from pathlib import Path
 
 from market_data import FIELDS, canonicalize, read_records
+from operational_diagnostics import safe_detail
+
+
+def plan_candle_backfill(known_epochs, timeframe, required, end_epoch, *, calendar=None,
+                         symbol='', max_window=672, page_limit=100):
+    """Planeja só epochs ausentes, descontando fechamentos comprovados na janela."""
+    expected = []
+    for index in range(max_window):
+        epoch = end_epoch - index * timeframe
+        if epoch <= 0:
+            break
+        if calendar is not None and calendar.closed_candle(symbol, epoch, timeframe):
+            continue
+        expected.append(epoch)
+        if len(expected) >= required:
+            break
+    known = set(known_epochs)
+    missing = sorted(epoch for epoch in expected if epoch not in known)
+    ranges = []
+    for epoch in missing:
+        if (ranges and epoch == ranges[-1][1] + timeframe
+                and (epoch - ranges[-1][0]) // timeframe < page_limit):
+            ranges[-1] = (ranges[-1][0], epoch)
+        else:
+            ranges.append((epoch, epoch))
+    return ranges
 
 
 class AssetHistoryStore:
@@ -50,8 +76,28 @@ class AssetHistoryStore:
             raise ValueError("histórico local contém ativo ou tipo inesperado")
         return clean
 
-    def synchronize(self, symbol: str, fetcher, *, now_epoch: int | None = None) -> dict:
+    def ingest(self, symbol, candles, *, now_epoch=None):
+        """Persiste recuperação sem apagar outros candles nem marcar lacunas como vazias."""
+        now = int(time.time() if now_epoch is None else now_epoch)
+        boundary = now // self.timeframe_sec * self.timeframe_sec
+        start = boundary - self.max_days * 86400
+        normalized = [self._normalize_candle(symbol, candle) for candle in candles]
+        path = self.path_for(symbol)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.with_suffix(path.suffix + '.lock').open('a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            existing = {row['epoch']: row for row in self._read_locked(path, symbol)}
+            for row in normalized:
+                if start <= row['epoch'] < boundary:
+                    existing.setdefault(row['epoch'], row)
+            self._write_csv_atomic(path, [row for epoch, row in sorted(existing.items())
+                                         if start <= epoch < boundary])
+
+    def synchronize(self, symbol: str, fetcher, *, now_epoch: int | None = None,
+                    retries: int = 0, retry_delay: float = 1.0, calendar=None) -> dict:
         """Busca gaps em páginas; falhas mantêm dados válidos e deixam intervalos para retry."""
+        if retries < 0 or retry_delay < 0:
+            raise ValueError("retry e espera devem ser não negativos")
         now = int(time.time() if now_epoch is None else now_epoch)
         empty_epoch_ttl = max(self.timeframe_sec, 3600)
         current_boundary = now // self.timeframe_sec * self.timeframe_sec
@@ -90,31 +136,52 @@ class AssetHistoryStore:
             present.update(existing_by_epoch)
             no_data.difference_update(existing_by_epoch)
 
+            scheduled_closed = {
+                epoch for epoch in range(start_epoch, end_epoch + 1, self.timeframe_sec)
+                if calendar is not None and calendar.closed_candle(symbol, epoch, self.timeframe_sec)
+            }
             requested_ranges = self._missing_ranges(
-                start_epoch, end_epoch, present, no_data
+                start_epoch, end_epoch, present, no_data | scheduled_closed
             )
             incoming: dict[int, dict] = {}
             complete = True
             failed_ranges = []
             for range_start, range_end in requested_ranges:
-                try:
-                    fetched = list(fetcher(range_start, range_end) or [])
-                    normalized = {}
-                    for candle in fetched:
-                        row = self._normalize_candle(symbol, candle)
-                        if range_start <= row["epoch"] <= range_end:
-                            normalized.setdefault(row["epoch"], row)
-                    for epoch in range(range_start, range_end + 1, self.timeframe_sec):
-                        if epoch in normalized:
-                            present.add(epoch)
-                            no_data_checks.pop(str(epoch), None)
-                            incoming.setdefault(epoch, normalized[epoch])
-                        elif epoch not in present:
-                            no_data.add(epoch)
-                            no_data_checks[str(epoch)] = now
-                except Exception:
-                    complete = False
-                    failed_ranges.append((range_start, range_end))
+                for attempt in range(retries + 1):
+                    try:
+                        fetched = list(fetcher(range_start, range_end) or [])
+                        normalized = {}
+                        for candle in fetched:
+                            # adjust_start_time pode devolver dados fora da faixa;
+                            # eles não pertencem à página solicitada.
+                            candle_epoch = int(candle['epoch'])
+                            if not range_start <= candle_epoch <= range_end:
+                                continue
+                            row = self._normalize_candle(symbol, candle)
+                            if range_start <= row["epoch"] <= range_end:
+                                normalized.setdefault(row["epoch"], row)
+                        for epoch in range(range_start, range_end + 1, self.timeframe_sec):
+                            if epoch in normalized:
+                                present.add(epoch)
+                                no_data_checks.pop(str(epoch), None)
+                                incoming.setdefault(epoch, normalized[epoch])
+                            elif epoch not in present:
+                                no_data.add(epoch)
+                                no_data_checks[str(epoch)] = now
+                    except Exception as exc:
+                        delay = min(30.0, retry_delay * 2 ** attempt)
+                        print(
+                            f"[HISTÓRICO] Falha ativo={symbol} faixa={range_start}..{range_end} "
+                            f"tentativa={attempt + 1}/{retries + 1} "
+                            f"tipo={type(exc).__name__} causa={safe_detail(exc)} "
+                            f"retry_em={delay if attempt < retries else 0:.1f}s"
+                        )
+                        if attempt < retries:
+                            time.sleep(delay)
+                            continue
+                        complete = False
+                        failed_ranges.append((range_start, range_end))
+                    break
 
             merged = dict(existing_by_epoch)
             conflicts = 0
@@ -139,6 +206,7 @@ class AssetHistoryStore:
                 "complete": complete,
                 "requested": len(requested_ranges),
                 "failed_ranges": failed_ranges,
+                "scheduled_closed": len(scheduled_closed),
                 "added": sum(row["epoch"] not in existing_by_epoch for row in incoming.values()),
                 "conflicts": conflicts,
                 "window_start": start_epoch,

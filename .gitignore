@@ -28,6 +28,7 @@ recovered_data/
 *.new
 executor.lock
 bot_status.json
+bot_status.json.lock
 .bot_status.json.*.tmp
 risk_accounts.json
 dataset_v2.csv

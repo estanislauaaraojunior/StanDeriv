@@ -1,3 +1,7 @@
+> **Registro histórico da refatoração:** as verificações e o escopo abaixo
+> correspondem àquela etapa. Para o estado atual e as restrições de alteração,
+> consulte a [homologação de Score e coleta](HOMOLOGACAO_SCORE_COLETA_2026-10-15.md).
+
 # Registro da Refatoração
 
 ## Escopo

@@ -1,3 +1,7 @@
+> **Consulta histórica:** este registro mantém os achados e resultados da data
+> indicada, sem redefinir o comportamento atual. Consulte o [README](../../README.md)
+> e a [homologação de Score e coleta](../HOMOLOGACAO_SCORE_COLETA_2026-10-15.md).
+
 **Análise da lógica dos contratos e das perdas — 08/09/2026**
 
 O sistema apresenta falhas concretas na preparação dos dados, no filtro de IA e na coerência entre treino e execução. Elas permitem operar sem evidência válida de vantagem estatística. O histórico disponível confirma perdas e entradas que passaram apesar da abstenção ou divergência da IA, mas não permite atribuir causalmente cada perda a um único defeito.

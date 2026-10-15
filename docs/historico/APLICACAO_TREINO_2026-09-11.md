@@ -1,3 +1,7 @@
+> **Consulta histórica:** este registro mantém os achados e resultados da data
+> indicada, sem redefinir o comportamento atual. Consulte o [README](../../README.md)
+> e a [homologação de Score e coleta](../HOMOLOGACAO_SCORE_COLETA_2026-10-15.md).
+
 # Aplicação das recomendações de treinamento
 
 ## Implementação

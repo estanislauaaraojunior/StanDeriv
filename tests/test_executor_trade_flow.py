@@ -233,19 +233,59 @@ def test_no_second_proposal_while_first_pending(bot):
     assert ws.send.call_count == 1
 
 
-def test_heartbeat_timeout_closes_stale_websocket(bot, tmp_path, monkeypatch):
-    """Garante que a falha de heartbeat fecha o websocket e grava o evento heartbeat_timeout no status."""
+def test_tick_timeout_marks_stale_feed_without_closing_websocket(bot, tmp_path, monkeypatch, capsys):
+    """A ausência de ticks marca feed desatualizado, mas não confunde isso com falha de transporte."""
     monkeypatch.setattr(executor, '_BOT_STATUS_JSON', tmp_path/'bot_status.json')
     ws = MagicMock()
     bot._ws = ws
     bot._last_tick_epoch = 123456
 
-    bot._on_heartbeat_fail()
+    bot._on_tick_timeout()
 
-    ws.close.assert_called_once()
+    ws.close.assert_not_called()
     status = json.loads((tmp_path/'bot_status.json').read_text())
-    assert status['event'] == 'heartbeat_timeout'
+    assert status['event'] == 'feed_stale'
     assert status['last_tick_epoch'] == 123456
+    output = capsys.readouterr().out
+    assert 'Feed sem atualização' in output
+    assert 'mercado fechado' not in output
+
+
+def test_reconnect_delay_grows_and_is_capped(monkeypatch):
+    """O backoff aumenta por tentativa e não ultrapassa o teto configurado."""
+    monkeypatch.setattr(executor.random, 'uniform', lambda _low, high: high)
+
+    assert DerivBot._reconnect_delay(1) == 2
+    assert DerivBot._reconnect_delay(2) == 4
+    assert DerivBot._reconnect_delay(10) == 60
+
+
+def test_run_forever_uses_ping_pong_keepalive(bot, monkeypatch):
+    """Garante keepalive no WebSocket sem abrir conexão real."""
+    calls = []
+    watchdogs = []
+
+    class FakeWebSocket:
+        def __init__(self, _url, **_callbacks):
+            pass
+
+        def run_forever(self, **kwargs):
+            calls.append(kwargs)
+            watchdog = MagicMock()
+            watchdogs.append(watchdog)
+            bot._watchdog = watchdog
+
+    monkeypatch.setattr(executor.websocket, 'WebSocketApp', FakeWebSocket)
+    monkeypatch.setattr(bot, '_preload_candles_from_csv', lambda: None)
+    monkeypatch.setattr(bot, '_write_runtime_status', lambda **_kwargs: None)
+    monkeypatch.setattr(bot, '_market_switch_ready', MagicMock(side_effect=[False, True]))
+    monkeypatch.setattr(executor, 'acquire_execution_lock', lambda _path: MagicMock())
+
+    bot.run()
+
+    assert calls == [{'ping_interval': 30, 'ping_timeout': 10}]
+    watchdogs[0].cancel.assert_called_once()
+    assert bot._watchdog is None
 
 
 def test_proposal_retries_once_with_lower_stake_when_payout_exceeds_api_cap(bot, tmp_path, monkeypatch):
@@ -539,8 +579,8 @@ def test_history_is_merged_without_duplicates(bot):
     assert list(bot._candle_epochs) == sorted(bot._candle_epochs)
 
 
-def test_preload_ignores_invalid_local_history(bot, tmp_path, monkeypatch, capsys):
-    """Garante que CSV local inválido não derruba o bot antes do histórico autenticado."""
+def test_preload_keeps_valid_rows_when_local_history_has_rejections(bot, tmp_path, monkeypatch, capsys):
+    """Garante que rejeições isoladas não descartam todo o preload local."""
     import asset_history
 
     class EmptyStore:
@@ -554,14 +594,26 @@ def test_preload_ignores_invalid_local_history(bot, tmp_path, monkeypatch, capsy
     ticks_path.write_text(
         'epoch,datetime,symbol,price,kind,timeframe,open,high,low\n'
         '1790878563,,R_100,158.231,candle,900,158.206,158.25,158.124\n'
+        '1800000000,,R_100,158.3,candle,900,158.2,158.4,158.1\n'
     )
     monkeypatch.setattr(executor, 'TICKS_CSV', str(ticks_path))
     monkeypatch.setattr(asset_history, 'AssetHistoryStore', EmptyStore)
+    monkeypatch.setattr(executor.time, 'time', lambda: 1_800_001_000)
 
     bot._preload_candles_from_csv()
 
-    assert list(bot._candles) == []
-    assert 'Histórico local inválido' in capsys.readouterr().out
+    assert list(bot._candles) == [
+        {
+            'epoch': 1_800_000_000,
+            'open': 158.2,
+            'high': 158.4,
+            'low': 158.1,
+            'close': 158.3,
+        }
+    ]
+    output = capsys.readouterr().out
+    assert 'registro(s) inválido(s)' in output
+    assert 'Histórico local inválido' not in output
 
 
 def test_preload_uses_shared_asset_history_when_ticks_csv_is_absent(bot, monkeypatch):
@@ -592,6 +644,75 @@ def test_preload_uses_shared_asset_history_when_ticks_csv_is_absent(bot, monkeyp
 
     assert list(bot._candle_epochs) == [row['epoch'] for row in rows]
     assert list(bot._candle_closes) == [row['price'] for row in rows]
+
+
+def test_authenticated_stream_subscribes_when_local_history_is_sufficient(bot):
+    """Garante que reconexão não baixa candles quando o buffer local já está aquecido."""
+    ws = MagicMock()
+    bot._merge_candles([
+        {
+            'epoch': 1_800_000_000 + index * config.CANDLE_TIMEFRAME_SEC,
+            'open': 100 + index,
+            'high': 101 + index,
+            'low': 99 + index,
+            'close': 100.5 + index,
+        }
+        for index in range(config.MIN_CANDLES)
+    ])
+
+    bot._request_missing_history_or_subscribe(ws)
+
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent == {'ticks': bot.symbol, 'subscribe': 1}
+
+
+def test_authenticated_stream_downloads_only_missing_candles(bot, monkeypatch):
+    """Garante que o bot consulta apenas os candles faltantes para completar o aquecimento."""
+    ws = MagicMock()
+    local_count = config.MIN_CANDLES - 7
+    monkeypatch.setattr(executor.time, 'time', lambda: 1_800_000_000 + config.MIN_CANDLES * config.CANDLE_TIMEFRAME_SEC)
+    bot._merge_candles([
+        {
+            'epoch': 1_800_000_000 + index * config.CANDLE_TIMEFRAME_SEC,
+            'open': 100 + index,
+            'high': 101 + index,
+            'low': 99 + index,
+            'close': 100.5 + index,
+        }
+        for index in range(local_count)
+    ])
+
+    bot._request_missing_history_or_subscribe(ws)
+
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent['ticks_history'] == bot.symbol
+    assert sent['style'] == 'candles'
+    assert sent['granularity'] == config.CANDLE_TIMEFRAME_SEC
+    assert sent['count'] == 7
+
+
+def test_authenticated_stream_reloads_local_history_after_gap_clear(bot, monkeypatch):
+    """Garante que buffer limpo por gap é reaquecido localmente antes de baixar da API."""
+    ws = MagicMock()
+
+    def preload():
+        bot._merge_candles([
+            {
+                'epoch': 1_800_000_000 + index * config.CANDLE_TIMEFRAME_SEC,
+                'open': 100 + index,
+                'high': 101 + index,
+                'low': 99 + index,
+                'close': 100.5 + index,
+            }
+            for index in range(config.MIN_CANDLES)
+        ])
+
+    monkeypatch.setattr(bot, '_preload_candles_from_csv', preload)
+
+    bot._request_missing_history_or_subscribe(ws)
+
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent == {'ticks': bot.symbol, 'subscribe': 1}
 
 
 def test_active_model_module_keeps_executor_gates_even_without_majority_vote():
@@ -630,6 +751,25 @@ def test_buy_error_does_not_authorize_retry(bot):
     bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id = rid)
     bot._on_message(ws, json.dumps({'error': {'code': 'InternalError'}, 'req_id': bot._buy_req_id}))
     assert bot._in_trade and bot._phase == 'reconciling'
+
+
+def test_invalid_contract_proposal_buy_error_releases_pending_trade(bot):
+    """Garante que rejeição explícita da compra não fica presa em reconciliação."""
+    ws = MagicMock()
+    rid = proposal(bot, ws)
+    bot._handle_proposal(ws, {'id': 'p', 'ask_price': 10, 'payout': 18.5}, req_id=rid)
+
+    bot._on_message(ws, json.dumps({
+        'error': {
+            'code': 'InvalidContractProposal',
+            'message': 'Unknown contract proposal',
+        },
+        'req_id': bot._buy_req_id,
+    }))
+
+    assert not bot._in_trade
+    assert bot._phase == 'idle'
+    assert bot._decision_history[-1]['reason'] == 'buy_rejected_by_api'
 
 
 def test_uncertain_buy_reconciles_open_contract_from_portfolio(bot):
@@ -722,8 +862,9 @@ def test_unfavorable_symbol_streak_requests_fallback(bot, monkeypatch, tmp_path)
     monkeypatch.setattr(config, 'UNFAVORABLE_SYMBOL_SWITCH_REASONS', {'no_technical_signal'})
     bot.on_market_unfavorable = callback
     bot.symbol = 'frxGBPJPY'
+    bot._new_candle_closed = True
 
-    for epoch in (100, 160):
+    for epoch in (900, 1800):
         bot._record_decision(
             reason='no_technical_signal',
             tick_epoch=epoch,
@@ -734,7 +875,7 @@ def test_unfavorable_symbol_streak_requests_fallback(bot, monkeypatch, tmp_path)
 
     bot._record_decision(
         reason='no_technical_signal',
-        tick_epoch=220,
+        tick_epoch=2700,
         indicators={'adx': 12.7},
     )
 

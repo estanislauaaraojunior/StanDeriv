@@ -674,7 +674,7 @@ html, body {
 .execution-mode-status.invalid { color: var(--red); }
 .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
 .advanced-details { margin-top: 8px; }
-.advanced-details summary { cursor: pointer; font-size: 12px; color: var(--text-muted); padding: 4px 0; user-select: none; }
+.advanced-details summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 4px 0; user-select: none; }
 .advanced-details summary:hover { color: var(--text-primary); }
 .advanced-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; padding: 12px; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border); }
 
@@ -905,7 +905,7 @@ html, body {
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  background: var(--card-bg);
+  background: var(--bg-card);
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.05);
 }

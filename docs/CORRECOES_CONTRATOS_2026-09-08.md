@@ -1,3 +1,9 @@
+> **Registro cronológico:** cada seção preserva a política da data indicada;
+> atualizações posteriores a substituem. Para as regras atuais, consulte o
+> [README](../README.md), o [Score Ponderado](SCORE_PONDERADO_BOLLINGER.md) e a
+> [homologação de Score e coleta de 15/10/2026](HOMOLOGACAO_SCORE_COLETA_2026-10-15.md).
+> As exigências de bundle e shadow aplicam-se ao caminho com IA habilitada.
+
 **Correções dos contratos — 08/09/2026**
 
 O fluxo agora exige concordância explícita da IA, modelo compatível com o ativo e vencimento, dados temporais identificados e uma proposta cujo payout seja compatível com a probabilidade prevista. Foram mantidos os limiares dos indicadores, a stake percentual, os stops e as pausas; não houve ajuste para aumentar o número de entradas.

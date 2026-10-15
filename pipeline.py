@@ -33,7 +33,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -100,6 +100,11 @@ from executor import DerivBot
 from risk_manager import RiskManager
 from market_data import ensure_header, append_record, append_records, read_records
 from asset_history import AssetHistoryStore
+from operational_diagnostics import connection_diagnostic, safe_detail
+from request_throttle import RequestThrottle
+from market_calendar import MarketCalendar
+from api_keepalive import ApiKeepalive
+from runtime_status import update_status, SESSION_ID
 from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, usable,
                             load_validated_bundle, write_json_atomic,
                             acquire_execution_lock, minimum_history_candles,
@@ -129,6 +134,13 @@ _AUTH_MODE = "legacy"
 _PAT_ACCOUNT_ID: Optional[str] = None
 _PAT_ACCOUNT: dict = {}
 _PAT_WS_URL: Optional[str] = None
+
+
+def _utc_iso() -> str:
+    """Timestamp UTC timezone-aware para status persistido."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 _BOT_STATUS_JSON = Path(__file__).resolve().parent / "bot_status.json"
 _SHADOW_STATE_JSON = Path(__file__).resolve().parent / "shadow_state.json"
 _market_failure_until: dict[str, float] = {}
@@ -278,35 +290,11 @@ _pipeline_status_lock = threading.Lock()
 
 
 def _write_pipeline_status(**updates):
-    """Mescla `updates` em `bot_status.json` com escrita atômica protegida por lock."""
-    import tempfile
-
+    """Atualiza status da sessão sem sobrescrever métricas publicadas pelo executor."""
+    updates.setdefault('pid', os.getpid())
+    updates.setdefault('session_id', SESSION_ID)
     with _pipeline_status_lock:
-        try:
-            status = json.loads(_BOT_STATUS_JSON.read_text()) if _BOT_STATUS_JSON.exists() else {}
-        except Exception:
-            status = {}
-        status.update(updates)
-        status.setdefault("pid", os.getpid())
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=_BOT_STATUS_JSON.parent,
-                prefix=f".{_BOT_STATUS_JSON.name}.{os.getpid()}.",
-                suffix=".tmp",
-                delete=False,
-            ) as temp_file:
-                temp_path = Path(temp_file.name)
-                temp_file.write(json.dumps(status, ensure_ascii=False))
-            os.replace(temp_path, _BOT_STATUS_JSON)
-        finally:
-            if temp_path is not None:
-                try:
-                    temp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
+        update_status(_BOT_STATUS_JSON, updates, owner='pipeline')
 
 
 def _pipeline_heartbeat(stage: str, **updates):
@@ -319,10 +307,11 @@ def _pipeline_heartbeat(stage: str, **updates):
     updates.setdefault("min_candles", MIN_CANDLES)
     updates.setdefault("model_feature_window", FEATURE_WINDOW)
     updates.setdefault("warmup_remaining_candles", max(0, MIN_CANDLES - candle_count))
+    updates.setdefault('candle_source', 'pipeline')
     _write_pipeline_status(
         status=stage,
         running=True,
-        last_seen_at=datetime.utcnow().isoformat() + "+00:00",
+        last_seen_at=_utc_iso(),
         symbol=_runtime_symbol(),
         **updates,
     )
@@ -504,7 +493,10 @@ def _get_ws_url() -> str:
 
 _SCAN_TICKS = 200
 _SCAN_TIMEOUT = 15
-_SCAN_WORKERS = 8
+_SCAN_WORKERS = 2
+_SCAN_RATE_LIMIT_RETRIES = 2
+_scan_throttle = RequestThrottle(interval=1.0)
+_market_calendar = MarketCalendar(lambda request: _websocket_request(request))
 _ADX_TREND_MIN = 25.0
 _TOP_TRENDING_SYMBOLS = 5
 _NO_MODEL_RETRY_SEC = 6 * 60 * 60
@@ -530,10 +522,29 @@ def _history_store() -> AssetHistoryStore:
 
 
 def _websocket_request(request: dict, *, timeout: int = _SCAN_TIMEOUT) -> dict:
+    """Repete somente a consulta limitada pela API, com pausa global entre workers."""
+    for attempt in range(_SCAN_RATE_LIMIT_RETRIES + 1):
+        try:
+            _scan_throttle.wait()
+            return _websocket_request_once(request, timeout=timeout)
+        except deriv_session.DerivAPIError as exc:
+            if not deriv_session.is_rate_limit_error(exc):
+                raise
+            delay = _scan_throttle.backoff(getattr(exc, 'retry_after', None))
+            print(
+                f"[SCAN] RateLimit; pausa compartilhada={delay:.1f}s "
+                f"tentativa={attempt + 1}/{_SCAN_RATE_LIMIT_RETRIES + 1}"
+            )
+            if attempt == _SCAN_RATE_LIMIT_RETRIES:
+                raise
+
+
+def _websocket_request_once(request: dict, *, timeout: int = _SCAN_TIMEOUT) -> dict:
     """Executa uma solicitação de leitura autenticada; não envia mensagens de compra."""
     done = threading.Event()
     response: dict = {}
     errors: list[str] = []
+    api_errors: list[dict] = []
 
     def send_request(ws):
         ws.send(json.dumps(request))
@@ -552,7 +563,12 @@ def _websocket_request(request: dict, *, timeout: int = _SCAN_TIMEOUT) -> dict:
             ws.close()
             return
         if "error" in data:
-            errors.append(str(data["error"].get("message") or "erro da API"))
+            error = data["error"]
+            api_errors.append(error)
+            errors.append(
+                f"API código={safe_detail(error.get('code'))} "
+                f"causa={safe_detail(error.get('message') or 'erro da API')}"
+            )
             ws.close()
         elif data.get("msg_type") == "authorize":
             send_request(ws)
@@ -562,10 +578,16 @@ def _websocket_request(request: dict, *, timeout: int = _SCAN_TIMEOUT) -> dict:
         elif data.get("msg_type") == "candles":
             response.update(data)
             ws.close()
+        elif request.get("trading_times") and data.get("msg_type") == "trading_times":
+            response.update(data)
+            ws.close()
 
     ws = websocket.WebSocketApp(
         _get_ws_url(), on_open=on_open, on_message=on_message,
-        on_error=lambda socket, _error: (errors.append("falha de WebSocket"), socket.close()),
+        on_error=lambda socket, error: (
+            errors.append(f"WebSocket tipo={type(error).__name__} causa={safe_detail(error)}"),
+            socket.close(),
+        ),
         on_close=lambda *_args: done.set(),
     )
     worker = threading.Thread(target=ws.run_forever, daemon=True)
@@ -575,6 +597,11 @@ def _websocket_request(request: dict, *, timeout: int = _SCAN_TIMEOUT) -> dict:
         worker.join(timeout=1)
         raise TimeoutError("tempo limite ao consultar histórico de mercado")
     if errors:
+        if api_errors and _is_rate_limit(api_errors[0]):
+            error = api_errors[0]
+            exc = deriv_session.DerivAPIError(errors[0], code=error.get('code'))
+            exc.retry_after = error.get('retry_after')
+            raise exc
         raise RuntimeError(errors[0])
     if not response:
         raise RuntimeError("resposta de mercado ausente")
@@ -658,14 +685,17 @@ def _catalog_scan_candidates() -> list[str]:
 def _fetch_prices_for_symbol(symbol: str, count: int = _SCAN_TICKS) -> list:
     """Sincroniza histórico local e retorna os fechamentos mais recentes."""
     store = _history_store()
-    result = store.synchronize(symbol, lambda start, end: _fetch_candles_for_symbol(symbol, start, end))
+    result = store.synchronize(
+        symbol, lambda start, end: _fetch_candles_for_symbol(symbol, start, end),
+        calendar=_market_calendar,
+    )
     rows = result["candles"][-max(1, count):]
     if not rows:
         _scan_adx_epochs[symbol] = None
         return []
     contiguous = [rows[-1]]
     for row in reversed(rows[:-1]):
-        if contiguous[0]["epoch"] - row["epoch"] != CANDLE_TIMEFRAME_SEC:
+        if not _market_calendar.consecutive(symbol, row['epoch'], contiguous[0]['epoch'], CANDLE_TIMEFRAME_SEC):
             break
         contiguous.insert(0, row)
     _scan_adx_epochs[symbol] = contiguous[-1]["epoch"]
@@ -838,15 +868,12 @@ def _scan_group(candidates: list) -> dict:
             f"{direction}"
         )
 
-    for offset in range(0, len(candidates), _SCAN_WORKERS):
-        threads = [
-            threading.Thread(target=_scan_one, args=(symbol,), daemon=True)
-            for symbol in candidates[offset:offset + _SCAN_WORKERS]
-        ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=_SCAN_TIMEOUT + 5)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=_SCAN_WORKERS) as pool:
+        # Aguarda o trabalho completo: timeout no join não deve liberar novos
+        # workers enquanto uma consulta anterior ainda estiver em execução.
+        for _ in pool.map(_scan_one, candidates):
+            pass
 
     return results
 
@@ -1188,9 +1215,11 @@ def _fetch_historical_ticks(
         result = _history_store().synchronize(
             symbol,
             lambda start, end: _fetch_candles_for_symbol(symbol, start, end),
+            retries=2, retry_delay=1.0,
+            calendar=_market_calendar,
         )
     except Exception as exc:
-        print(f"[HISTÓRICO] Falha ao atualizar base do ativo ({type(exc).__name__}).")
+        print(f"[HISTÓRICO] Falha ao atualizar base do ativo ({type(exc).__name__}): {safe_detail(exc)}.")
         return 0
 
     if result.get("failed_ranges"):
@@ -1198,6 +1227,8 @@ def _fetch_historical_ticks(
             "[HISTÓRICO] Atualização parcial; "
             f"{len(result['failed_ranges'])} faixa(s) ficam para retry."
         )
+    if result.get('scheduled_closed'):
+        print(f"[HISTÓRICO] {result['scheduled_closed']} intervalo(s) de candle em fechamento programado; sem download.")
 
     print(
         f"[HISTÓRICO] Base do ativo atualizada: "
@@ -1786,6 +1817,7 @@ class _CollectorThread(threading.Thread):
         self._stopped = threading.Event()
         self._first_tick_timer = None
         self._first_tick_timed_out = False
+        self._api_keepalive = None
         self.history_ready = threading.Event()
         self._history_start = None
         self._history_end = None
@@ -1853,8 +1885,15 @@ class _CollectorThread(threading.Thread):
     def run(self) -> None:
         """Mantém a conexão WebSocket, reconectando a cada 5s, até parada, encerramento ou erro fatal."""
         _ensure_ticks_header()
+        records, _ = read_records(TICKS_CSV)
+        with self._history_lock:
+            self._history_seen = {r['epoch'] for r in records
+                                  if r['symbol'] == self._symbol and r['kind'] == 'tick'}
+            self._last_history_log_count = len(self._history_seen)
+        del records
 
         while not _shutdown.is_set() and not self._stopped.is_set() and not self.fatal_error:
+            self._connection_opened_at = None
             try:
                 ws = websocket.WebSocketApp(
                     _get_ws_url(),
@@ -1877,6 +1916,8 @@ class _CollectorThread(threading.Thread):
                     )
 
             finally:
+                if self._api_keepalive is not None:
+                    self._api_keepalive.stop()
                 if self._first_tick_timer:
                     self._first_tick_timer.cancel()
             if self.fatal_error or self._stopped.wait(5):
@@ -1885,6 +1926,8 @@ class _CollectorThread(threading.Thread):
     def stop(self) -> None:
         """Interrompe a coleta e fecha o WebSocket."""
         self._stopped.set()
+        if self._api_keepalive is not None:
+            self._api_keepalive.stop()
         if self._first_tick_timer:
             self._first_tick_timer.cancel()
         if self._ws:
@@ -1895,15 +1938,15 @@ class _CollectorThread(threading.Thread):
 
     def _on_open(self, ws) -> None:
         """Arma o timer de primeiro tick, carrega épocas já gravadas e autoriza ou assina ticks."""
+        self._connection_opened_at = time.monotonic()
+        if self._api_keepalive is not None:
+            self._api_keepalive.stop()
+        self._api_keepalive = ApiKeepalive(ws, 'COLETOR')
+        self._api_keepalive.start()
         self._first_tick_timed_out = False
         self._first_tick_timer = threading.Timer(30, self._on_first_tick_timeout, args=(ws,))
         self._first_tick_timer.daemon = True
         self._first_tick_timer.start()
-        records, _ = read_records(TICKS_CSV)
-        with self._history_lock:
-            self._history_seen = {r['epoch'] for r in records
-                                  if r['symbol'] == self._symbol and r['kind'] == 'tick'}
-            self._last_history_log_count = len(self._history_seen)
         print(
             f"\n[COLETOR] Conectado | "
             f"{_symbol_display(self._symbol)}"
@@ -1922,6 +1965,14 @@ class _CollectorThread(threading.Thread):
 
     def _on_first_tick_timeout(self, ws) -> None:
         """Fecha a sessão quando a assinatura não entrega o primeiro tick no prazo."""
+        now = int(time.time())
+        if _market_calendar.closed(self._symbol, now, now + 1):
+            if not _shutdown.is_set() and not self._stopped.is_set():
+                print('[COLETOR] Mercado em fechamento programado; aguardando reabertura sem reconectar.')
+                self._first_tick_timer = threading.Timer(30, self._on_first_tick_timeout, args=(ws,))
+                self._first_tick_timer.daemon = True
+                self._first_tick_timer.start()
+            return
         self._first_tick_timed_out = True
         if not _shutdown.is_set() and not self._stopped.is_set():
             print("\n[COLETOR] Primeiro tick não recebido em 30s; reconectando com nova sessão.")
@@ -1955,6 +2006,10 @@ class _CollectorThread(threading.Thread):
         ):
             return
 
+        if data.get('msg_type') == 'ping':
+            if self._api_keepalive is not None:
+                self._api_keepalive.acknowledge(data)
+            return
         if self._payout_recorder.handle(data):
             return
 
@@ -2209,7 +2264,7 @@ class _CollectorThread(threading.Thread):
         if not _shutdown.is_set() and not benign_close:
             print(
                 f"\n[COLETOR] Erro WebSocket: "
-                f"{error}"
+                f"{connection_diagnostic(getattr(self, '_connection_opened_at', None), error=error)}"
             )
         try:
             ws.close()
@@ -2223,6 +2278,8 @@ class _CollectorThread(threading.Thread):
         msg,
     ) -> None:
         """Informa o encerramento da conexão quando não foi intencional."""
+        if self._api_keepalive is not None:
+            self._api_keepalive.stop()
         if not _shutdown.is_set() and not self._stopped.is_set():
             if self._first_tick_timed_out:
                 action = 'sem tick inicial; reconectando...'
@@ -2230,7 +2287,7 @@ class _CollectorThread(threading.Thread):
                 action = 'coleta bloqueada' if self.fatal_error else 'reconectando...'
             print(
                 f"\n[COLETOR] Conexão encerrada "
-                f"(código: {code}) — {action}"
+                f"{connection_diagnostic(getattr(self, '_connection_opened_at', None), code=code, reason=msg)} — {action}"
             )
 
 
@@ -3684,6 +3741,8 @@ def _main_session(resources, forced_symbol=None) -> None:
     )
 
     bot._execution_lock=execution_lock
+    bot.market_calendar = _market_calendar
+    bot.on_history_recovered = lambda candles: _history_store().ingest(bot.symbol, candles)
     bot.market_switch_requested = _market_switch.is_set
     bot.on_market_unavailable = _request_market_switch
     bot.on_market_unfavorable = _request_market_switch_for_unfavorable
@@ -3713,6 +3772,7 @@ def main() -> None:
     global _market_switch_reason
     resources = {'lock': acquire_execution_lock(Path(__file__).resolve().parent/'executor.lock')}
     forced_symbol = None
+    _write_pipeline_status(status='starting', running=True, symbol=_runtime_symbol())
     try:
         while True:
             _shutdown.clear()
@@ -3736,8 +3796,8 @@ def main() -> None:
                     _write_pipeline_status(
                         status="degraded",
                         running=False,
-                        stopped_at=datetime.utcnow().isoformat() + "+00:00",
-                        finished_at=datetime.utcnow().isoformat() + "+00:00",
+                        stopped_at=_utc_iso(),
+                        finished_at=_utc_iso(),
                         returncode=None,
                         last_error="limite de trocas de mercado atingido; aguardando intervenção",
                     )
@@ -3784,8 +3844,8 @@ if __name__ == "__main__":
         _write_pipeline_status(
             status="stopped",
             running=False,
-            stopped_at=datetime.utcnow().isoformat() + "+00:00",
-            finished_at=datetime.utcnow().isoformat() + "+00:00",
+            stopped_at=_utc_iso(),
+            finished_at=_utc_iso(),
             returncode=0,
             last_error="",
         )
@@ -3794,8 +3854,8 @@ if __name__ == "__main__":
         _write_pipeline_status(
             status="crashed",
             running=False,
-            stopped_at=datetime.utcnow().isoformat() + "+00:00",
-            finished_at=datetime.utcnow().isoformat() + "+00:00",
+            stopped_at=_utc_iso(),
+            finished_at=_utc_iso(),
             returncode=1,
             last_error=f"{type(exc).__name__}: {exc}",
         )
@@ -3804,8 +3864,8 @@ if __name__ == "__main__":
         _write_pipeline_status(
             status="stopped",
             running=False,
-            stopped_at=datetime.utcnow().isoformat() + "+00:00",
-            finished_at=datetime.utcnow().isoformat() + "+00:00",
+            stopped_at=_utc_iso(),
+            finished_at=_utc_iso(),
             returncode=0,
             last_error="",
         )

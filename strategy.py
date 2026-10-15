@@ -191,6 +191,7 @@ def get_signal(
                     dict(indicators), prices, candle_alerts, use_ai_model=False,
                     evaluation_time=evaluation_time, candles=candles,
                     apply_aux_filters=False,
+                    bollinger_bands=bb_res,
                 )
                 if weighted_signal in ("BUY", "SELL"):
                     majority, component_votes = _weighted_directional_majority(
@@ -260,6 +261,11 @@ def get_signal(
         indicators["decision_block"] = (
             "no_decision_modules_enabled" if not enabled else "module_consensus_no_majority"
         )
+        if enabled == ["weighted_score"]:
+            indicators["decision_block"] = (
+                "weighted_module_error" if weighted_indicators.get("module_error")
+                else weighted_indicators.get("decision_block", "no_technical_signal")
+            )
         return None, indicators
 
     signal = winners[0]
@@ -380,14 +386,33 @@ def _weighted_signal(
     evaluation_time: Optional[float] = None,
     candles: list = None,
     apply_aux_filters: bool = True,
+    bollinger_bands: Optional[Tuple[float, float, float]] = None,
 ) -> SignalResult:
     """
     Gera sinal via score contínuo ponderado (USE_WEIGHTED_SIGNAL=True).
 
     Scores contínuos (-1 a +1) ao invés de binários:
-      EMA cross 30% | MACD 25% | preço vs EMA 20% | momentum 15% | ADX 10%
+      EMA 25% | MACD 20% | Bollinger 15% | preço vs EMA 15%
+      | momentum 15% | RSI 10%. ADX multiplica o score composto.
+
+    Bollinger usa os últimos BB_PERIOD ticks (não velas). A posição acima
+    da banda central confirma alta; abaixo confirma baixa. Bandas inválidas
+    bloqueiam somente este módulo. A votação técnica mantém os cinco
+    componentes originais.
     """
     eps = 1e-12
+
+    bands = bollinger_bands if bollinger_bands is not None else ind.bollinger(prices, BB_PERIOD, BB_STD)
+    if bands is None or not all(math.isfinite(value) for value in bands):
+        indicators["decision_block"] = "bollinger_invalid"
+        return None, indicators
+    bb_upper, bb_mid, bb_lower = bands
+    half_width = (bb_upper - bb_lower) / 2.0
+    if not bb_lower < bb_mid < bb_upper or half_width <= 0:
+        indicators["decision_block"] = "bollinger_invalid"
+        return None, indicators
+    bb_score = max(-1.0, min(1.0, (price - bb_mid) / half_width))
+    indicators["bb_score"] = round(bb_score, 4)
 
     # Score EMA: distância relativa normalizada
     ema_score = max(-1.0, min(1.0, (ema9 - ema21) / (ema21 * 0.001 + eps)))
@@ -408,7 +433,8 @@ def _weighted_signal(
     # Score composto (positivo = bullish, negativo = bearish)
     composite = (
         ema_score * 0.25
-        + macd_score * 0.25
+        + macd_score * 0.20
+        + bb_score * 0.15
         + price_score * 0.15
         + mom_score * 0.15
         + rsi_score * 0.10
@@ -442,6 +468,7 @@ def _weighted_signal(
             candles,
             apply_aux_filters=apply_aux_filters,
         )
+    indicators["decision_block"] = "technical_score_below_min"
     return None, indicators
 
 
