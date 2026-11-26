@@ -1,11 +1,11 @@
 ---
 name: standeriv-homologacao
-description: Verifica se o Score Ponderado e a coleta de dados homologados em 15/10/2026 continuam preservados no StanDeriv — confere SHA-256 da tabela de homologação e compara por AST, com o commit de homologação, as funções alteradas. Use antes e depois de qualquer alteração em strategy.py, indicators.py, config.py, collector.py, market_data.py, asset_history.py, market_calendar.py, api_keepalive.py, request_throttle.py, deriv_session.py, feature_engine.py, executor.py, pipeline.py, model_contract.py ou runtime_status.py; antes de commits/PRs; e sempre que alguém perguntar se a homologação, o Score ou a coleta foram afetados.
+description: Verifica se o Score Ponderado e a coleta de dados homologados em 15/10/2026 continuam preservados no StanDeriv — confere SHA-256 da tabela de homologação e compara por AST, com o commit da referência de homologação vigente, as funções alteradas. Use antes e depois de qualquer alteração em strategy.py, indicators.py, config.py, collector.py, market_data.py, asset_history.py, market_calendar.py, api_keepalive.py, request_throttle.py, deriv_session.py, feature_engine.py, executor.py, pipeline.py, model_contract.py ou runtime_status.py; antes de commits/PRs; e sempre que alguém perguntar se a homologação, o Score ou a coleta foram afetados.
 ---
 
 # Conferência da homologação de Score e coleta
 
-A homologação (docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md) congelou o Score
+A homologação (docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md; referência de integridade vigente no adendo mais recente, docs/HOMOLOGACAO_SCORE_COLETA_*_ADENDO.md) congelou o Score
 Ponderado e a coleta: não alterar lógica, parâmetros, base temporal, filtros ou
 persistência, nem indiretamente por arquivos compartilhados. O trabalho da IA
 isolada precisa tocar `executor.py`, `pipeline.py`, `model_contract.py` e

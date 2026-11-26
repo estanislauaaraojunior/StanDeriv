@@ -64,10 +64,12 @@ nesse executor (Python 3.14.4). Sem ele, a forma direta equivalente é
 `.venv/bin/python -m pytest tests -q`, apenas em cópia isolada.
 
 Para conferir a homologação, `python3 .claude/skills/standeriv-homologacao/scripts/check_homologacao.py`
-compara a tabela de hashes e, por AST, as definições alteradas desde o commit de
-homologação. `executor.py`, `pipeline.py`, `model_contract.py` e
-`runtime_status.py` já divergem da tabela por mudanças exclusivas da IA isolada;
-os módulos congelados e os trechos de coleta do pipeline seguem idênticos.
+compara a tabela de hashes e, por AST, as definições alteradas desde o commit da
+referência vigente. A referência é o documento `HOMOLOGACAO_SCORE_COLETA_*` mais
+recente: hoje o [adendo de 26/11/2026](HOMOLOGACAO_SCORE_COLETA_2026-11-26_ADENDO.md),
+que registrou as mudanças exclusivas da IA isolada em `executor.py`, `pipeline.py`,
+`model_contract.py` e `runtime_status.py`. Qualquer divergência nova exige leitura
+do diff e, para módulos congelados, autorização explícita.
 
 Antes de executar, confira fixtures, mocks e caminhos de escrita dos testes escolhidos. A presença de um teste não garante isolamento. Use diretório temporário ou checkout isolado quando necessário. O pytest está declarado em `requirements-dev.txt`. Se faltar uma dependência, relate ou instale conforme as permissões e o escopo da sessão.
 

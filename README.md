@@ -18,7 +18,7 @@ controles de risco ou dos modelos treinados.
 ## Documentação
 
 - [Arquitetura atual](ARCHITECTURE.md): responsabilidades e fluxos vigentes.
-- [Homologação de Score e coleta](docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md): escopo congelado e referências de integridade.
+- [Homologação de Score e coleta](docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md): escopo congelado; o [adendo de 26/11/2026](docs/HOMOLOGACAO_SCORE_COLETA_2026-11-26_ADENDO.md) traz a referência de integridade vigente.
 - [Score Ponderado](docs/SCORE_PONDERADO_BOLLINGER.md): fórmulas, pesos, votos e base temporal.
 - [Guia técnico](docs/GUIA_TECNICO.md) e [instruções de manutenção](AGENTS.md): leitura por área e regras para alterações.
 - [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md): registro cronológico; seções posteriores substituem políticas antigas.

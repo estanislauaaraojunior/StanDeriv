@@ -12,7 +12,7 @@ Estas instruções aplicam-se a todo o repositório. Atue como engenheiro de sof
 
 ## Regras permanentes
 
-- Score Ponderado e coleta de dados foram homologados pelo usuário em 15/10/2026. Não altere lógica, parâmetros, entradas, filtros ou persistência desses módulos sem nova solicitação explícita que autorize rever a homologação. Leia [o registro e o escopo congelado](docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md) antes de qualquer trabalho que possa afetá-los, inclusive por dependências compartilhadas. Melhorias em outros módulos devem preservar esses comportamentos.
+- Score Ponderado e coleta de dados foram homologados pelo usuário em 15/10/2026. Não altere lógica, parâmetros, entradas, filtros ou persistência desses módulos sem nova solicitação explícita que autorize rever a homologação. Leia [o registro e o escopo congelado](docs/HOMOLOGACAO_SCORE_COLETA_2026-10-15.md) e [o adendo de 26/11/2026](docs/HOMOLOGACAO_SCORE_COLETA_2026-11-26_ADENDO.md), que contém a referência de integridade vigente, antes de qualquer trabalho que possa afetá-los, inclusive por dependências compartilhadas. Melhorias em outros módulos devem preservar esses comportamentos.
 - Faça escolhas rotineiras com base no código existente. Pergunte apenas quando faltar informação indispensável; não peça novamente autorização já concedida na sessão.
 - Preserve alterações preexistentes, dados, modelos e estado operacional. Não use restauração global do Git para limpar o trabalho.
 - Não exponha `.env`, tokens ou credenciais em respostas, logs, diffs ou documentação.
