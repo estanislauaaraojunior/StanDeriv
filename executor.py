@@ -1125,8 +1125,11 @@ class DerivBot:
         self._history_retry_at = time.time() + 60
         count = (end-start)//CANDLE_TIMEFRAME_SEC+1
         print(f'[BOT] Recuperando lacuna real ativo={self.symbol} faixa={start}..{end} candles={count} buffer={len(self._candles)}/{MIN_CANDLES}.')
+        # A API devolve os últimos `count` candles abertos antes de `end`; com
+        # end igual ao início do último candle ela entrega o anterior e a lacuna
+        # nunca fecha. O fim do intervalo do último candle evita esse deslocamento.
         ws.send(json.dumps({
-            'ticks_history':self.symbol, 'start':start, 'end':str(end),
+            'ticks_history':self.symbol, 'start':start, 'end':str(end + CANDLE_TIMEFRAME_SEC - 1),
             'count':count, 'style':'candles', 'granularity':CANDLE_TIMEFRAME_SEC,
             'req_id':req_id,
         }))

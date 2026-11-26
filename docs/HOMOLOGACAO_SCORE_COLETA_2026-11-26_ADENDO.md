@@ -84,6 +84,25 @@ não mudaram. Regressões em `tests/test_pipeline_live_feed.py` reproduzem o err
 no código anterior. No mesmo arquivo, `_main_session` passou a registrar (sem
 abortar a sessão) falha de disco ao reservar o bundle ativo da IA.
 
+## Correção do fim das requisições de candles — 26/11/2026
+
+Autorizada explicitamente pelo usuário. Com o bot rodando só com Score em
+`OTC_FTSE`, o fechamento das 13:30 registrou `history_recovery` repetidamente:
+o candle das 13:15 (início da sessão no meio da vela) era pedido com
+`start = end = 13:15` e a API devolvia o candle das 13:00, descartado por estar
+fora da faixa ("recebidos=0"), a cada 60 s, sem nunca fechar a lacuna. Consulta
+pública somente leitura confirmou a semântica atual: a API devolve os últimos
+`count` candles abertos **antes** de `end`. O mesmo padrão aparece na sessão de
+06/11 (`recebidos=0` repetido).
+
+Mudança mínima: `executor._send_next_history_range` e
+`pipeline._fetch_candles_for_symbol` passam a enviar
+`end = início do último candle + timeframe - 1`, como `training_history.py` já
+fazia. Faixa pedida, filtro por epoch, descarte de candles abertos, validação
+OHLC, correlação por `req_id`, persistência e o intervalo de 60 s entre
+tentativas não mudaram. Regressões em `tests/test_history_recovery.py` simulam a
+semântica observada e falham no código anterior.
+
 ## Referência de integridade vigente
 
 Esta tabela substitui a de 15/10/2026 como referência para
@@ -95,11 +114,11 @@ Esta tabela substitui a de 15/10/2026 como referência para
 | `indicators.py` | `dec0ee29f5bc5c7ba82e6d4c0f3c5b4c5f88ff1169bf4c1e2ce981a1a932217e` |
 | `config.py` | `84481391cbe0c9d2e57e31bdd387de355a29254a4619e04de31fba7a6142a4bc` |
 | `collector.py` | `7e82ef5d6771e73312c4f28afdfe675b73fdd76fdd5be1769e2d85cacdb2e8ee` |
-| `pipeline.py` | `ad6c315541645d35e807e2d7f98bfb82aa9f9bc32369f34191e2e7c4413960b8` |
+| `pipeline.py` | `19b4657140aeaea19b8ed2f035e74139f459e72c83a6d3dfd5f80b35331af2c7` |
 | `market_data.py` | `df5170f7dca203d7e37a55a05f77b9e5077f27e1b5de33377e3b451ba349cb62` |
 | `asset_history.py` | `f26c39d4c5947f8206a2537fbdffe9d4d08e28794dee065d0fa783c7c17a43aa` |
 | `market_calendar.py` | `a4f6218e78164520a61afe964d458aa220377d85120578dd6c640001420339ac` |
-| `executor.py` | `68f7a0d54968c247ffa61ca8aca370db774db071a6ff1aa2b5220f2a3c7a97a3` |
+| `executor.py` | `0ee26ce8ad66bb5d21e10a22739a14d383911dea7aac8e103ed4555ad2d8a8fa` |
 | `api_keepalive.py` | `10353f5c9e7519b9e72f4ea62900f1d1ceed91b8e3d22ec688c8dd431b4b1a04` |
 | `request_throttle.py` | `f0f9d9e296d9a14ebb08afe6c5c5664ea662a6e769505f0cb49c9aec9faf12c2` |
 | `deriv_session.py` | `894dd6e5b09fe6e459d3fbcadd7705894fb873a4a0acfadd4ad11d107d8f7a48` |

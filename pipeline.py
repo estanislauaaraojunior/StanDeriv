@@ -615,7 +615,9 @@ def _fetch_candles_for_symbol(symbol: str, start_epoch: int, end_epoch: int) -> 
     response = _websocket_request({
         "ticks_history": symbol,
         "start": start_epoch,
-        "end": end_epoch,
+        # Fim do intervalo do último candle: com end == início dele, a API
+        # devolve somente candles anteriores e o último da faixa nunca chega.
+        "end": end_epoch + CANDLE_TIMEFRAME_SEC - 1,
         "count": min(count, 1000),
         "style": "candles",
         "granularity": CANDLE_TIMEFRAME_SEC,
