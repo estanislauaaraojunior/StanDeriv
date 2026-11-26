@@ -558,7 +558,8 @@ def test_initial_training_failure_starts_only_bootstrap_retrain(monkeypatch, tmp
     assert captured['bot_run'] is True
 
 
-def test_ai_mode_selects_one_trending_symbol_before_incremental_history(monkeypatch, tmp_path):
+@pytest.mark.parametrize('isolated,expected', [(False, 'JD75'), (True, 'READY')])
+def test_ai_mode_selects_one_trending_symbol_before_incremental_history(monkeypatch, tmp_path, isolated, expected):
     """Garante que IA seleciona o melhor ativo e só então atualiza o histórico incremental dele."""
     calls = []
     captured = {'symbol': 'R_100', 'bot_run': False}
@@ -600,7 +601,7 @@ def test_ai_mode_selects_one_trending_symbol_before_incremental_history(monkeypa
     def wait_symbols(**kwargs):
         """Confirma seleção de apenas um ativo por tendência."""
         calls.append(('wait_symbols', kwargs))
-        return ['JD75']
+        return ['JD75', 'READY']
 
     def set_symbol(symbol):
         """Atualiza o símbolo runtime simulado."""
@@ -638,11 +639,25 @@ def test_ai_mode_selects_one_trending_symbol_before_incremental_history(monkeypa
     monkeypatch.setattr(pipeline, '_check_market_switch', lambda: None)
     monkeypatch.setattr(pipeline.threading, 'Thread', FakeThread)
 
+    import config
+    monkeypatch.setattr(config, 'USE_AI_MODEL', True)
+    monkeypatch.setattr(config, 'USE_WEIGHTED_SIGNAL', not isolated)
+    monkeypatch.setattr(config, 'PRICE_ACTION_FILTER', False)
+    monkeypatch.setattr(config, 'CANDLE_PATTERN_FILTER', False)
+    monkeypatch.setattr(pipeline, '_first_live_symbol_with_compatible_model', lambda candidates: '')
+    prioritize = Mock(return_value=['READY', 'JD75'])
+    monkeypatch.setattr(pipeline, '_prioritize_training_candidates', prioritize)
+    monkeypatch.setattr(pipeline, '_training_registry', lambda: Mock(activate=Mock(return_value=False)))
+    monkeypatch.setattr(pipeline, '_request_rejected_canary_switch', lambda **_kwargs: False)
+
     pipeline._main_session({'lock': Mock()})
 
     assert ('wait_symbols', {'no_scan': False, 'limit': pipeline._TOP_TRENDING_SYMBOLS}) in calls
-    assert ('set_symbol', 'JD75') in calls
-    assert ('history', 'JD75') in calls
+    # Modo combinado (900 s) mantém o primeiro do scanner, como na homologação;
+    # só a IA isolada reordena por prontidão de dados.
+    assert prioritize.called is isolated
+    assert ('set_symbol', expected) in calls
+    assert ('history', expected) in calls
     assert captured['bot_run'] is True
 
 

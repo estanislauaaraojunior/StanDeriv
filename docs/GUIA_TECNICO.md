@@ -132,7 +132,13 @@ rótulos. Preserve revisão, isolamento por ativo/política e compactação de I
 antigos. `readiness_capacity` reutiliza as partições temporais do treinador,
 sem ajustar modelos. Consulte `tests/test_training_scheduler_policy.py` e
 `tests/test_training_candidate_selection.py` para janela cheia, retomada,
-capacidade e transferência do bootstrap para candidato apto.
+capacidade e transferência do bootstrap para candidato apto. A priorização e as
+trocas por prontidão valem só para a IA isolada; nos modos combinados de 900 s
+a seleção homologada do scanner é preservada (regressões em
+`tests/test_training_candidate_selection.py` e `tests/test_market_failover.py`).
+`tests/test_training_diagnostic_cache.py` cobre progresso corrompido e cache de
+diagnósticos inválidos; `tests/test_training_snapshot_cleanup.py`, a remoção da
+cópia de preços dos snapshots de treino.
 
 `training_registry.py` guarda bundles aprovados em `.training_inputs/models/`,
 por símbolo/hash; a ativação valida o payload antes da cópia. Consulte

@@ -301,3 +301,36 @@ def test_executor_buy_path_requires_full_canary_and_remains_demo_only(tmp_path, 
     assert proposal['proposal'] == 1 and 'buy' not in proposal
     assert proposal['duration'] == 15 and proposal['duration_unit'] == 'm'
     assert bot._phase == 'proposal'
+
+
+def test_unverifiable_proof_does_not_reject_valid_saved_canary(tmp_path):
+    """Relógio atrás de trained_at ou metadados incompletos não viram reprovação."""
+    path = tmp_path / 'shadow.json'
+    first = tracker(path)
+    assert settle(first, 0) == 'settled'
+    canary_file = next((tmp_path / 'shadow.json.canary').glob('*.json'))
+    before = canary_file.read_bytes()
+
+    # trained_at no futuro em relação ao relógio atual: prova não verificável.
+    skewed = create_monitor(path, evidence=evidence(), now=lambda: ENTRY - 1_000, **IDENTITY)
+    assert not isinstance(skewed, ParallelShadow)
+    assert skewed.policy_reason == 'historical_holdout_not_verified'
+    assert not skewed.rejected
+    assert observe(skewed, ENTRY + 900) == 'pending'
+    assert skewed.settle_tick(epoch=ENTRY + 1800, price=101) != 'rejected'
+    assert canary_file.read_bytes() == before
+
+    # Com a prova verificável de novo, a mesma tentativa é retomada.
+    resumed = tracker(path)
+    assert isinstance(resumed, ParallelShadow) and not resumed.rejected
+    assert len(resumed.canary.state['results']) == 1
+
+
+def test_unverifiable_proof_keeps_persisted_rejection_terminal(tmp_path):
+    path = tmp_path / 'shadow.json'
+    monitor = tracker(path)
+    for index in range(2):
+        settle(monitor, index, correct=False)
+    assert monitor.rejected
+    skewed = create_monitor(path, evidence=evidence(), now=lambda: ENTRY - 1_000, **IDENTITY)
+    assert skewed.rejected

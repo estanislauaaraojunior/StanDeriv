@@ -2624,6 +2624,18 @@ def _training_status(diagnostic):
     return diagnostic
 
 
+def _training_progress_revision(symbol):
+    """Revisão do progresso do ativo; ``None`` quando progress.json está inválido.
+
+    Um arquivo corrompido não pode derrubar a espera por ticks nem o retreino:
+    o diagnóstico passa a ``invalid_data`` e o cache usa a mesma marca ``None``.
+    """
+    try:
+        return _training_progress().observe(symbol, [])['revision']
+    except (ValueError, OSError):
+        return None
+
+
 def _diagnose_training_symbol(symbol):
     """Prepara somente a IA do candidato, sem mudar símbolo ou sockets operacionais."""
     import tempfile
@@ -2634,7 +2646,7 @@ def _diagnose_training_symbol(symbol):
     now = time.monotonic()
     if cached and now - cached[0] < 60:
         # Um treino concluído em outra thread invalida o progresso anterior.
-        if cached[1].get('revision') == _training_progress().observe(symbol, [])['revision']:
+        if cached[1].get('revision') == _training_progress_revision(symbol):
             return _training_status(cached[1])
     try:
         provider = _training_history_provider()
@@ -2674,8 +2686,11 @@ def _diagnose_training_symbol(symbol):
             session = None
         diagnostic['feed'] = feed_diagnostics(Path(TICKS_CSV).resolve().parent / 'pipeline.log', session)
     except Exception as exc:
+        # A revisão acompanha o diagnóstico inválido para que o cache de 60 s seja
+        # reaproveitado em vez de repetir a preparação e a recuperação pública.
         diagnostic = dict(stage='invalid_data', symbol=symbol, reason=safe_detail(exc),
-                          labelable_contracts=0, required_contracts=minimum_training_rows())
+                          labelable_contracts=0, required_contracts=minimum_training_rows(),
+                          revision=_training_progress_revision(symbol))
     _training_readiness_cache[key] = (time.monotonic(), diagnostic)
     return _training_status(diagnostic)
 
@@ -2717,7 +2732,9 @@ def _maybe_request_training_candidate(*, known_model_missing=False):
     global _training_survey_at, _training_survey_offset, _training_next_symbol, _market_switch_reason
     global _training_rotation_allowed
     import config as _cfg
-    if not _cfg.USE_AI_MODEL:
+    if not _cfg.USE_AI_MODEL or model_timeframe_sec() == CANDLE_TIMEFRAME_SEC:
+        # Trocas por prontidão são exclusivas da IA isolada; os modos combinados
+        # mantêm a seleção e o orçamento de trocas homologados.
         return
     if not _training_rotation_allowed:
         # Só libera a preparação alternativa depois da reconciliação persistida.
@@ -2902,6 +2919,8 @@ def _run_training(
         _write_pipeline_status(training=dict(stage='invalid_data', symbol=symbol, reason=safe_detail(exc)))
         print(f"[PIPELINE] Erro ao construir dataset: {safe_detail(exc)}")
         return False, None
+    finally:
+        _discard_snapshot_bulk(prepared_dir)
 
     _write_pipeline_status(training=dict(stage='training', symbol=symbol, labelable_contracts=n))
     print(
@@ -2965,6 +2984,28 @@ def _run_training(
         return False, None
 
     return True, metrics
+
+
+def _discard_snapshot_bulk(prepared_dir) -> None:
+    """Remove a cópia de preços do snapshot de treino, preservando a procedência.
+
+    O dataset já foi montado; ``prices.csv`` (dezenas de MB por tentativa) não é
+    mais lido. ``*.preparation.json`` guarda hashes, quarentena e vetos e fica.
+    Pastas que ficarem vazias (destino de uma preparação que falhou antes da base
+    independente) são removidas. Falhas de limpeza não interrompem o treino.
+    """
+    base = Path(prepared_dir)
+    for folder in (base, base.with_name(base.name + '-independent')):
+        try:
+            if not folder.is_dir():
+                continue
+            for item in folder.iterdir():
+                if item.is_file() and not item.name.endswith('.preparation.json'):
+                    item.unlink()
+            if not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError as exc:
+            print(f'[PIPELINE] Não foi possível limpar o snapshot {folder.name}: {safe_detail(exc)}')
 
 
 def _safe_symbol_slug(symbol: str) -> str:
@@ -3777,10 +3818,15 @@ def _main_session(resources, forced_symbol=None) -> None:
             )
             if not candidates:
                 return
-            reserved = '' if args.force_retrain else _first_live_symbol_with_compatible_model(candidates)
-            prioritized = [] if reserved else _prioritize_training_candidates(candidates)
-            detected = reserved or (prioritized or candidates)[0]
-            _training_survey_at = time.monotonic()
+            if model_timeframe_sec() != CANDLE_TIMEFRAME_SEC:
+                # Só a IA isolada (300/900) reordena candidatos por prontidão de dados.
+                reserved = '' if args.force_retrain else _first_live_symbol_with_compatible_model(candidates)
+                prioritized = [] if reserved else _prioritize_training_candidates(candidates)
+                detected = reserved or (prioritized or candidates)[0]
+                _training_survey_at = time.monotonic()
+            else:
+                # Modos combinados de 900 s preservam a escolha homologada do scanner.
+                detected = candidates[0]
             selected_by_ai_trend_scan = True
         else:
             detected = _detect_trending_symbol(no_scan=args.no_scan)

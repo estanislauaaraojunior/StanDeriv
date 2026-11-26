@@ -298,6 +298,16 @@ def create_monitor(path, *, evidence=None, now=time.time, **identity):
     if proof and datetime.fromisoformat(proof['trained_at']).timestamp() > now():
         proof = None
     if target.exists():
+        if proof is None:
+            saved = saved_canary(path, **identity)
+            if saved is None or saved.get('rejected_at_epoch') is None:
+                # Prova histórica momentaneamente não verificável (relógio,
+                # metadados incompletos): não é reprovação. O arquivo canary fica
+                # intacto e é retomado quando a prova voltar a conferir; até lá
+                # vale somente a validação original.
+                legacy.policy_reason = 'historical_holdout_not_verified'
+                return legacy
+            # Reprovação persistida ou arquivo danificado continuam terminais.
         return ParallelShadow(legacy, CanaryMonitor(path, evidence=proof, now=now, **identity))
     if legacy.approved or legacy.rejected:
         return legacy

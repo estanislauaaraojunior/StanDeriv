@@ -87,8 +87,9 @@ avaliações de entrada permanecem bloqueadas enquanto o histórico está incomp
 
 O Modelo de Treino acompanha identidades de rótulos por símbolo em
 `training_policy.py`, inclusive quando o total da janela móvel fica constante.
-O pipeline prioriza candidatos com capacidade temporal verificada e pode ceder
-um bootstrap sem modelo a outro candidato pronto. `training_registry.py`
+Somente na IA isolada (300/900), o pipeline prioriza candidatos com capacidade
+temporal verificada e pode ceder um bootstrap sem modelo a outro candidato
+pronto; os modos combinados de 900 s mantêm a seleção homologada do scanner. `training_registry.py`
 preserva bundles compatíveis por símbolo/hash em `.training_inputs/models/`;
 `shadow_monitor.py` retoma estados completos da identidade exata a partir de
 `shadow_state.json.states/`. A seleção por dados não interrompe um bundle ativo

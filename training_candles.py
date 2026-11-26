@@ -22,6 +22,8 @@ class TrainingCandleBuffer:
         self.symbol, self.timeframe, self.now = symbol, timeframe, now
         self._lock = threading.RLock()
         self._candles = {}
+        # Epochs cujo OHLC veio do histórico público oficial (autoritativo).
+        self._official = set()
         self._excluded = []
         self._current = None
         self._last_tick = 0
@@ -48,6 +50,7 @@ class TrainingCandleBuffer:
                 and row['timeframe'] == self.timeframe
                 and row['epoch'] + self.timeframe <= boundary
             }
+            official = set(candles)
             ticks = [row for row in records if row['kind'] == 'tick' and row['epoch'] <= now]
             epochs = [row['epoch'] for row in ticks]
             gaps = [0]
@@ -74,10 +77,16 @@ class TrainingCandleBuffer:
             # Uma nova página nunca remove quarentenas já observadas nesta sessão.
             self._excluded = sorted(set(self._excluded) | set(excluded))
             for epoch, candle in self._candles.items():
+                if epoch in official:
+                    # O OHLC oficial substitui a vela montada ao vivo; divergência
+                    # de abertura/extremos por conexão no meio da vela ou tick
+                    # filtrado não justifica quarentena.
+                    continue
                 if epoch in candles and candles[epoch] != candle:
                     self._excluded = sorted(set(self._excluded) | {epoch})
                 else:
                     candles[epoch] = candle
+            self._official = (self._official | official) & set(candles)
             self._candles = {
                 epoch: candles[epoch] for epoch in sorted(candles)[-500:]
                 if not self._overlaps_exclusion(epoch, epoch + self.timeframe - 1)
@@ -110,7 +119,9 @@ class TrainingCandleBuffer:
                 if (start == candle['epoch'] + self.timeframe
                         and not self._overlaps_exclusion(candle['epoch'], start)):
                     confirmed = self._candles.get(candle['epoch'])
-                    if confirmed is not None and confirmed != candle:
+                    if confirmed is not None and candle['epoch'] in self._official:
+                        pass  # Mantém o OHLC oficial já confirmado.
+                    elif confirmed is not None and confirmed != candle:
                         self._excluded = sorted(set(self._excluded) | {candle['epoch']})
                         self.needs_refresh = True
                     else:

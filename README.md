@@ -318,7 +318,9 @@ HistGradientBoosting e XGBoost são comparados no mesmo snapshot; ajuste,
 calibração e seleção ficam separados do holdout final por embargo. ROC-AUC é
 uma métrica. Dados suficientes permitem tentar treino, sem garantir aprovação.
 
-O pipeline prepara snapshots por ativo em `.training_inputs/` junto ao dataset, sem substituir `ticks_v2.csv`. Registros inválidos ou conflitantes com época conhecida ficam no relatório de quarentena; amostras que atravessem suas épocas são vetadas. Corrupção atribuível ao ativo sem época segura bloqueia a preparação. O histórico OHLC válido pode aquecer as features apesar de lacunas anteriores de ticks; entrada e vencimento ainda exigem ticks identificados e continuidade dentro do contrato. Candles derivados de ticks com cobertura incompleta não preenchem lacunas. A nova política é versionada nos metadados e exige reconstrução/reavaliação dos artefatos anteriores, sem promover modelos automaticamente.
+O pipeline prepara snapshots por ativo em `.training_inputs/` junto ao dataset, sem substituir `ticks_v2.csv`. Registros inválidos ou conflitantes com época conhecida ficam no relatório de quarentena; amostras que atravessem suas épocas são vetadas. Corrupção atribuível ao ativo sem época segura bloqueia a preparação. O histórico OHLC válido pode aquecer as features apesar de lacunas anteriores de ticks; entrada e vencimento ainda exigem ticks identificados e continuidade dentro do contrato. Candles derivados de ticks com cobertura incompleta não preenchem lacunas. A nova política é versionada nos metadados e exige reconstrução/reavaliação dos artefatos anteriores, sem promover modelos automaticamente. Depois de montar o dataset, o pipeline remove o `prices.csv` do snapshot de treino e mantém apenas `prices.csv.preparation.json` (hashes, quarentena e vetos); pastas criadas antes dessa correção não são apagadas automaticamente.
+
+No buffer privado da IA isolada, o OHLC oficial do histórico público substitui a vela montada ao vivo quando os dois divergem (conexão no meio da vela, tick filtrado), sem quarentena. Conflitos entre duas versões derivadas de ticks continuam em quarentena. Se a prova histórica do canary não puder ser verificada momentaneamente, o canary salvo fica intacto e vale apenas a validação original; reprovação persistida ou arquivo danificado continuam terminais.
 
 Para recuperar um snapshot offline em **diretório novo**, sem treinar ou conectar:
 
@@ -437,9 +439,11 @@ também há rótulos ainda não usados suficientes para o lote de retreino. Ter
 lacunas históricas antes de existir modelo aprovado ou executor iniciado,
 sem consumir esses rótulos durante o diagnóstico.
 
-Entre os candidatos elegíveis do scanner existente, a IA prioriza dados prontos
-e capacidade para pelo menos 30 contratos sem sobreposição na validação e no
-teste. Esse limite superior não garante sinais nem aprovação. Durante a espera
+Somente na IA isolada (300/900), entre os candidatos elegíveis do scanner
+existente, a IA prioriza dados prontos e capacidade para pelo menos 30 contratos
+sem sobreposição na validação e no teste. Nos modos combinados de 900 segundos
+(IA com Score, Price Action ou padrões), a sessão usa o primeiro candidato do
+scanner e não troca de mercado por prontidão de dados, como na homologação. Esse limite superior não garante sinais nem aprovação. Durante a espera
 sem modelo, consulta até dois alternativos por rodada, com intervalo mínimo de
 60 segundos entre rodadas; só pede troca quando outro candidato estiver pronto
 para treino ou tiver um bundle compatível. A sessão anterior é encerrada antes

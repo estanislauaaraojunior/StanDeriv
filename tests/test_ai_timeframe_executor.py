@@ -242,6 +242,53 @@ def test_private_live_conflict_cannot_replace_confirmed_ohlc(private_buffer):
     assert private_buffer.window(ENTRY + 300) == []
 
 
+def _official_with_entry(close):
+    rows = cached_candles(count=FEATURE_WINDOW + 1)
+    rows[-1].update(price=close, open=100., high=max(100., close), low=min(100., close))
+    return rows
+
+
+def test_official_ohlc_replaces_divergent_live_candle_without_quarantine(private_buffer, monkeypatch):
+    """Vela ao vivo divergente (conexão no meio da vela, tick filtrado) cede ao OHLC oficial."""
+    private_buffer.feed(ENTRY, 100.)
+    for offset in range(5, 300, 5):
+        private_buffer.feed(ENTRY + offset, 100.)
+    assert private_buffer.feed(ENTRY + 300, 100.)
+    assert private_buffer._candles[ENTRY] == candle(ENTRY)
+    official = _official_with_entry(100.5)
+    monkeypatch.setattr(private_buffer.history, 'cached_records',
+                        lambda _symbol: (official, {'excluded_epochs': []}))
+    private_buffer.now = lambda: ENTRY + 300
+
+    assert private_buffer.refresh()
+    assert ENTRY not in private_buffer._excluded
+    assert private_buffer._candles[ENTRY]['close'] == 100.5
+    assert len(private_buffer.window(ENTRY + 300)) == FEATURE_WINDOW
+
+
+def test_live_close_keeps_confirmed_official_ohlc_without_quarantine(tmp_path, monkeypatch):
+    buffer = TrainingCandleBuffer(tmp_path / 'private-history', 'R_100', now=lambda: ENTRY + 300)
+    monkeypatch.setattr(buffer.history, 'cached_records',
+                        lambda _symbol: (_official_with_entry(101.), {'excluded_epochs': []}))
+    assert buffer.refresh()
+    buffer.feed(ENTRY, 100.)
+    for offset in range(5, 300, 5):
+        buffer.feed(ENTRY + offset, 100.)
+
+    buffer.feed(ENTRY + 300, 100.)
+    assert ENTRY not in buffer._excluded
+    assert buffer._candles[ENTRY]['close'] == 101.
+    assert len(buffer.window(ENTRY + 300)) == FEATURE_WINDOW
+
+
+def test_cache_quarantine_is_still_respected(tmp_path, monkeypatch):
+    buffer = TrainingCandleBuffer(tmp_path / 'private-history', 'R_100', now=lambda: ENTRY)
+    monkeypatch.setattr(buffer.history, 'cached_records',
+                        lambda _symbol: (cached_candles(), {'excluded_epochs': [BASE + 600]}))
+    assert buffer.refresh()
+    assert buffer.window(ENTRY) == []
+
+
 def test_private_snapshot_aggregates_only_fully_observed_tick_candles(tmp_path, monkeypatch):
     buffer = TrainingCandleBuffer(tmp_path, 'R_100', now=lambda: ENTRY)
     ticks = [dict(epoch=BASE + i, symbol='R_100', kind='tick', timeframe=0,

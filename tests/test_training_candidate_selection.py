@@ -7,6 +7,17 @@ import pytest
 import pipeline
 
 
+@pytest.fixture
+def isolated_ai(monkeypatch):
+    """Perfil 300/900: IA habilitada e geradores técnicos desligados."""
+    import config
+    monkeypatch.setattr(config, 'USE_AI_MODEL', True)
+    monkeypatch.setattr(config, 'USE_WEIGHTED_SIGNAL', False)
+    monkeypatch.setattr(config, 'PRICE_ACTION_FILTER', False)
+    monkeypatch.setattr(config, 'CANDLE_PATTERN_FILTER', False)
+    assert pipeline.model_timeframe_sec() == 300
+
+
 def test_ready_candidate_precedes_larger_but_overlapping_dataset(monkeypatch):
     diagnostics = {
         'LARGE': dict(ready_for_training=False, labelable_contracts=1000,
@@ -21,7 +32,7 @@ def test_ready_candidate_precedes_larger_but_overlapping_dataset(monkeypatch):
 
 
 @pytest.mark.parametrize('model_available,rotation_allowed', [(True, True), (False, False)])
-def test_shadow_or_pending_reconciliation_prevents_data_rotation(tmp_path, monkeypatch, model_available, rotation_allowed):
+def test_shadow_or_pending_reconciliation_prevents_data_rotation(tmp_path, monkeypatch, isolated_ai, model_available, rotation_allowed):
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
     monkeypatch.setattr(pipeline, '_load_latest_final_metrics', lambda: {'eligible': True} if model_available else None)
     monkeypatch.setattr(pipeline, '_training_rotation_allowed', rotation_allowed)
@@ -33,7 +44,7 @@ def test_shadow_or_pending_reconciliation_prevents_data_rotation(tmp_path, monke
     scanner.assert_not_called()
 
 
-def test_data_rotation_resumes_only_after_persisted_reconciliation(tmp_path, monkeypatch):
+def test_data_rotation_resumes_only_after_persisted_reconciliation(tmp_path, monkeypatch, isolated_ai):
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
     monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'FIRST')
     monkeypatch.setattr(pipeline, '_training_rotation_allowed', False)
@@ -52,7 +63,7 @@ def test_data_rotation_resumes_only_after_persisted_reconciliation(tmp_path, mon
 
 
 @pytest.mark.parametrize('saved', [[], {'symbol': 'FIRST'}, {'symbol': 'OTHER', 'active_contract': None}])
-def test_missing_or_unrelated_contract_state_does_not_authorize_rotation(tmp_path, monkeypatch, saved):
+def test_missing_or_unrelated_contract_state_does_not_authorize_rotation(tmp_path, monkeypatch, isolated_ai, saved):
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
     monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'FIRST')
     monkeypatch.setattr(pipeline, '_training_rotation_allowed', False)
@@ -64,7 +75,7 @@ def test_missing_or_unrelated_contract_state_does_not_authorize_rotation(tmp_pat
     scanner.assert_not_called()
 
 
-def test_waiting_symbol_yields_only_to_ready_candidate_and_preserves_runtime(monkeypatch):
+def test_waiting_symbol_yields_only_to_ready_candidate_and_preserves_runtime(monkeypatch, isolated_ai):
     monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'WAITING')
     monkeypatch.setattr(pipeline, '_load_latest_final_metrics', lambda: None)
     monkeypatch.setattr(pipeline, '_detect_top_trending_symbols', lambda **kwargs: ['OTHER', 'READY'])
@@ -85,10 +96,12 @@ def test_waiting_symbol_yields_only_to_ready_candidate_and_preserves_runtime(mon
         pipeline._market_switch.clear()
 
 
-def test_no_ready_candidate_keeps_collecting_and_surveys_are_bounded(monkeypatch):
+def test_no_ready_candidate_keeps_collecting_and_surveys_are_bounded(monkeypatch, isolated_ai):
     monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'WAITING')
     monkeypatch.setattr(pipeline, '_load_latest_final_metrics', lambda: None)
-    monkeypatch.setattr(pipeline, '_detect_top_trending_symbols', lambda **kwargs: ['ONE', 'TWO', 'THREE'])
+    monkeypatch.setattr(pipeline, '_training_survey_seen', set())
+    monkeypatch.setattr(pipeline, '_detect_top_trending_symbols', lambda **kwargs: [
+        s for s in ['ONE', 'TWO', 'THREE'] if s not in kwargs.get('exclude_symbols', set())])
     monkeypatch.setattr(pipeline, '_first_live_symbol_with_compatible_model', lambda candidates: '')
     visited = []
     monkeypatch.setattr(pipeline, '_diagnose_training_symbol', lambda symbol:
@@ -106,6 +119,27 @@ def test_no_ready_candidate_keeps_collecting_and_surveys_are_bounded(monkeypatch
     pipeline._maybe_request_training_candidate()
     assert 'THREE' in visited
     assert not pipeline._market_switch.is_set()
+
+
+@pytest.mark.parametrize('flag', ['USE_WEIGHTED_SIGNAL', 'PRICE_ACTION_FILTER', 'CANDLE_PATTERN_FILTER'])
+def test_combined_modes_never_rotate_market_for_training_readiness(tmp_path, monkeypatch, flag):
+    """Modos de 900 s preservam a seleção homologada: sem consulta nem troca por prontidão."""
+    import config
+    monkeypatch.setattr(config, 'USE_AI_MODEL', True)
+    for key in ('USE_WEIGHTED_SIGNAL', 'PRICE_ACTION_FILTER', 'CANDLE_PATTERN_FILTER'):
+        monkeypatch.setattr(config, key, key == flag)
+    assert pipeline.model_timeframe_sec() == config.CANDLE_TIMEFRAME_SEC
+    monkeypatch.setattr(pipeline, 'TICKS_CSV', str(tmp_path / 'ticks.csv'))
+    monkeypatch.setattr(pipeline, '_training_rotation_allowed', True)
+    monkeypatch.setattr(pipeline, '_load_latest_final_metrics', lambda: None)
+    monkeypatch.setattr(pipeline, '_training_survey_at', -1e9)
+    scanner = Mock(side_effect=AssertionError('modo combinado não deve consultar candidatos da IA'))
+    monkeypatch.setattr(pipeline, '_detect_top_trending_symbols', scanner)
+    monkeypatch.setattr(pipeline, '_diagnose_training_symbol', Mock(side_effect=AssertionError('sem diagnóstico')))
+    pipeline._market_switch.clear()
+    pipeline._maybe_request_training_candidate(known_model_missing=True)
+    assert not pipeline._market_switch.is_set()
+    scanner.assert_not_called()
 
 
 def test_actual_new_ids_trigger_retrain_even_when_total_is_unchanged(monkeypatch):
