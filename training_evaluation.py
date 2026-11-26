@@ -153,7 +153,7 @@ def simulate(df, direction, confidence, *, mode, payout, quotes=None, confidence
                 blockers['low_confidence'] += 1
                 continue
             score = config.AI_TECH_WEIGHT*min(1., abs(row.tech_score)) + config.AI_MODEL_WEIGHT*confidence[i]
-            if mode == 'combined' and score < config.AI_SCORE_MIN:
+            if mode == 'combined' and not model_only and score < config.AI_SCORE_MIN:
                 blockers['low_combined_score'] += 1
                 blocker_values['low_combined_score']['combined_score'].append(score)
                 blocker_values['low_combined_score']['confidence'].append(confidence[i])

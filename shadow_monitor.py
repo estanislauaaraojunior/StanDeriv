@@ -1,6 +1,7 @@
 """Validação forward de previsões sem compras ou mutação do risco financeiro."""
 import math
 import json
+import hashlib
 from pathlib import Path
 
 import config
@@ -40,30 +41,86 @@ class ShadowMonitor:
         }
 
     def _load_state(self):
-        if not self.path.exists():
-            return self._empty_state()
-        try:
-            previous = json.loads(self.path.read_text())
-        except (OSError, ValueError):
-            previous = None
-        if (isinstance(previous, dict)
-                and previous.get('schema_version') == self.SCHEMA_VERSION
-                and all(previous.get(key) == value for key, value in self.identity.items())
-                and isinstance(previous.get('results'), list)):
-            previous.setdefault('pending', None)
-            previous.setdefault('approved_at_epoch', None)
-            previous.setdefault('rejected_at_epoch', None)
-            previous.setdefault('archives', [])
-            return previous
+        had_active_state = self.path.exists()
+        previous = self._read_state(self.path)
+        if self._matches_identity(previous):
+            return self._state_defaults(previous)
+
+        # Preserve the complete outgoing identity before replacing the active file.
+        # The active file remains authoritative while that identity is running.
+        self._preserve_state(previous)
         archives = previous.get('archives', []) if isinstance(previous, dict) else []
+        if not isinstance(archives, list):
+            archives = []
         if isinstance(previous, dict) and previous.get('model_id'):
             archives = [*archives, {
                 key: previous.get(key) for key in
                 ('symbol', 'model_id', 'timeframe_sec', 'duration_sec', 'results', 'approved_at_epoch')
             }]
-        state = self._empty_state(archives)
-        self._save_state(state)
+
+        saved = self._read_state(self._saved_state_path())
+        if self._matches_identity(saved):
+            state = self._state_defaults(saved)
+            if previous is not None:
+                state['archives'] = archives[-20:]
+        else:
+            state = self._empty_state(archives)
+        if had_active_state or self._matches_identity(saved):
+            self._save_state(state)
         return state
+
+    @staticmethod
+    def _read_state(path):
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+
+    @classmethod
+    def saved_state(cls, path, *, symbol, model_id, timeframe_sec, duration_sec):
+        """Consulta uma identidade exata sem trocar, criar ou gravar estado ativo."""
+        identity = dict(schema_version=cls.SCHEMA_VERSION, symbol=str(symbol),
+                        model_id=str(model_id), timeframe_sec=int(timeframe_sec),
+                        duration_sec=int(duration_sec))
+        encoded = json.dumps(identity, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        path = Path(path)
+        saved = path.with_name(path.name + '.states') / (hashlib.sha256(encoded).hexdigest() + '.json')
+        for candidate in (path, saved):
+            state = cls._read_state(candidate)
+            if (isinstance(state, dict) and isinstance(state.get('results'), list)
+                    and all(state.get(key) == value for key, value in identity.items())):
+                return state
+        return None
+
+    def _matches_identity(self, state):
+        return (isinstance(state, dict)
+                and state.get('schema_version') == self.SCHEMA_VERSION
+                and all(state.get(key) == value for key, value in self.identity.items())
+                and isinstance(state.get('results'), list))
+
+    @staticmethod
+    def _state_defaults(state):
+        state.setdefault('pending', None)
+        state.setdefault('approved_at_epoch', None)
+        state.setdefault('rejected_at_epoch', None)
+        state.setdefault('archives', [])
+        return state
+
+    def _saved_state_path(self, state=None):
+        state = {'schema_version': self.SCHEMA_VERSION, **self.identity} if state is None else state
+        identity = {key: state[key] for key in ('schema_version', *self.identity)}
+        encoded = json.dumps(identity, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        key = hashlib.sha256(encoded).hexdigest()
+        return self.path.with_name(self.path.name + '.states') / (key + '.json')
+
+    def _preserve_state(self, state):
+        if (not isinstance(state, dict)
+                or not all(key in state for key in ('schema_version', *self.identity))
+                or not isinstance(state.get('results'), list)):
+            return
+        destination = self._saved_state_path(state)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(destination, state)
 
     def _save_state(self, state=None):
         write_json_atomic(self.path, self.state if state is None else state)

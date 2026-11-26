@@ -546,19 +546,19 @@ def test_startup_minimum_survives_temporal_embargo():
 def test_training_history_is_limited_to_configured_aligned_candles(monkeypatch):
     """Garante que o dataset usa no máximo a janela de treino configurada."""
     import dataset_builder
-    from model_contract import minimum_history_candles
+    from training_data import TRAINING_HISTORY_DAYS
     timeframe = config.CANDLE_TIMEFRAME_SEC
     latest = 1_800_000_000 // timeframe * timeframe
     records = [
         {'epoch': latest - offset * timeframe, 'symbol': 'R_100', 'kind': 'candle'}
-        for offset in range(minimum_history_candles() + 20)
+        for offset in range(TRAINING_HISTORY_DAYS * 86400 // timeframe + 20)
     ]
 
     selected = dataset_builder._limit_training_history(records)
 
-    assert len(selected) == 672
+    assert len(selected) == 2688
     assert selected[0]['epoch'] == latest
-    assert selected[-1]['epoch'] == latest - 671 * timeframe
+    assert selected[-1]['epoch'] == latest - 2687 * timeframe
 
 
 def test_training_starts_at_operational_temporal_minimum(monkeypatch):
@@ -677,8 +677,10 @@ def test_collector_backfills_while_live_ticks_continue(tmp_path, monkeypatch):
 def test_complete_history_ohlc_survives_partial_live_overlap():
     """Garante que o OHLC completo da vela histórica sobrevive à sobreposição parcial com ticks ao vivo."""
     from dataset_builder import _merge_feature_candles
-    historical = dict(epoch=1_800_000_000, kind='candle', open=100, high=110, low=90, price=101)
-    ticks = [dict(epoch=1_800_000_050, price=101), dict(epoch=1_800_000_060, price=102)]
+    historical = dict(epoch=1_800_000_000, kind='candle', timeframe=900,
+                      open=100, high=110, low=90, price=101)
+    ticks = [dict(epoch=1_800_000_050, price=101), dict(epoch=1_800_000_060, price=102),
+             dict(epoch=1_800_000_901, price=102)]
     candles = _merge_feature_candles([historical], ticks)
     assert candles[0]['high'] == 110 and candles[0]['low'] == 90
 

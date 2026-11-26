@@ -37,4 +37,8 @@ dataset_v2.csv.tmp
 payout_quotes.csv
 training_reports/
 .training_candidates/
+.training_inputs/
 shadow_state.json
+shadow_state.json.states/
+shadow_state.json.canary/
+model_metrics.json

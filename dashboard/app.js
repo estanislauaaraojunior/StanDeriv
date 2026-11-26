@@ -679,6 +679,32 @@ function _botOperationalCard(bot = {}, model = {}, riskState = {}, summary = {},
   const minCandles = Math.max(1, Number(bot.min_candles ?? bot.model_feature_window ?? 0));
   const warmupRemaining = Math.max(0, Number(bot.warmup_remaining_candles ?? Math.max(0, minCandles - candleCount)));
   const hasActiveContract = !!activeContract.has_active;
+  const training = bot.training?.symbol === bot.symbol ? bot.training : {};
+
+  if (useTrainedModel && !modelReady) {
+    if (['invalid_data', 'training_error'].includes(training.stage)) {
+      return ['IA BLOQUEADA', 'card-value warning', training.reason || 'Dados inválidos para treinamento'];
+    }
+    if (training.stage === 'insufficient_samples') {
+      return ['AMOSTRAS INSUFICIENTES', 'card-value warning',
+        `${Number(training.labelable_contracts ?? 0)} / ${Number(training.required_contracts ?? 0)} amostras`
+        + ` | ${Number(training.feature_candles ?? 0)} candles válidos`
+        + ` | ${Number(training.tick_gaps ?? 0)} gaps de ticks`];
+    }
+    if (training.stage === 'preparing') {
+      return ['PREPARANDO DADOS', 'card-value warning', 'Validando snapshot do ativo'];
+    }
+    if (training.stage === 'training') {
+      return ['TREINANDO', 'card-value warning', `${Number(training.labelable_contracts ?? 0)} amostras`];
+    }
+    if (training.stage === 'model_rejected') {
+      return ['MODELO REPROVADO', 'card-value warning', (training.reason || 'Critérios de aprovação não atendidos')
+        + (training.next_training_at ? ` | Próximo treino: ${Number(training.labelable_contracts ?? 0)}/${Number(training.next_training_at)} amostras; faltam ${Number(training.remaining_samples)}` : '')];
+    }
+    if (training.stage === 'unchanged_dataset') {
+      return ['AGUARDANDO NOVOS DADOS', 'card-value warning', training.reason];
+    }
+  }
 
   if (pnlPct <= -25) {
     return ['STOP LOSS', 'card-value negative', `PnL: ${pnlPct.toFixed(1)}% — Dia encerrado`];
@@ -692,6 +718,13 @@ function _botOperationalCard(bot = {}, model = {}, riskState = {}, summary = {},
       'card-value warning',
       pauseRemaining > 0 ? `Retoma em ${Math.floor(pauseRemaining/60)}m ${pauseRemaining%60}s` : 'Losses consecutivos',
     ];
+  }
+  if (useTrainedModel && modelReady && bot.shadow?.model_id && !bot.shadow.approved) {
+    const shadow = bot.shadow;
+    const detail = shadow.reason === 'missing_observed_payout'
+      ? 'Aguardando cotação observada para validar previsão'
+      : `${Number(shadow.result_count ?? 0)} / ${Number(shadow.minimum_results ?? 30)} resultados`;
+    return [shadow.reason === 'rejected' ? 'SHADOW REPROVADO' : 'VALIDANDO SHADOW', 'card-value warning', detail];
   }
   if (['collecting', 'starting'].includes(status)) {
     const suffix = minCandles > 0 ? ` | ${candleCount} / ${minCandles} candles` : '';

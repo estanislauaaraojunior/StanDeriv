@@ -39,7 +39,7 @@ def update_status(path, updates, *, owner='', reset=False):
         if new_session:
             state.update(started_at=datetime.now(timezone.utc).isoformat(),
                          stopped_at=None, finished_at=None, returncode=None)
-        if owner == 'pipeline' and state.get('candle_source') == 'executor':
+        if owner == 'pipeline' and state.get('candle_source') in ('executor', 'training_private'):
             for key in _CANDLE_FIELDS:
                 updates.pop(key, None)
         if (owner == 'dashboard' and updates.get('status') == 'starting'

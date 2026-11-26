@@ -311,6 +311,13 @@ def train(dataset_path, output_path, test_ratio = .2, gap_ratio = .02,
                     & (df.entry_epoch < df.expiry_epoch)).all()):
         raise ValueError('símbolo, target ou cronologia inválidos')
     fit, calibration, validation, test = temporal_partitions(df, test_ratio)
+    from training_policy import evaluation_capacity
+    capacities = {name: evaluation_capacity(part) for name, part in
+                  [('validation', validation), ('test', test)]}
+    if min(capacities.values()) < 30:
+        return dict(eligible=False, stage='evaluation_preflight', n_test=len(test),
+                    evaluation_capacity=capacities,
+                    rejection_reasons=['amostra temporal insuficiente: menos de 30 oportunidades independentes na validação/teste'])
     legacy_fit, legacy_calibration = fit, calibration
     # O último período fica fora de toda seleção, incluindo comparação de features.
     development = df[df.expiry_epoch < int(test.feature_start_epoch.iloc[0])]

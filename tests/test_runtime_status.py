@@ -40,6 +40,20 @@ def test_concurrent_updates_keep_independent_fields(tmp_path):
     assert all(state[f'field_{n}']==n for n in range(20))
 
 
+def test_pipeline_preserves_private_ai_candles_until_symbol_changes(tmp_path):
+    path = tmp_path / 'status.json'
+    update_status(path, dict(pid=1, symbol='FX', candle_source='training_private',
+                            candle_count=50, min_candles=50, warmup_remaining_candles=0))
+    result = update_status(path, dict(pid=1, symbol='FX', candle_source='pipeline',
+                           candle_count=0, min_candles=150, warmup_remaining_candles=150), owner='pipeline')
+    assert result['candle_source'] == 'training_private'
+    assert result['candle_count'] == result['min_candles'] == 50
+    assert result['warmup_remaining_candles'] == 0
+    result = update_status(path, dict(pid=1, symbol='OTHER', candle_source='pipeline',
+                           candle_count=0, min_candles=150), owner='pipeline')
+    assert result['candle_count'] == 0 and result['symbol'] == 'OTHER'
+
+
 def test_executor_publishes_actual_buffer_every_time(monkeypatch):
     import executor
     from risk_manager import RiskManager

@@ -59,6 +59,7 @@ import math
 import hashlib
 import secrets
 from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, duration_seconds,
+                            model_timeframe_sec,
                             net_payout_ratio, profitable_proposal, valid_payout_proposal,
                             write_json_atomic, acquire_execution_lock)
 from market_data import read_records, canonicalize
@@ -205,6 +206,10 @@ class DerivBot:
         self._shadow_symbol = ''
         self._shadow_quote_history = None
         self._shadow_quote_mtime = None
+        self._training_candles = None
+        self._training_history_worker = None
+        self._training_history_retry_at = 0.0
+        self._training_history_lock = threading.Lock()
         self._restore_active_contract()
 
 
@@ -282,16 +287,21 @@ class DerivBot:
         self._last_status_write = now
         if 'last_api_error' in updates:
             self._status_api_error = updates['last_api_error']
-        count = len(self._candles)
+        training_only = self._uses_training_candles()
+        minimum = FEATURE_WINDOW if training_only else MIN_CANDLES
+        count = (self._training_candles.candle_count(tick_epoch or int(now))
+                 if training_only and self._training_candles is not None
+                 else (0 if training_only else len(self._candles)))
         status = dict(
             session_id=SESSION_ID, status='running', running=True,
             pid=os.getpid(), symbol=self.symbol, mode='demo' if self.demo else 'real',
             last_seen_at=time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(now)),
             last_loop_at=time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(now)),
-            candle_count=count, min_candles=MIN_CANDLES,
+            candle_count=count, min_candles=minimum,
             model_feature_window=FEATURE_WINDOW,
-            warmup_remaining_candles=max(0, MIN_CANDLES-count),
-            candle_source='executor', last_api_error=self._status_api_error,
+            warmup_remaining_candles=max(0, minimum-count),
+            candle_source='training_private' if training_only else 'executor',
+            last_api_error=self._status_api_error,
             last_decision=self._decision_history[-1] if self._decision_history else {},
             decision_counts=self._decision_counts(),
             use_trained_model=bool(config.USE_AI_MODEL),
@@ -303,6 +313,10 @@ class DerivBot:
             status['last_tick_epoch'] = int(tick_epoch)
             status['last_tick_at'] = time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(int(tick_epoch)))
         status.update(updates)
+        if training_only:
+            status['model_timeframe_sec'] = model_timeframe_sec()
+            if hasattr(self, '_training_callback_timing'):
+                status['training_callback_timing'] = dict(self._training_callback_timing)
         try:
             update_status(_BOT_STATUS_JSON, status, owner='executor', reset=not self._status_initialized)
             self._status_initialized = True
@@ -325,6 +339,10 @@ class DerivBot:
             status["minimum_accuracy"] = float(getattr(monitor, "minimum_accuracy", config.SHADOW_MIN_ACCURACY) or 0.0)
             status["minimum_net_payout"] = float(getattr(monitor, "minimum_net_payout", config.SHADOW_MIN_NET_PAYOUT) or 0.0)
             status["pending"] = bool(getattr(monitor, "state", {}).get("pending")) if hasattr(monitor, "state") else False
+            if hasattr(monitor, 'diagnostics'):
+                status.update(monitor.diagnostics())
+            if hasattr(monitor, 'policy_reason'):
+                status['policy_reason'] = monitor.policy_reason
         status.update(updates)
         self._write_runtime_status(
             tick_epoch=self._last_tick_epoch,
@@ -690,7 +708,11 @@ class DerivBot:
         # Impede duas instâncias financeiras no mesmo workspace, inclusive via CLI.
         if not hasattr(self,'_execution_lock'):
             self._execution_lock=acquire_execution_lock(_STATE_JSON.with_name('executor.lock'))
-        self._preload_candles_from_csv()
+        if self._uses_training_candles():
+            # O cache privado é lido antes de qualquer callback do WebSocket.
+            self._get_training_candles().refresh()
+        else:
+            self._preload_candles_from_csv()
 
         mode = "DEMO" if self.demo else "REAL 💸"
 
@@ -1044,6 +1066,12 @@ class DerivBot:
 
     def _request_missing_history_or_subscribe(self, ws, *, live=False) -> None:
         """Assina ticks se o histórico local já aquece o bot; senão baixa apenas o que falta."""
+        if self._uses_training_candles():
+            if not live:
+                ws.send(json.dumps({'ticks': self.symbol, 'subscribe': 1}))
+                self._history_stream_ready = True
+            self._request_training_history_refresh()
+            return
         if len(self._candles)<MIN_CANDLES:
             if self._history_candles:
                 # Reutiliza a fonte já validada: ler milhões de ticks no callback
@@ -1234,7 +1262,8 @@ class DerivBot:
             return
         if self._last_tick_price and abs(price/self._last_tick_price-1)>=config.TICK_SPIKE_THRESHOLD:
             return
-        if self._last_tick_epoch and epoch-self._last_tick_epoch>MAX_TICK_GAP_SEC:
+        if (not self._uses_training_candles() and self._last_tick_epoch
+                and epoch-self._last_tick_epoch>MAX_TICK_GAP_SEC):
             self._cur_candle_open=None
             calendar = getattr(self, 'market_calendar', None)
             scheduled = (not config.USE_AI_MODEL and calendar is not None
@@ -1274,6 +1303,8 @@ class DerivBot:
                 callback = getattr(self, 'on_shadow_rejected', None)
                 if callback:
                     callback(self.symbol)
+            elif shadow_result in ('settled', 'tie', 'expired_with_gap'):
+                self._publish_shadow_status(model_id=shadow_model_id, reason=shadow_result)
 
         # P9: reiniciar watchdog a cada tick.
         self._reset_watchdog()
@@ -1287,6 +1318,19 @@ class DerivBot:
         if self._open_contract_id and self._buy_timestamp and time.time()-self._buy_timestamp>duration_seconds(self._pending_duration,DURATION_UNIT)+10:
             if self._contract_poll_timer is None:
                 self._poll_contract_result(self._open_contract_id)
+
+        if self._uses_training_candles():
+            started = time.perf_counter()
+            try:
+                self._handle_training_tick(ws, price, epoch)
+            finally:
+                elapsed = time.perf_counter() - started
+                timing = getattr(self, '_training_callback_timing', {})
+                self._training_callback_timing = dict(
+                    last_seconds=elapsed, max_seconds=max(elapsed, timing.get('max_seconds', 0)),
+                    samples=timing.get('samples', 0) + 1,
+                    over_one_second=timing.get('over_one_second', 0) + int(elapsed > 1))
+            return
 
         # ── Montar vela de tempo ──────────────────────────────
 
@@ -1399,6 +1443,12 @@ class DerivBot:
             if value is not None:
                 self._adx_history.append(value)
 
+        self._evaluate_entry(ws, price, list(self._candles), list(self._candle_closes))
+
+    def _evaluate_entry(self, ws, price, candles, candle_closes):
+        """Aplica os mesmos gates de entrada aos dados do módulo selecionado."""
+        n_candles = len(candle_closes)
+
         # Não abrir nova ordem se há contrato ativo.
         if self._in_trade:
             if self._new_candle_closed:
@@ -1471,10 +1521,6 @@ class DerivBot:
             return
 
         # P10: ADX mínimo adaptativo.
-        candle_closes = list(
-            self._candle_closes
-        )
-
         adx_min = get_adaptive_adx_min(
             self._evaluation_adx_history
         )
@@ -1484,7 +1530,7 @@ class DerivBot:
             adx_min=adx_min,
             adx_history=self._evaluation_adx_history,
             candle_alerts=list(self._candle_alerts),
-            candles=list(self._candles),
+            candles=candles,
             evaluation_time=self._last_tick_epoch,
         )
 
@@ -1520,6 +1566,70 @@ class DerivBot:
                 self._candles_since_last_entry = 0
 
     @staticmethod
+    def _uses_training_candles():
+        """A base privada só atende a IA isolada; demais módulos preservam 900s."""
+        return model_timeframe_sec() != CANDLE_TIMEFRAME_SEC
+
+    def _get_training_candles(self):
+        from training_candles import TrainingCandleBuffer
+        current = self._training_candles
+        timeframe = model_timeframe_sec()
+        if current is None or current.symbol != self.symbol or current.timeframe != timeframe:
+            current = TrainingCandleBuffer(
+                Path(TICKS_CSV).resolve().parent / '.training_inputs' / 'history',
+                self.symbol, timeframe=timeframe,
+            )
+            self._training_candles = current
+        return current
+
+    def _request_training_history_refresh(self):
+        """Completa e relê o cache em worker único, nunca dentro do callback de tick."""
+        if not self._uses_training_candles():
+            return
+        with self._training_history_lock:
+            now = time.monotonic()
+            worker = self._training_history_worker
+            if (now < self._training_history_retry_at
+                    or (worker is not None and worker.is_alive())):
+                return
+            self._training_history_retry_at = now + 60
+            buffer = self._get_training_candles()
+            symbol = self.symbol
+
+            def refresh():
+                try:
+                    callback = getattr(self, 'on_training_history_needed', None)
+                    if callback is not None:
+                        callback(symbol)
+                except Exception as exc:
+                    # Não imprime a exceção: provedores podem carregar detalhes de sessão.
+                    print(f'[BOT] Complemento privado da IA indisponível ({type(exc).__name__}).')
+                finally:
+                    buffer.refresh()
+
+            worker = threading.Thread(target=refresh, daemon=True,
+                                      name='ai-private-history')
+            self._training_history_worker = worker
+            worker.start()
+
+    def _handle_training_tick(self, ws, price, epoch):
+        """Avalia a IA com 50 OHLC privados fechados, mantendo contratos de 15min."""
+        buffer = self._get_training_candles()
+        self._new_candle_closed = buffer.feed(epoch, price)
+        candles = buffer.window(epoch)
+        if buffer.needs_refresh:
+            self._request_training_history_refresh()
+        if not candles:
+            self._record_decision(reason='training_history_recovery',
+                                  tick_epoch=epoch, force=False)
+            self._write_runtime_status(tick_epoch=epoch, event='training_history_recovery')
+            return
+        if self._new_candle_closed:
+            self._capture_shadow_prediction(price, epoch, candles=candles)
+        self._evaluation_adx_history = []
+        self._evaluate_entry(ws, price, candles, [row['close'] for row in candles])
+
+    @staticmethod
     def _uses_model_decision(indicators):
         enabled = indicators.get('enabled_decision_modules')
         if enabled is not None:
@@ -1531,18 +1641,27 @@ class DerivBot:
         if not model_id:
             return None
         if (self._shadow_monitor is not None and self._shadow_model_id == model_id
-                and self._shadow_symbol == self.symbol):
+                and self._shadow_symbol == self.symbol
+                and getattr(self, '_shadow_timeframe', model_timeframe_sec()) == model_timeframe_sec()):
             return self._shadow_monitor
         from shadow_monitor import ShadowMonitor
-        self._shadow_monitor = ShadowMonitor(
+        factory = ShadowMonitor
+        evidence = {}
+        if self._uses_training_candles():
+            from training_canary import create_monitor
+            factory = create_monitor
+            evidence = dict(evidence=ai_predictor.shadow_evidence())
+        self._shadow_monitor = factory(
             _SHADOW_STATE_JSON,
             symbol=self.symbol,
             model_id=model_id,
-            timeframe_sec=CANDLE_TIMEFRAME_SEC,
+            timeframe_sec=model_timeframe_sec(),
             duration_sec=duration_seconds(DURATION, DURATION_UNIT),
+            **evidence,
         )
         self._shadow_model_id = model_id
         self._shadow_symbol = self.symbol
+        self._shadow_timeframe = model_timeframe_sec()
         return self._shadow_monitor
 
     def _shadow_payout(self, direction, epoch):
@@ -1559,13 +1678,19 @@ class DerivBot:
         except (OSError, KeyError, TypeError, ValueError):
             return None
 
-    def _capture_shadow_prediction(self, entry_price, entry_epoch):
+    def _capture_shadow_prediction(self, entry_price, entry_epoch, *, candles=None):
         try:
             status = ai_predictor.status()
             if not status.get('ready'):
                 return
-            prices, candles = list(self._candle_closes), list(self._candles)
-            direction, confidence = ai_predictor.predict(prices, candles=candles)
+            if candles is None:
+                prices, candles = list(self._candle_closes), list(self._candles)
+                direction, confidence = ai_predictor.predict(prices, candles=candles)
+            else:
+                prices = [row['close'] for row in candles]
+                direction, confidence = ai_predictor.predict(
+                    prices, candles=candles, evaluation_epoch=entry_epoch,
+                )
             model_id = ai_predictor.prediction_model_id()
             if direction not in ('BUY', 'SELL') or not model_id:
                 return

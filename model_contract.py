@@ -12,11 +12,21 @@ MIN_EXPECTED_RETURN = 0.0
 EVALUATION_RISK_TIMEZONE = 'UTC'
 
 
+def model_timeframe_sec():
+    """Base de features da IA isolada, independente da coleta e do Score."""
+    import config
+    isolated = bool(config.USE_AI_MODEL) and not any(
+        bool(getattr(config, key)) for key in
+        ('USE_WEIGHTED_SIGNAL', 'PRICE_ACTION_FILTER', 'CANDLE_PATTERN_FILTER')
+    )
+    return 300 if isolated else config.CANDLE_TIMEFRAME_SEC
+
+
 def minimum_training_rows():
     """Piso estrutural para partições cronológicas e um fold da janela operacional."""
     import config
     horizon = math.ceil(duration_seconds(config.DURATION, config.DURATION_UNIT)
-                        / config.CANDLE_TIMEFRAME_SEC)
+                        / model_timeframe_sec())
     embargo = FEATURE_WINDOW + horizon
     minimum_partition = 30
     outer = max(
@@ -31,7 +41,7 @@ def minimum_training_rows():
 
 
 def minimum_history_candles():
-    """Quantidade exata de candles que representa a janela rolling de treino."""
+    """Orçamento histórico da coleta homologada, independente da janela da IA."""
     import config
     return config.TRAINING_HISTORY_DAYS * 24 * 60 * 60 // config.CANDLE_TIMEFRAME_SEC
 
@@ -48,17 +58,26 @@ def specification(symbol):
     import config
     import time
     from feature_engine import FEATURES
+    from training_data import TRAINING_HISTORY_DAYS, PREPARATION_VERSION
     return {'schema_version': SCHEMA_VERSION, 'symbol': symbol,
-            'timeframe_sec': config.CANDLE_TIMEFRAME_SEC,
-            'training_history_days': config.TRAINING_HISTORY_DAYS,
-            'training_history_candles': minimum_history_candles(),
+            'timeframe_sec': model_timeframe_sec(),
+            'training_history_days': TRAINING_HISTORY_DAYS,
+            'training_history_candles': TRAINING_HISTORY_DAYS * 86400 // model_timeframe_sec(),
+            'training_data_policy': {'version': PREPARATION_VERSION,
+                                     'features': 'verified_ohlc_or_continuous_ticks',
+                                     'labels': 'continuous_ticks_without_quarantine_overlap'},
             'asset_history_candles': getattr(config, 'ASSET_HISTORY_CANDLES', 0),
             'feature_window': FEATURE_WINDOW,
             'duration': config.DURATION, 'duration_unit': config.DURATION_UNIT,
             'target': 'first_tick_after_signal_to_first_tick_at_expiry_strict_v2',
             'features': FEATURES, 'ohlc': 'time_candles', 'ties': 'separate_class_2',
             'max_tick_gap_sec': MAX_TICK_GAP_SEC,
-            'approval_policy': {'version': 3, 'min_net_payout': config.MIN_NET_PAYOUT,
+            'approval_policy': {'version': 4,
+                                'model_only_signal_policy': 'independent_ai_v1',
+                                'decision_modules': {key: bool(getattr(config, key)) for key in (
+                                    'USE_AI_MODEL', 'USE_WEIGHTED_SIGNAL',
+                                    'PRICE_ACTION_FILTER', 'CANDLE_PATTERN_FILTER')},
+                                'min_net_payout': config.MIN_NET_PAYOUT,
                                 'min_win_rate': config.MIN_APPROVAL_WIN_RATE,
                                 'min_trades': 1, 'wilson_gate': False,
                                 'shadow_min_net_payout': config.SHADOW_MIN_NET_PAYOUT,

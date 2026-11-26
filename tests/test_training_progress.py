@@ -21,10 +21,12 @@ def test_collection_budget_reserves_final_nonoverlapping_opportunities():
 def test_training_keeps_history_and_skips_unchanged_labels(tmp_path, monkeypatch):
     """Garante que o treino usa todo o histórico e só retreina quando os rótulos mudam."""
     source = tmp_path / 'ticks.csv'
+    from market_data import FIELDS
+    base = 1_800_000_000
     with source.open('w') as f:
         writer = csv.writer(f)
-        writer.writerow(['epoch', 'symbol', 'price'])
-        writer.writerows((i, 'R_100', 100) for i in range(200_005))
+        writer.writerow(FIELDS)
+        writer.writerows((base + i, '', 'R_100', 100, 'tick', 0, '', '', '') for i in range(200_005))
     monkeypatch.setattr(pipeline, 'TICKS_CSV', str(source))
     monkeypatch.setattr(pipeline, '_runtime_symbol', lambda: 'R_100')
     monkeypatch.delattr(pipeline._run_training, '_last_dataset_key', raising=False)
@@ -49,7 +51,7 @@ def test_training_keeps_history_and_skips_unchanged_labels(tmp_path, monkeypatch
     label[0] = 'new matured contracts'
     assert pipeline._run_training(dataset, model)[0]
     assert trainer.call_count == 2
-    assert observed == [(200_005, 0)] * 3
+    assert observed == [(200_005, base)] * 3
     assert not (tmp_path / 'ticks.csv.train_snapshot').exists()
 
 

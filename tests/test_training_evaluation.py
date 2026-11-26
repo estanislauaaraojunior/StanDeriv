@@ -49,18 +49,56 @@ def test_components_explain_disagreement_without_changing_combined_gate():
     json.dumps(m, allow_nan=False)
 
 
-def test_combined_gate_matches_ai_when_no_technical_generator_is_enabled(monkeypatch):
+@pytest.mark.parametrize('probability,payout,accepted', [
+    (.9, .85, True), (.60, .85, True), (.65, .85, True), (.56, .70, False),
+])
+def test_combined_gate_matches_ai_when_no_technical_generator_is_enabled(
+        monkeypatch, probability, payout, accepted):
     """Garante que o avaliador simula a decisão por IA isolada quando os módulos técnicos estão desligados."""
+    from model_contract import profitable_proposal
     monkeypatch.setattr(config, 'USE_AI_MODEL', True)
     monkeypatch.setattr(config, 'USE_WEIGHTED_SIGNAL', False)
     monkeypatch.setattr(config, 'PRICE_ACTION_FILTER', False)
     monkeypatch.setattr(config, 'CANDLE_PATTERN_FILTER', False)
     df = frame()
     df['technical_signal'] = -1
-    metrics = _metrics(FixedModel(), df)
+    df['tech_score'] = 0.0
+
+    class DirectionalModel(FixedModel):
+        """Prevê BUY com a confiança configurada, sem treinar ou carregar modelos."""
+        def predict_proba(self, X):
+            """Retorna probabilidades direcionais constantes para a regressão."""
+            return np.tile([1-probability, probability], (len(X), 1))
+
+    metrics = _metrics(DirectionalModel(), df, payout=payout)
 
     assert metrics['trades'] == metrics['components']['ai_only']['trades']
+    assert (metrics['trades'] > 0) is accepted
+    assert metrics['eligible'] is accepted
+    assert profitable_proposal(100, 100*(1+payout), probability) is accepted
     assert metrics['blockers'].get('no_technical_signal', 0) == 0
+    assert metrics['blockers'].get('low_combined_score', 0) == 0
+    if not accepted:
+        assert metrics['blockers']['insufficient_expected_return'] == len(df)
+
+
+@pytest.mark.parametrize('technical_module', [
+    'USE_WEIGHTED_SIGNAL', 'PRICE_ACTION_FILTER', 'CANDLE_PATTERN_FILTER',
+])
+def test_combined_score_remains_required_with_a_technical_module(monkeypatch, technical_module):
+    """Preserva o filtro combinado quando qualquer gerador técnico está habilitado."""
+    from training_evaluation import simulate
+    monkeypatch.setattr(config, 'USE_AI_MODEL', True)
+    for name in ('USE_WEIGHTED_SIGNAL', 'PRICE_ACTION_FILTER', 'CANDLE_PATTERN_FILTER'):
+        monkeypatch.setattr(config, name, name == technical_module)
+    df = frame(20)
+    df['tech_score'] = 0.0
+
+    result = simulate(df, np.ones(len(df), dtype=int), np.full(len(df), .6),
+                      mode='combined', payout=.85)
+
+    assert result['trades'] == 0
+    assert result['blockers'] == {'low_combined_score': len(df)}
 
 
 def test_calibration_penalizes_confident_wrong_predictions_and_missing_ties():

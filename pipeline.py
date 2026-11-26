@@ -108,7 +108,8 @@ from runtime_status import update_status, SESSION_ID
 from model_contract import (FEATURE_WINDOW, MAX_TICK_GAP_SEC, usable,
                             load_validated_bundle, write_json_atomic,
                             acquire_execution_lock, minimum_history_candles,
-                            minimum_training_rows, fingerprint, duration_seconds)
+                            minimum_training_rows, fingerprint, duration_seconds,
+                            model_timeframe_sec)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1072,6 +1073,7 @@ def _first_live_symbol(candidates):
 
 def _first_live_symbol_with_compatible_model(candidates):
     """Retorna um símbolo com bundle aprovado e elegibilidade atual de ADX/catálogo."""
+    import config as _cfg
     seen = set()
     compatible = []
     for symbol in candidates:
@@ -1079,13 +1081,24 @@ def _first_live_symbol_with_compatible_model(candidates):
             continue
         seen.add(symbol)
         try:
-            _payload, metadata = load_validated_bundle(AI_MODEL_PATH, symbol)
+            path = AI_MODEL_PATH
+            try:
+                _payload, metadata = load_validated_bundle(path, symbol)
+            except (FileNotFoundError, ValueError):
+                if not _cfg.USE_AI_MODEL:
+                    continue
+                path = _training_registry().find(symbol, accept=_training_model_resumable)
+                if path is None:
+                    continue
+                _payload, metadata = load_validated_bundle(path, symbol)
             if not usable(metadata, symbol):
+                continue
+            if _cfg.USE_AI_MODEL and not _training_model_resumable(metadata):
                 continue
         except Exception:
             continue
         compatible.append(symbol)
-    return _first_live_symbol(compatible)
+    return _first_live_symbol(compatible) if compatible else ''
 
 
 def _require_live_symbol(symbol, *, allow_fallback=False):
@@ -2301,6 +2314,14 @@ def _wait_for_ticks(
     collector=None,
 ) -> None:
     """Bloqueia até haver ticks e contratos rotuláveis para treino temporal."""
+    required = minimum_training_rows()
+
+    def available_ticks(primary):
+        if model_timeframe_sec() == CANDLE_TIMEFRAME_SEC:
+            return primary
+        cached = _training_readiness_cache.get(_training_cache_key(_runtime_symbol()))
+        return max(primary, cached[1].get('ticks', 0)) if cached else primary
+
     def check_collector():
         """Levanta se houver troca de mercado ou se o coletor falhou ou terminou."""
         _check_market_switch()
@@ -2310,15 +2331,22 @@ def _wait_for_ticks(
     def missing_summary(current_count: int, labelable_count: int):
         """Retorna o número de ticks e contratos ainda faltando para iniciar o treino."""
         missing_ticks = max(0, min_ticks - current_count)
-        missing_contracts = max(0, _MIN_LABELABLE_CONTRACTS - labelable_count)
+        missing_contracts = max(0, required - labelable_count)
         return missing_ticks, missing_contracts
+
+    def ready(labelable_count):
+        cached = _training_readiness_cache.get(_training_cache_key(_runtime_symbol()))
+        if labelable_count < required:
+            return False
+        return not cached or _training_status(cached[1]).get('ready_for_training', True)
 
     check_collector()
     _pipeline_heartbeat("collecting")
     current = _count_ticks()
     labelable = _count_labelable_contracts_for_training()
+    current = available_ticks(current)
 
-    if current >= min_ticks and labelable >= _MIN_LABELABLE_CONTRACTS:
+    if current >= min_ticks and ready(labelable):
         print(
             f"[PIPELINE] {current:,} ticks reais "
             f"e {labelable:,} contratos rotuláveis "
@@ -2326,12 +2354,15 @@ def _wait_for_ticks(
         )
         return
 
+    _maybe_request_training_candidate()
+    _check_market_switch()
+
     missing_ticks, missing_contracts = missing_summary(current, labelable)
     print(
         f"\n[PIPELINE] Aguardando mínimo de treino: "
         f"faltam {missing_ticks:,} ticks reais ({current:,}/{min_ticks:,}) "
         f"e {missing_contracts:,} contratos rotuláveis "
-        f"({labelable:,}/{_MIN_LABELABLE_CONTRACTS:,}) para iniciar o treino."
+        f"({labelable:,}/{required:,}) para iniciar o treino."
     )
 
     last_missing = None
@@ -2350,42 +2381,393 @@ def _wait_for_ticks(
 
         current = _count_ticks()
         labelable = _count_labelable_contracts_for_training()
+        current = available_ticks(current)
         missing_ticks, missing_contracts = missing_summary(current, labelable)
 
         if last_missing != (missing_ticks, missing_contracts):
             print(
                 f"[PIPELINE] Faltam {missing_contracts:,} contratos rotuláveis "
-                f"({labelable:,}/{_MIN_LABELABLE_CONTRACTS:,}) "
+                f"({labelable:,}/{required:,}) "
                 f"e {missing_ticks:,} ticks reais ({current:,}/{min_ticks:,}) "
                 "para iniciar o treino.",
                 flush=True,
             )
             last_missing = (missing_ticks, missing_contracts)
 
-        if current >= min_ticks and labelable >= _MIN_LABELABLE_CONTRACTS:
+        if current >= min_ticks and ready(labelable):
             print(
                 f"[PIPELINE] {current:,} ticks reais "
                 f"e {labelable:,} contratos rotuláveis "
                 "já disponíveis — pronto para treino."
             )
             return
+        _maybe_request_training_candidate()
+        _check_market_switch()
 
     sys.exit(0)
 
 
-def _count_labelable_contracts_for_training() -> int:
-    """Conta contratos rotuláveis do ativo no CSV de ticks; 0 se ausente."""
-    if not os.path.exists(TICKS_CSV):
-        return 0
+_training_readiness_cache = {}
+_training_history_instances = {}
+_training_progress_instances = {}
+_training_progress_lock = threading.RLock()
+_training_next_symbol = ''
+_training_rotation_allowed = True
+_training_survey_at = 0.0
+_training_survey_offset = 0
+_training_survey_seen = set()
+
+
+def _training_progress():
+    """Progresso persistido da IA, separado de coleta, risco e estado de contratos."""
+    from training_policy import TrainingProgress
+    from model_contract import specification
+    identity = specification(_runtime_symbol())
+    identity.pop('symbol')
+    path = Path(TICKS_CSV).resolve().parent / '.training_inputs' / 'progress.json'
+    key = (str(path), json.dumps(identity, sort_keys=True))
+    with _training_progress_lock:
+        if key not in _training_progress_instances:
+            _training_progress_instances[key] = TrainingProgress(path, identity=identity)
+        return _training_progress_instances[key]
+
+
+def _training_registry():
+    from training_registry import TrainingModelRegistry
+    return TrainingModelRegistry(Path(AI_MODEL_PATH).resolve().parent / '.training_inputs' / 'models')
+
+
+def _training_model_resumable(metadata):
+    """Uma reprovação forward pertence ao bundle exato e não é apagada na seleção."""
+    from shadow_monitor import ShadowMonitor
+    model_id = metadata.get('model_id') or metadata.get('artifact_sha256')
+    if not model_id:
+        return True
+    state = ShadowMonitor.saved_state(
+        _SHADOW_STATE_JSON, symbol=metadata['symbol'], model_id=model_id,
+        timeframe_sec=model_timeframe_sec(), duration_sec=duration_seconds(DURATION, DURATION_UNIT))
+    if state is not None and state.get('rejected_at_epoch') is not None:
+        return False
+    if model_timeframe_sec() == 300:
+        from training_canary import saved_canary
+        canary = saved_canary(_SHADOW_STATE_JSON, symbol=metadata['symbol'], model_id=model_id,
+                              timeframe_sec=300, duration_sec=duration_seconds(DURATION, DURATION_UNIT))
+        if canary is not None and canary.get('rejected_at_epoch') is not None:
+            return False
+    return True
+
+
+def _training_cache_key(symbol):
+    history = _history_store().path_for(symbol)
+    return (str(Path(TICKS_CSV).resolve()), symbol, str(history), model_timeframe_sec())
+
+
+def _request_rejected_canary_switch(*, pending=None):
+    """Não reinicia um bootstrap com o canary reprovado do bundle ativo."""
+    if pending or model_timeframe_sec() != 300:
+        return False
     try:
-        return dataset_builder.count_labelable_contracts(
-            TICKS_CSV,
-            symbol=_runtime_symbol(),
-            window_size=FEATURE_WINDOW,
+        metadata = json.loads(Path(AI_MODEL_PATH + '.metadata.json').read_text())
+        model_id = fingerprint(AI_MODEL_PATH)
+        if (metadata.get('symbol') != _runtime_symbol()
+                or metadata.get('artifact_sha256') != model_id):
+            return False
+        from training_canary import saved_canary
+        state = saved_canary(_SHADOW_STATE_JSON, symbol=_runtime_symbol(), model_id=model_id,
+                              timeframe_sec=300, duration_sec=duration_seconds(DURATION, DURATION_UNIT))
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    if state is not None and state.get('rejected_at_epoch') is not None:
+        _request_shadow_validation_switch(_runtime_symbol())
+        return True
+    return False
+
+
+def _new_training_labels(labels):
+    cached = _training_readiness_cache.get(_training_cache_key(_runtime_symbol()))
+    if cached and cached[1].get('attempted'):
+        return cached[1]['new_samples']
+    # Compatibilidade com callers que fornecem apenas contagem (sem snapshot).
+    return max(0, labels - _retrain_state.get('last_label_count', 0))
+
+
+def _training_history_provider():
+    """Recuperação pública em cache exclusivo da IA, independente da coleta."""
+    from training_history import TrainingHistory
+    root = Path(TICKS_CSV).resolve().parent / '.training_inputs' / 'history'
+    duration = duration_seconds(DURATION, DURATION_UNIT)
+    timeframe = model_timeframe_sec()
+    key = (str(root), timeframe, duration)
+    if key not in _training_history_instances:
+        _training_history_instances[key] = TrainingHistory(
+            root, timeframe=timeframe, duration=duration,
+            cancelled=lambda: _shutdown.is_set(),
         )
+    return _training_history_instances[key]
+
+
+_training_outcomes = {}
+
+
+def _training_enricher(provider, symbol):
+    """Reutiliza primeiro o cache; completa a IA isolada sem aguardar ticks novos."""
+    if provider is None:
+        return None
+    if model_timeframe_sec() == CANDLE_TIMEFRAME_SEC:
+        return provider.enrich
+
+    def enrich(records, preparation):
+        from training_history import TrainingHistory
+
+        def ready(rows, report):
+            try:
+                diagnostic = dataset_builder.training_diagnostics_from_records(rows, report, symbol)
+            except ValueError:
+                return False
+            if diagnostic['stage'] != 'ready':
+                return False
+            progress = _training_progress().observe(symbol, diagnostic.get('_label_ids', []))
+            if not progress['attempted']:
+                return True
+            from training_policy import retry_plan
+            plan = retry_plan(
+                diagnostic['labelable_contracts'], progress['previous_samples'],
+                progress['metrics'], RETRAIN_NEW_LABELS_TRIGGER,
+                new_samples=progress['new_samples'],
+            )
+            # Uma amostra antiga pode continuar treinável sem conter o lote
+            # novo exigido após a reprovação. Só encerra quando ambos passam.
+            return plan['remaining_samples'] == 0
+
+        # Orçamento zero: valida, incorpora ticks existentes e persiste o novo
+        # cache300 sem consultar a rede, antes de decidir se falta informação.
+        local = TrainingHistory(provider.root, timeframe=provider.timeframe,
+                                duration=provider.duration, max_requests=0,
+                                now=provider.now, client_factory=provider.client_factory,
+                                cancelled=provider.cancelled)
+        local._verified_snapshots = provider._verified_snapshots
+        rows, status = local.enrich(records, preparation)
+        if status.get('stage') == 'busy' or ready(rows, preparation):
+            return rows, dict(status, stop_reason='busy' if status.get('stage') == 'busy' else 'ready')
+        active = symbol == _runtime_symbol()
+        return provider.enrich_incremental(
+            rows, preparation, rounds=4 if active else 1,
+            total_requests=48 if active else 12,
+            total_seconds=45 if active else 15, ready=ready,
+        )
+
+    return enrich
+
+
+def _prepare_model_snapshot(source, destination, symbol, *, history_path, enricher):
+    """Origem duvidosa nunca é corrigida por inferência; recupera uma base independente."""
+    from training_data import prepare_snapshot, TrainingDataError
+    if model_timeframe_sec() != CANDLE_TIMEFRAME_SEC:
+        # O histórico compartilhado é OHLC900; somente o cache privado fornece
+        # OHLC300. Não introduzir conflitos de uma granularidade que não é usada.
+        history_path = None
+    try:
+        return prepare_snapshot(source, destination, symbol,
+                                history_path=history_path, enricher=enricher)
+    except TrainingDataError as exc:
+        if model_timeframe_sec() == CANDLE_TIMEFRAME_SEC or enricher is None:
+            raise
+        import tempfile
+        import csv
+        from market_data import FIELDS
+        blocked = dict(sha256=fingerprint(source), reason=safe_detail(exc),
+                       policy='independent_verified_public_history')
+        # A origem inteira fica de fora deste snapshot. Não se atribui uma
+        # época ao registro malformado nem se usa o OHLC da origem bloqueada.
+        with tempfile.TemporaryDirectory(prefix='standeriv-independent-source-') as temp:
+            empty = Path(temp) / 'empty.csv'
+            with empty.open('w', newline='') as handle:
+                csv.writer(handle).writerow(FIELDS)
+            independent = Path(destination).with_name(Path(destination).name + '-independent')
+            snapshot, report = prepare_snapshot(empty, independent, symbol, enricher=enricher)
+        report['blocked_source'] = blocked
+        write_json_atomic(str(snapshot) + '.preparation.json', report)
+        print(f'[IA] {symbol}: origem bloqueada; recuperação em base independente: {blocked["reason"]}')
+        return snapshot, report
+
+
+def _recover_model_candles(symbol):
+    """Complemento recente da IA em worker; não usa sockets ou arquivos da coleta."""
+    if symbol != _runtime_symbol() or model_timeframe_sec() == CANDLE_TIMEFRAME_SEC or _shutdown.is_set():
+        return
+    provider = _training_history_provider()
+    if provider is None:
+        return
+    preparation = dict(symbol=symbol, excluded_epochs=[], recovery_start=int(time.time()) - 6 * 3600)
+    provider.enrich_incremental([], preparation, rounds=2, total_requests=24, total_seconds=25)
+    _training_readiness_cache.pop(_training_cache_key(symbol), None)
+
+
+def _training_status(diagnostic):
+    from training_policy import retry_plan
+    outcome = _training_outcomes.get(diagnostic.get('symbol'))
+    if (outcome and diagnostic.get('stage') in ('ready', 'insufficient_samples', 'evaluation_capacity')):
+        diagnostic = dict(diagnostic)
+        diagnostic.update(retry_plan(diagnostic.get('labelable_contracts', 0),
+                                     outcome['samples'], outcome['metrics'], RETRAIN_NEW_LABELS_TRIGGER,
+                                     new_samples=diagnostic.get('new_samples')))
+        diagnostic['ready_for_training'] = (diagnostic.get('readiness_stage', diagnostic['stage']) == 'ready'
+                                            and diagnostic['remaining_samples'] == 0)
+        reason = '; '.join(outcome['metrics'].get('rejection_reasons') or [])
+        if diagnostic.get('attempted'):
+            reason += (f" | novos rótulos: {diagnostic['new_samples']}/{diagnostic['retry_batch']}"
+                       f"; faltam {diagnostic['remaining_samples']}")
+        if not outcome['metrics'].get('eligible'):
+            diagnostic.update(stage='model_rejected', reason=reason)
+        elif diagnostic.get('attempted') and diagnostic['remaining_samples'] > 0:
+            diagnostic.update(stage='awaiting_new_labels', reason=reason)
+    return diagnostic
+
+
+def _diagnose_training_symbol(symbol):
+    """Prepara somente a IA do candidato, sem mudar símbolo ou sockets operacionais."""
+    import tempfile
+    from training_data import prepare_snapshot
+    history = _history_store().path_for(symbol)
+    key = _training_cache_key(symbol)
+    cached = _training_readiness_cache.get(key)
+    now = time.monotonic()
+    if cached and now - cached[0] < 60:
+        # Um treino concluído em outra thread invalida o progresso anterior.
+        if cached[1].get('revision') == _training_progress().observe(symbol, [])['revision']:
+            return _training_status(cached[1])
+    try:
+        provider = _training_history_provider()
+        with tempfile.TemporaryDirectory(prefix='standeriv-readiness-') as temp:
+            source = Path(TICKS_CSV)
+            if not source.exists():
+                from market_data import FIELDS
+                import csv
+                source = Path(temp) / 'empty.csv'
+                with source.open('w', newline='') as handle:
+                    csv.writer(handle).writerow(FIELDS)
+            snapshot, _report = _prepare_model_snapshot(
+                source, Path(temp) / 'input', symbol, history_path=history,
+                enricher=_training_enricher(provider, symbol),
+            )
+            recovery = _report.get('history_recovery', {})
+            if recovery.get('stage') == 'busy' and cached:
+                # Uma recuperação concorrente não apaga os dados já comprovados.
+                diagnostic = dict(cached[1], history_recovery=recovery)
+                _training_readiness_cache[key] = (time.monotonic(), diagnostic)
+                return _training_status(diagnostic)
+            diagnostic = dataset_builder.training_diagnostics(snapshot, symbol)
+            ids = diagnostic.pop('_label_ids', [])
+            progress = _training_progress().observe(symbol, ids)
+            if progress['attempted']:
+                _training_outcomes[symbol] = dict(samples=progress['previous_samples'], metrics=progress['metrics'])
+            diagnostic.update({k: v for k, v in progress.items() if k != 'metrics'})
+            diagnostic['readiness_stage'] = diagnostic['stage']
+            diagnostic['ready_for_training'] = diagnostic['stage'] == 'ready'
+            diagnostic['history_recovery'] = _report.get('history_recovery', {})
+            if _report.get('blocked_source'):
+                diagnostic['blocked_source'] = _report['blocked_source']
+        from training_history import feed_diagnostics
+        try:
+            session = json.loads(_BOT_STATUS_JSON.read_text()).get('started_at')
+        except (OSError, ValueError):
+            session = None
+        diagnostic['feed'] = feed_diagnostics(Path(TICKS_CSV).resolve().parent / 'pipeline.log', session)
     except Exception as exc:
-        print(f'[PIPELINE] Dados ainda indisponiveis para treino: {exc}')
-        return 0
+        diagnostic = dict(stage='invalid_data', symbol=symbol, reason=safe_detail(exc),
+                          labelable_contracts=0, required_contracts=minimum_training_rows())
+    _training_readiness_cache[key] = (time.monotonic(), diagnostic)
+    return _training_status(diagnostic)
+
+
+def _count_labelable_contracts_for_training() -> int:
+    """Publica o diagnóstico do ativo atual; candidatos não substituem seu status."""
+    diagnostic = _diagnose_training_symbol(_runtime_symbol())
+    _write_pipeline_status(training=_training_status(diagnostic))
+    if diagnostic['stage'] == 'invalid_data':
+        print(f"[PIPELINE] Dados inválidos para treino: {diagnostic['reason']}")
+    else:
+        print(f"[PIPELINE] IA: {diagnostic['labelable_contracts']}/{diagnostic['required_contracts']} "
+              f"amostras; {diagnostic['feature_candles']} candles válidos; "
+              f"{diagnostic['tick_gaps']} gaps de ticks; janela de {diagnostic['history_days']} dias.")
+        recovery = diagnostic.get('history_recovery', {})
+        if recovery:
+            print(f"[IA-HISTÓRICO] {recovery.get('stage')}; consultas={recovery.get('requests', 0)} "
+                  f"candles={recovery.get('candles_added', 0)} ticks={recovery.get('ticks_added', 0)} "
+                  f"timeouts={recovery.get('timeouts', 0)} erros={len(recovery.get('errors', []))}")
+    return diagnostic['labelable_contracts']
+
+
+def _prioritize_training_candidates(candidates):
+    """Prioriza prontidão temporal, sem promover modelos ou alterar o scanner."""
+    ranked = []
+    for index, symbol in enumerate(dict.fromkeys(candidates)):
+        if _shutdown.is_set():
+            break
+        diagnostic = _diagnose_training_symbol(symbol)
+        capacity = diagnostic.get('evaluation_capacity', {})
+        ranked.append((bool(diagnostic.get('ready_for_training')),
+                       min(capacity.values()) if capacity else 0,
+                       diagnostic.get('labelable_contracts', 0), -index, symbol))
+    return [row[-1] for row in sorted(ranked, reverse=True)]
+
+
+def _maybe_request_training_candidate(*, known_model_missing=False):
+    """Cede um bootstrap bloqueado a candidato já pronto, preservando shadow ativo."""
+    global _training_survey_at, _training_survey_offset, _training_next_symbol, _market_switch_reason
+    global _training_rotation_allowed
+    import config as _cfg
+    if not _cfg.USE_AI_MODEL:
+        return
+    if not _training_rotation_allowed:
+        # Só libera a preparação alternativa depois da reconciliação persistida.
+        try:
+            state = json.loads(Path(TICKS_CSV).resolve().with_name('state.json').read_text())
+        except (OSError, ValueError):
+            return
+        if (not isinstance(state, dict) or state.get('symbol') != _runtime_symbol()
+                or 'active_contract' not in state or state['active_contract'] is not None):
+            return
+        _training_rotation_allowed = True
+    if (_market_switch.is_set()
+            or (not known_model_missing and _load_latest_final_metrics() is not None)):
+        return
+    now = time.monotonic()
+    if now - _training_survey_at < 60:
+        return
+    _training_survey_at = now
+    current = _runtime_symbol()
+    cached = _training_readiness_cache.get(_training_cache_key(current))
+    if cached and _training_status(cached[1]).get('ready_for_training'):
+        return
+    excluded = {current}
+    private_timeframe = model_timeframe_sec() != CANDLE_TIMEFRAME_SEC
+    if private_timeframe:
+        excluded.update(_training_survey_seen)
+    candidates = _detect_top_trending_symbols(limit=_TOP_TRENDING_SYMBOLS, exclude_symbols=excluded)
+    if not candidates and private_timeframe and _training_survey_seen:
+        _training_survey_seen.clear()
+        candidates = _detect_top_trending_symbols(limit=_TOP_TRENDING_SYMBOLS, exclude_symbols={current})
+    if not candidates:
+        return
+    # Duas preparações por rodada; alterna para não deixar candidatos sem consulta.
+    offset = 0 if private_timeframe else _training_survey_offset % len(candidates)
+    ordered = candidates[offset:] + candidates[:offset]
+    batch = ordered[:2]
+    _training_survey_offset += len(batch)
+    if private_timeframe:
+        _training_survey_seen.update(batch)
+    reserved = _first_live_symbol_with_compatible_model(batch)
+    selected = reserved
+    if not selected:
+        ranked = _prioritize_training_candidates(batch)
+        selected = next((symbol for symbol in ranked
+                         if _diagnose_training_symbol(symbol).get('ready_for_training')), '')
+    if selected:
+        _training_next_symbol = selected
+        _market_switch_reason = 'training_candidate_ready'
+        print(f'[IA] {current} aguardando dados/aprovação; candidato {selected} pronto para próxima etapa.')
+        _market_switch.set()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -2408,7 +2790,7 @@ def _load_latest_final_metrics():
         from model_contract import load_validated_bundle
         symbol = _runtime_symbol()
         payload, metadata = load_validated_bundle(AI_MODEL_PATH, symbol)
-        if usable(metadata, symbol):
+        if usable(metadata, symbol) and _training_model_resumable(metadata):
             _last_model_load_error = ""
             return metadata.get('metrics')
         msg = (f"[PIPELINE] Bundle existente inutilizável: symbol={metadata.get('symbol')} "
@@ -2426,16 +2808,31 @@ def _active_model_shadow_approved():
     """Confere que o shadow persistido pertence ao bundle ativo e atingiu os gates definidos."""
     try:
         metadata = json.loads(Path(AI_MODEL_PATH + '.metadata.json').read_text())
-        state = json.loads(_SHADOW_STATE_JSON.read_text())
+        state = json.loads(_SHADOW_STATE_JSON.read_text()) if _SHADOW_STATE_JSON.exists() else {}
         model_id = fingerprint(AI_MODEL_PATH)
-        return (
+        identity_valid = (
             metadata.get('approved') is True
             and metadata.get('symbol') == _runtime_symbol()
             and metadata.get('artifact_sha256') == model_id
+        )
+        if not identity_valid:
+            return False
+        if model_timeframe_sec() == 300:
+            from training_canary import saved_canary, historical_evidence
+            identity = dict(symbol=_runtime_symbol(), model_id=model_id, timeframe_sec=300,
+                            duration_sec=duration_seconds(DURATION, DURATION_UNIT))
+            canary = saved_canary(_SHADOW_STATE_JSON, **identity)
+            if canary is not None:
+                if canary.get('rejected_at_epoch') is not None:
+                    return False
+                if canary.get('approved_at_epoch') is not None:
+                    return canary.get('evidence') == historical_evidence(metadata, identity)
+        return (
+            identity_valid
             and state.get('schema_version') == 1
             and state.get('symbol') == _runtime_symbol()
             and state.get('model_id') == model_id
-            and state.get('timeframe_sec') == CANDLE_TIMEFRAME_SEC
+            and state.get('timeframe_sec') == model_timeframe_sec()
             and state.get('duration_sec') == duration_seconds(DURATION, DURATION_UNIT)
             and state.get('approved_at_epoch') is not None
         )
@@ -2476,105 +2873,37 @@ def _run_training(
     O ticks.csv original nunca é trimado diretamente durante o treino:
     primeiro é criado um snapshot temporário.
     """
-    import shutil
+    from training_data import prepare_snapshot
 
-    print(
-        "\n[PIPELINE] "
-        "── Fase 3: Construindo dataset ──"
-    )
-
-    tmp_ticks = (
-        f"{TICKS_CSV}.train_snapshot"
-    )
-
+    print("\n[PIPELINE] ── Fase 3: Construindo dataset ──")
+    symbol = _runtime_symbol()
+    prepared_dir = (Path(dataset_path).resolve().parent / '.training_inputs'
+                    / f'{_safe_symbol_slug(symbol)}-{time.time_ns()}')
     try:
-        import fcntl
-        with open(TICKS_CSV, 'rb') as source, open(tmp_ticks, 'wb') as target:
-            fcntl.flock(source, fcntl.LOCK_SH)
-            shutil.copyfileobj(source, target)
-
-        # Filtra o snapshot para o símbolo ativo.
-        try:
-            import pandas as _pd
-            _active_sym = (
-                _runtime_symbol()
-            )
-
-            _snap_df = _pd.read_csv(
-                tmp_ticks
-            )
-
-            if (
-                "symbol"
-                in _snap_df.columns
-                and _active_sym
-            ):
-                before = len(
-                    _snap_df
-                )
-
-                _snap_df = _snap_df[
-                    _snap_df["symbol"]
-                    == _active_sym
-                ]
-
-                if len(_snap_df) < before:
-                    print(
-                        f"[PIPELINE] Snapshot filtrado "
-                        f"para '{_active_sym}': "
-                        f"{len(_snap_df):,} ticks "
-                        f"({before - len(_snap_df):,} "
-                        "de outros símbolos removidos)"
-                    )
-
-                _snap_df.to_csv(
-                    tmp_ticks,
-                    index=False,
-                )
-
-        except Exception as exc:
-            raise ValueError("snapshot sem esquema válido") from exc
-
-        # Preserve the collected temporal coverage. A tick-count cap shrinks
-        # evaluation differently for each feed and prevents learning from growing.
-
-        n = dataset_builder.build_dataset(
-            tmp_ticks,
-            dataset_path,
-            window_size=FEATURE_WINDOW,
-            symbol=_runtime_symbol(),
+        _write_pipeline_status(training=dict(stage='preparing', symbol=symbol))
+        provider = _training_history_provider()
+        snapshot, _report = _prepare_model_snapshot(
+            TICKS_CSV, prepared_dir, symbol,
+            history_path=_history_store().path_for(symbol),
+            enricher=_training_enricher(provider, symbol),
         )
-
-        if n < 30:
-            print(
-                f"[PIPELINE] Dataset muito pequeno "
-                f"({n} linhas). Colete mais ticks."
-            )
-
+        n = dataset_builder.build_dataset(
+            snapshot, dataset_path, window_size=FEATURE_WINDOW, symbol=symbol,
+        )
+        if n < minimum_training_rows():
+            diagnostic = dict(stage='insufficient_samples', symbol=symbol,
+                              labelable_contracts=n, required_contracts=minimum_training_rows())
+            _write_pipeline_status(training=diagnostic)
+            print(f"[PIPELINE] Dataset insuficiente: {n}/{minimum_training_rows()} amostras.")
             return False, None
-
     except SystemExit:
         return False, None
-
     except Exception as exc:
-        print(
-            f"[PIPELINE] Erro ao construir "
-            f"dataset: {exc}"
-        )
-
+        _write_pipeline_status(training=dict(stage='invalid_data', symbol=symbol, reason=safe_detail(exc)))
+        print(f"[PIPELINE] Erro ao construir dataset: {safe_detail(exc)}")
         return False, None
 
-    finally:
-        if os.path.exists(
-            tmp_ticks
-        ):
-            try:
-                os.remove(
-                    tmp_ticks
-                )
-            except OSError:
-                pass
-
+    _write_pipeline_status(training=dict(stage='training', symbol=symbol, labelable_contracts=n))
     print(
         "\n[PIPELINE] "
         "── Fase 4: Treinando modelo ──"
@@ -2586,8 +2915,17 @@ def _run_training(
         from model_contract import fingerprint, specification
         dataset_key = (fingerprint(dataset_path), json.dumps(specification(_runtime_symbol()), sort_keys=True), test_ratio)
         if getattr(_run_training, '_last_dataset_key', None) == dataset_key:
+            _write_pipeline_status(training=dict(stage='unchanged_dataset', symbol=symbol,
+                                                 reason='Aguardando novos contratos rotulados'))
             print('[PIPELINE] Dataset rotulado inalterado; aguardando novos contratos vencidos para retreinar.')
             return False, {"status": "unchanged_dataset"}
+        # Consome somente rótulos do snapshot efetivamente entregue ao treinador.
+        import csv
+        with open(dataset_path, newline='') as handle:
+            reader = csv.DictReader(handle)
+            fields = ('signal_epoch', 'entry_epoch', 'expiry_epoch', 'target')
+            label_ids = ([tuple(int(float(row[key])) for key in fields) for row in reader]
+                         if all(key in (reader.fieldnames or []) for key in fields) else [])
         metrics = train_model.train(
             dataset_path,
             model_path,
@@ -2598,6 +2936,18 @@ def _run_training(
         )
         _run_training._last_dataset_key = dataset_key
         _retrain_state["last_label_count"] = n
+        _training_outcomes[symbol] = dict(samples=n, metrics=metrics)
+        if label_ids:
+            outcome = {key: metrics[key] for key in
+                       ('eligible', 'rejection_reasons', 'stage', 'trades', 'n_test', 'best_model')
+                       if key in metrics}
+            _training_progress().mark_attempt(symbol, label_ids, outcome)
+        _training_readiness_cache.pop(_training_cache_key(symbol), None)
+        _write_pipeline_status(training=dict(
+            stage='approved_offline' if metrics.get('eligible') else 'model_rejected',
+            symbol=symbol, labelable_contracts=n,
+            reason='; '.join(metrics.get('rejection_reasons') or []),
+        ))
         print(f"[PIPELINE] Modelo treinado: {metrics.get('best_model')} | "
               f"teste={metrics.get('n_test')} amostras | contratos={metrics.get('trades')} | "
               f"AUC={metrics.get('auc', 0):.4f} | aprovado={metrics.get('eligible')}")
@@ -2606,6 +2956,7 @@ def _run_training(
         return False, None
 
     except Exception as exc:
+        _write_pipeline_status(training=dict(stage='training_error', symbol=symbol, reason=safe_detail(exc)))
         print(
             f"[PIPELINE] Erro ao treinar "
             f"modelo: {exc}"
@@ -2859,7 +3210,10 @@ def _should_retrain_now() -> tuple[bool, str]:
 
     import config as cfg
     labels = _count_labelable_contracts_for_training()
-    new_labels = labels - _retrain_state.get('last_label_count', 0)
+    cached = _training_readiness_cache.get(_training_cache_key(_runtime_symbol()))
+    if cached and cached[1].get('readiness_stage') != 'ready':
+        return False, cached[1].get('reason', 'capacidade temporal insuficiente')
+    new_labels = _new_training_labels(labels)
     if new_labels < cfg.RETRAIN_NEW_LABELS_TRIGGER:
         return False, f'{new_labels} novos contratos rotulados; aguardando {cfg.RETRAIN_NEW_LABELS_TRIGGER}'
 
@@ -2991,13 +3345,21 @@ def _retrain_loop(bootstrap_until_ready: bool = False) -> None:
             labels = _count_labelable_contracts_for_training()
             required = minimum_training_rows()
             if labels >= required:
-                new_labels = labels - _retrain_state.get("last_label_count", 0)
-                already_tried_dataset = getattr(_run_training, "_last_dataset_key", None) is not None
-                if already_tried_dataset and new_labels < RETRAIN_NEW_LABELS_TRIGGER:
+                new_labels = _new_training_labels(labels)
+                from training_policy import retry_plan
+                outcome = _training_outcomes.get(_runtime_symbol(), {})
+                already_tried_dataset = bool(outcome)
+                plan = retry_plan(labels, outcome.get('samples', _retrain_state.get("last_label_count", 0)),
+                                  outcome.get('metrics', {}), RETRAIN_NEW_LABELS_TRIGGER,
+                                  new_samples=new_labels)
+                cached = _training_readiness_cache.get(_training_cache_key(_runtime_symbol()))
+                if cached and cached[1].get('readiness_stage') != 'ready':
+                    should, reason = False, cached[1].get('reason', 'capacidade temporal insuficiente')
+                elif already_tried_dataset and plan['remaining_samples'] > 0:
                     should, reason = False, (
                         "sem modelo compatível; "
                         f"{new_labels} novos contratos rotulados; "
-                        f"aguardando {RETRAIN_NEW_LABELS_TRIGGER}"
+                        f"aguardando {plan['retry_batch']} (faltam {plan['remaining_samples']})"
                     )
                 else:
                     should, reason = True, (
@@ -3015,6 +3377,8 @@ def _retrain_loop(bootstrap_until_ready: bool = False) -> None:
             )
 
         if not should:
+            if bootstrap_until_ready:
+                _maybe_request_training_candidate()
             continue
 
         n_ticks = _count_ticks()
@@ -3062,6 +3426,7 @@ def _retrain_loop(bootstrap_until_ready: bool = False) -> None:
                 promo_reason = 'bundle ativo ainda não concluiu a validação shadow'
 
             if promote:
+                _training_registry().save(tmp_model, _runtime_symbol())
                 os.replace(
                     tmp_model,
                     AI_MODEL_PATH,
@@ -3164,6 +3529,8 @@ def _wait_for_compatible_model(collector=None, poll_sec: int = 10) -> bool:
         if _load_latest_final_metrics() is not None:
             _model_ready.set()
             return True
+        _maybe_request_training_candidate(known_model_missing=True)
+        _check_market_switch()
         if collector is not None and (collector.fatal_error or not collector.is_alive()):
             print(
                 "[PIPELINE] Coletor encerrado antes de existir modelo compatível; "
@@ -3212,6 +3579,7 @@ def _confirm_real_mode() -> bool:
 
 def _main_session(resources, forced_symbol=None) -> None:
     """Executa uma sessão do pipeline para um mercado: argumentos, coleta, treino, bot e retreino."""
+    global _training_survey_at, _training_rotation_allowed
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -3374,6 +3742,12 @@ def _main_session(resources, forced_symbol=None) -> None:
 
     import config as _cfg
     model_required = bool(_cfg.USE_AI_MODEL)
+    if model_required:
+        try:
+            metadata = json.loads(Path(AI_MODEL_PATH + '.metadata.json').read_text())
+            _training_registry().save(AI_MODEL_PATH, metadata['symbol'])
+        except (FileNotFoundError, ValueError, KeyError, TypeError):
+            pass
     active_modules = [
         label for enabled, label in (
             (_cfg.USE_WEIGHTED_SIGNAL, 'score ponderado'),
@@ -3387,6 +3761,7 @@ def _main_session(resources, forced_symbol=None) -> None:
     state_path=Path(TICKS_CSV).resolve().with_name('state.json')
     prior=json.loads(state_path.read_text()) if state_path.exists() else {}
     pending=prior.get('active_contract')
+    _training_rotation_allowed = not pending
     tournament_candidates = []
     selected_by_ai_trend_scan = False
     try:
@@ -3402,7 +3777,10 @@ def _main_session(resources, forced_symbol=None) -> None:
             )
             if not candidates:
                 return
-            detected = candidates[0]
+            reserved = '' if args.force_retrain else _first_live_symbol_with_compatible_model(candidates)
+            prioritized = [] if reserved else _prioritize_training_candidates(candidates)
+            detected = reserved or (prioritized or candidates)[0]
+            _training_survey_at = time.monotonic()
             selected_by_ai_trend_scan = True
         else:
             detected = _detect_trending_symbol(no_scan=args.no_scan)
@@ -3441,9 +3819,16 @@ def _main_session(resources, forced_symbol=None) -> None:
     history_count = _history_fetch_count_for_start(args.history_count)
 
     if model_required:
-        _prepare_training_start(reuse=args.reuse_training_data or forced_symbol is not None,
+        _prepare_training_start(reuse=(args.reuse_training_data or forced_symbol is not None
+                                       or (model_timeframe_sec() != CANDLE_TIMEFRAME_SEC and not args.fresh_collect)),
                                 skip_collect=args.skip_collect, pending=pending,
                                 fresh_collect=args.fresh_collect)
+        if not pending and not args.force_retrain and not args.fresh_collect:
+            if _training_registry().activate(detected, AI_MODEL_PATH, accept=_training_model_resumable):
+                _reset_ai_predictor()
+        if not args.force_retrain and not args.fresh_collect:
+            if _request_rejected_canary_switch(pending=pending):
+                _check_market_switch()
     else:
         print('[PIPELINE] IA desligada; preservando dados e artefatos de treinamento.')
 
@@ -3656,6 +4041,7 @@ def _main_session(resources, forced_symbol=None) -> None:
             model_exists = False
             print('[PIPELINE] Bootstrap de re-treino assumirá a promoção do primeiro bundle elegível')
         else:
+            _training_registry().save(AI_MODEL_PATH+'.new', detected)
             os.replace(AI_MODEL_PATH+'.new',AI_MODEL_PATH)
             if os.path.exists(AI_MODEL_PATH+'.new.metadata.json'):
                 os.replace(AI_MODEL_PATH+'.new.metadata.json',AI_MODEL_PATH+'.metadata.json')
@@ -3747,6 +4133,7 @@ def _main_session(resources, forced_symbol=None) -> None:
     bot.on_market_unavailable = _request_market_switch
     bot.on_market_unfavorable = _request_market_switch_for_unfavorable
     bot.on_shadow_rejected = _request_shadow_validation_switch
+    bot.on_training_history_needed = _recover_model_candles
     bot.run()
     _check_market_switch()
 
@@ -3769,10 +4156,10 @@ def _finish_market_session(resources):
 
 def main() -> None:
     """Ponto de entrada: obtém o lock de execução e repete sessões, trocando de mercado quando indisponível."""
-    global _market_switch_reason
+    global _market_switch_reason, _training_next_symbol
     resources = {'lock': acquire_execution_lock(Path(__file__).resolve().parent/'executor.lock')}
     forced_symbol = None
-    _write_pipeline_status(status='starting', running=True, symbol=_runtime_symbol())
+    _write_pipeline_status(status='starting', running=True, symbol=_runtime_symbol(), training={})
     try:
         while True:
             _shutdown.clear()
@@ -3787,12 +4174,13 @@ def main() -> None:
             finally:
                 _finish_market_session(resources)
             # Keep risk, historical data and account state. Only the market changes.
-            if switch_reason != 'shadow_validation_failed':
+            training_handoff = switch_reason == 'training_candidate_ready'
+            if switch_reason != 'shadow_validation_failed' and not training_handoff:
                 _mark_market_failure(old_symbol, switch_reason)
             _shutdown.clear()
             forced_symbol = ''
             while not forced_symbol and not _shutdown.is_set():
-                if switch_reason != 'shadow_validation_failed' and _switch_budget_exhausted():
+                if switch_reason != 'shadow_validation_failed' and not training_handoff and _switch_budget_exhausted():
                     _write_pipeline_status(
                         status="degraded",
                         running=False,
@@ -3803,6 +4191,9 @@ def main() -> None:
                     )
                     print('[MERCADO] Limite de trocas atingido; pipeline entrou em estado degradado.')
                     return
+                if training_handoff and _training_next_symbol:
+                    forced_symbol, _training_next_symbol = _training_next_symbol, ''
+                    break
                 candidates = [
                     s for s in _scan_candidates()
                     if s != old_symbol and _market_available_for_switch(s)
