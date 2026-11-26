@@ -647,7 +647,10 @@ def test_ai_mode_selects_one_trending_symbol_before_incremental_history(monkeypa
     monkeypatch.setattr(pipeline, '_first_live_symbol_with_compatible_model', lambda candidates: '')
     prioritize = Mock(return_value=['READY', 'JD75'])
     monkeypatch.setattr(pipeline, '_prioritize_training_candidates', prioritize)
-    monkeypatch.setattr(pipeline, '_training_registry', lambda: Mock(activate=Mock(return_value=False)))
+    # Reserva do bundle ativo falha por disco cheio: a sessão não pode abortar.
+    (tmp_path / 'model.pkl.metadata.json').write_text('{"symbol": "JD75"}')
+    registry = Mock(activate=Mock(return_value=False), save=Mock(side_effect=OSError(28, 'No space left on device')))
+    monkeypatch.setattr(pipeline, '_training_registry', lambda: registry)
     monkeypatch.setattr(pipeline, '_request_rejected_canary_switch', lambda **_kwargs: False)
 
     pipeline._main_session({'lock': Mock()})
@@ -656,6 +659,7 @@ def test_ai_mode_selects_one_trending_symbol_before_incremental_history(monkeypa
     # Modo combinado (900 s) mantém o primeiro do scanner, como na homologação;
     # só a IA isolada reordena por prontidão de dados.
     assert prioritize.called is isolated
+    registry.save.assert_called()
     assert ('set_symbol', expected) in calls
     assert ('history', expected) in calls
     assert captured['bot_run'] is True

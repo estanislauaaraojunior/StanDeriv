@@ -615,7 +615,9 @@ def _fetch_candles_for_symbol(symbol: str, start_epoch: int, end_epoch: int) -> 
     response = _websocket_request({
         "ticks_history": symbol,
         "start": start_epoch,
-        "end": end_epoch,
+        # Fim do intervalo do último candle: com end == início dele, a API
+        # devolve somente candles anteriores e o último da faixa nunca chega.
+        "end": end_epoch + CANDLE_TIMEFRAME_SEC - 1,
         "count": min(count, 1000),
         "style": "candles",
         "granularity": CANDLE_TIMEFRAME_SEC,
@@ -639,14 +641,16 @@ def _fetch_active_symbols() -> dict[str, dict]:
     if not isinstance(symbols, list):
         raise RuntimeError("catálogo active_symbols inválido")
     catalog = {}
-    required = ("market", "submarket", "underlying_symbol_type",
-                "exchange_is_open", "is_trading_suspended")
+    # Desde 11/2026 a API não envia mais `underlying_symbol_type`. A categoria
+    # oficial continua em `market` (sintéticos = "synthetic_index"); ela passa a
+    # ser o tipo quando o campo antigo não vier. Abertura/suspensão seguem exigidas.
+    required = ("market", "submarket", "exchange_is_open", "is_trading_suspended")
     for item in symbols:
         if not isinstance(item, dict) or any(key not in item for key in required):
             continue
         symbol = str(item.get("underlying_symbol") or "").strip()
         market = str(item.get("market") or "").strip().lower()
-        symbol_type = str(item.get("underlying_symbol_type") or "").strip().lower()
+        symbol_type = str(item.get("underlying_symbol_type") or market).strip().lower()
         if not symbol or not market or not symbol_type:
             continue
         catalog[symbol] = {
@@ -3787,8 +3791,12 @@ def _main_session(resources, forced_symbol=None) -> None:
         try:
             metadata = json.loads(Path(AI_MODEL_PATH + '.metadata.json').read_text())
             _training_registry().save(AI_MODEL_PATH, metadata['symbol'])
-        except (FileNotFoundError, ValueError, KeyError, TypeError):
+        except FileNotFoundError:
             pass
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # A reserva é uma cópia de segurança: disco cheio, permissão ou
+            # metadados inválidos não podem abortar a sessão com o modelo ativo.
+            print(f'[IA] Reserva do bundle ativo não concluída: {safe_detail(exc)}')
     active_modules = [
         label for enabled, label in (
             (_cfg.USE_WEIGHTED_SIGNAL, 'score ponderado'),

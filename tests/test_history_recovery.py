@@ -63,7 +63,8 @@ def test_recovery_keeps_both_sides_of_gap_and_ignores_stale_reply(monkeypatch):
     ws=Mock()
     bot._request_missing_history_or_subscribe(ws)
     request=json.loads(ws.send.call_args.args[0])
-    assert request['start']==80*900 and request['end']==str(82*900)
+    # end cobre o intervalo inteiro do último candle (82*900 .. 82*900+899).
+    assert request['start']==80*900 and request['end']==str(82*900+899)
     assert request['count']==3
     assert 'adjust_start_time' not in request
     bot._preload_candles_from_csv.assert_not_called()
@@ -78,6 +79,49 @@ def test_recovery_keeps_both_sides_of_gap_and_ignores_stale_reply(monkeypatch):
     before=list(bot._candles)
     bot._handle_api_candles(ws,[candle(150*900+900)],req_id=request['req_id'])
     assert list(bot._candles)==before
+
+
+def deriv_candles(request, available):
+    """Semântica observada na API em 26/11/2026: últimos `count` candles abertos antes de `end`."""
+    end = int(request['end'])
+    eligible = [e for e in sorted(available) if e < end]
+    return [candle(e) for e in eligible[-int(request['count']):]]
+
+
+def test_live_recovery_fills_single_candle_gap_with_current_api_semantics(monkeypatch):
+    """Reproduz a sessão de 26/11: início no meio do candle deixava a lacuna sem fechar."""
+    import executor
+    from risk_manager import RiskManager
+    bot=executor.DerivBot(RiskManager(1000))
+    now=[151*900+5]
+    monkeypatch.setattr(executor.time,'time',lambda:now[0])
+    bot._merge_candles([candle(e) for e in range(900,150*900,900)])  # falta o candle 150*900
+    ws=Mock()
+    bot._request_missing_history_or_subscribe(ws, live=True)
+    request=json.loads(ws.send.call_args.args[0])
+    assert (request['start'], request['count'])==(150*900, 1)
+    reply=deriv_candles(request, range(900,152*900,900))
+    assert [c['epoch'] for c in reply]==[150*900]
+    bot._handle_api_candles(ws, reply, req_id=request['req_id'])
+    assert bot._candles[-1]['epoch']==150*900
+    assert not bot._history_recovery_incomplete
+
+
+def test_old_end_value_reproduced_the_stuck_gap():
+    """Documenta o defeito: end == início do candle devolve o anterior."""
+    stale = deriv_candles({'end': str(150*900), 'count': 1}, range(900, 152*900, 900))
+    assert [c['epoch'] for c in stale] == [149*900]
+
+
+def test_asset_history_fetch_requests_end_of_last_candle(monkeypatch):
+    import pipeline
+    sent={}
+    monkeypatch.setattr(pipeline,'_websocket_request',lambda request: sent.update(request) or
+                        {'candles':deriv_candles(request, range(900, 20*900, 900))})
+    monkeypatch.setattr(pipeline.time,'time',lambda: 20*900+10)
+    rows=pipeline._fetch_candles_for_symbol('R_100', 10*900, 12*900)
+    assert sent['end']==12*900+899
+    assert [r['epoch'] for r in rows]==[10*900, 11*900, 12*900]
 
 
 def test_keepalive_stops_on_bot_close(monkeypatch):

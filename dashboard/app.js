@@ -665,6 +665,24 @@ function calcEma(prices, period) {
 
 let _pollFailures = 0;
 
+/**
+ * Acrescenta o progresso de rótulos novos do retreino ao motivo publicado.
+ * O pipeline já inclui "novos rótulos" no motivo após uma tentativa; nesse caso
+ * não repete. `next_training_at` só existe no formato antigo (sem new_samples).
+ */
+function _withRetryProgress(training, reason) {
+  if (String(reason).includes('novos rótulos')) return reason;
+  if (training.retry_batch != null) {
+    return `${reason} | novos rótulos: ${Number(training.new_samples ?? 0)}/${Number(training.retry_batch)}`
+      + `; faltam ${Number(training.remaining_samples ?? 0)}`;
+  }
+  if (training.next_training_at) {
+    return `${reason} | Próximo treino: ${Number(training.labelable_contracts ?? 0)}/${Number(training.next_training_at)}`
+      + ` amostras; faltam ${Number(training.remaining_samples ?? 0)}`;
+  }
+  return reason;
+}
+
 function _botOperationalCard(bot = {}, model = {}, riskState = {}, summary = {}, activeContract = {}) {
   const status = bot.status || (bot.running ? 'running' : 'idle');
   const pnlPct = Number(riskState.daily_pnl_pct ?? 0);
@@ -698,8 +716,22 @@ function _botOperationalCard(bot = {}, model = {}, riskState = {}, summary = {},
       return ['TREINANDO', 'card-value warning', `${Number(training.labelable_contracts ?? 0)} amostras`];
     }
     if (training.stage === 'model_rejected') {
-      return ['MODELO REPROVADO', 'card-value warning', (training.reason || 'Critérios de aprovação não atendidos')
-        + (training.next_training_at ? ` | Próximo treino: ${Number(training.labelable_contracts ?? 0)}/${Number(training.next_training_at)} amostras; faltam ${Number(training.remaining_samples)}` : '')];
+      return ['MODELO REPROVADO', 'card-value warning',
+        _withRetryProgress(training, training.reason || 'Critérios de aprovação não atendidos')];
+    }
+    if (training.stage === 'awaiting_new_labels') {
+      return ['AGUARDANDO NOVOS RÓTULOS', 'card-value warning',
+        _withRetryProgress(training, training.reason || 'Retreino aguarda rótulos ainda não usados')];
+    }
+    if (training.stage === 'evaluation_capacity') {
+      const capacity = training.evaluation_capacity || {};
+      return ['CAPACIDADE TEMPORAL INSUFICIENTE', 'card-value warning',
+        (training.reason || 'Validação/teste sem contratos independentes suficientes')
+        + ` | validação ${Number(capacity.validation ?? 0)}, teste ${Number(capacity.test ?? 0)} (mínimo 30)`];
+    }
+    if (training.stage === 'approved_offline') {
+      return ['APROVADO OFFLINE', 'card-value warning',
+        'Último candidato aprovado no histórico; aguardando ativação e validação forward'];
     }
     if (training.stage === 'unchanged_dataset') {
       return ['AGUARDANDO NOVOS DADOS', 'card-value warning', training.reason];
