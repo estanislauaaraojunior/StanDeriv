@@ -66,6 +66,24 @@ modelo foi treinado ou promovido para este adendo. A conferência por AST e os
 testes demonstram equivalência estrutural e funcional nos caminhos cobertos;
 não substituem observação operacional.
 
+## Correção de compatibilidade do catálogo — 26/11/2026
+
+Autorizada explicitamente pelo usuário após o bot, em modo somente Score,
+ficar sem mercado (`Catálogo de ativos indisponível (RuntimeError); scan
+bloqueado`). Uma consulta somente leitura ao endpoint público mostrou que a
+resposta de `active_symbols` deixou de trazer `underlying_symbol_type` (80
+ativos, 76 abertos, nenhum com o campo). `_fetch_active_symbols` exigia o campo e
+descartava todos os itens.
+
+Mudança mínima em `_fetch_active_symbols`: o campo deixou de ser obrigatório e,
+quando ausente, o tipo passa a ser a categoria oficial `market`. A regra de
+sintético continua `market == "synthetic_index"` (ou tipo sintético); abertura
+(`exchange_is_open`) e suspensão (`is_trading_suspended`) continuam obrigatórias;
+ADX >= 25, sondagem, prioridade de não sintéticos e demais filtros do scanner
+não mudaram. Regressões em `tests/test_pipeline_live_feed.py` reproduzem o erro
+no código anterior. No mesmo arquivo, `_main_session` passou a registrar (sem
+abortar a sessão) falha de disco ao reservar o bundle ativo da IA.
+
 ## Referência de integridade vigente
 
 Esta tabela substitui a de 15/10/2026 como referência para
@@ -77,7 +95,7 @@ Esta tabela substitui a de 15/10/2026 como referência para
 | `indicators.py` | `dec0ee29f5bc5c7ba82e6d4c0f3c5b4c5f88ff1169bf4c1e2ce981a1a932217e` |
 | `config.py` | `84481391cbe0c9d2e57e31bdd387de355a29254a4619e04de31fba7a6142a4bc` |
 | `collector.py` | `7e82ef5d6771e73312c4f28afdfe675b73fdd76fdd5be1769e2d85cacdb2e8ee` |
-| `pipeline.py` | `db8a4076639d6fffbd45f1d457e81dcb7c0605bb80b82f637c1ee986ae3139f9` |
+| `pipeline.py` | `ad6c315541645d35e807e2d7f98bfb82aa9f9bc32369f34191e2e7c4413960b8` |
 | `market_data.py` | `df5170f7dca203d7e37a55a05f77b9e5077f27e1b5de33377e3b451ba349cb62` |
 | `asset_history.py` | `f26c39d4c5947f8206a2537fbdffe9d4d08e28794dee065d0fa783c7c17a43aa` |
 | `market_calendar.py` | `a4f6218e78164520a61afe964d458aa220377d85120578dd6c640001420339ac` |

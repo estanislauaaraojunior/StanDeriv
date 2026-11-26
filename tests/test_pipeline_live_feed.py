@@ -186,6 +186,43 @@ def test_active_symbol_catalog_uses_deriv_category_and_open_fields(monkeypatch):
     assert catalog['X2']['exchange_is_open'] is False
 
 
+def test_active_symbol_catalog_accepts_schema_without_underlying_symbol_type(monkeypatch):
+    """Formato atual da Deriv (11/2026): sem `underlying_symbol_type`, com `subgroup`.
+
+    Antes, todos os itens eram descartados e o scanner ficava sem mercado.
+    """
+    monkeypatch.setattr(pipeline, '_websocket_request', lambda _request: {
+        'active_symbols': [
+            {'underlying_symbol': '1HZ50V', 'market': 'synthetic_index', 'submarket': 'random_index',
+             'subgroup': 'synthetics', 'exchange_is_open': 1, 'is_trading_suspended': 0},
+            {'underlying_symbol': 'WLDEUR', 'market': 'synthetic_index', 'submarket': 'forex_basket',
+             'subgroup': 'baskets', 'exchange_is_open': 1, 'is_trading_suspended': 0},
+            {'underlying_symbol': 'frxEURUSD', 'market': 'forex', 'submarket': 'major_pairs',
+             'subgroup': 'none', 'exchange_is_open': 1, 'is_trading_suspended': 0},
+            {'underlying_symbol': 'OTC_NDX', 'market': 'indices', 'submarket': 'americas_OTC',
+             'subgroup': 'none', 'exchange_is_open': 0, 'is_trading_suspended': 0},
+            {'underlying_symbol': 'SUSP', 'market': 'forex', 'submarket': 'minor_pairs',
+             'subgroup': 'none', 'exchange_is_open': 1, 'is_trading_suspended': 1},
+        ]
+    })
+    catalog = pipeline._fetch_active_symbols()
+    assert catalog['1HZ50V']['is_synthetic'] is True
+    assert catalog['WLDEUR']['is_synthetic'] is True
+    assert catalog['frxEURUSD']['is_synthetic'] is False
+    assert catalog['frxEURUSD']['underlying_symbol_type'] == 'forex'
+    monkeypatch.setattr(pipeline, '_active_symbols_catalog', catalog)
+    # Fechado e suspenso continuam fora; abertos continuam elegíveis ao scan.
+    assert pipeline._catalog_scan_candidates() == ['1HZ50V', 'WLDEUR', 'frxEURUSD']
+
+
+def test_active_symbol_catalog_still_rejects_items_without_open_state(monkeypatch):
+    monkeypatch.setattr(pipeline, '_websocket_request', lambda _request: {
+        'active_symbols': [{'underlying_symbol': 'X', 'market': 'forex', 'submarket': 'major_pairs'}]
+    })
+    with pytest.raises(RuntimeError):
+        pipeline._fetch_active_symbols()
+
+
 def test_fixed_symbol_searches_fallback_if_unavailable(monkeypatch):
     """Símbolo configurado lateral aciona fallback para candidato do catálogo com ADX válido."""
     monkeypatch.setattr(pipeline, '_refresh_active_symbols', lambda: True)
