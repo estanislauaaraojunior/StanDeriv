@@ -193,3 +193,22 @@ Os modelos existentes continuam sendo avaliados no mesmo snapshot e nas
 partições temporais com embargo já implementadas; seleção permanece no
 development e o holdout continua fora da seleção. Nenhum treino ou promoção de
 artefatos ativos foi executado nesta atualização.
+
+## Modelo de Treino isolado, shadow e canary — 30/10 a 03/11/2026
+
+Esta seção apenas aponta as mudanças posteriores; os detalhes estão nos
+registros listados no [índice histórico](historico/INDICE.md).
+
+- O Modelo de Treino isolado (IA habilitada e Score/Price Action/padrões
+  desligados) usa 50 candles fechados de 5 minutos para contratos de 15 minutos
+  (perfil 300/900), com preparação própria de até 28 dias e piso estrutural de
+  593 rótulos. Os modos combinados mantêm 900/900, 579 rótulos e o aquecimento
+  técnico de 150 candles. `CANDLE_TIMEFRAME_SEC` e a coleta homologada não mudaram.
+- O progresso de retreino usa identidades de rótulos por ativo; a avaliação da
+  IA isolada não exige o score técnico combinado (política de avaliação 4).
+- Bundles aprovados ficam reservados por símbolo/hash e o shadow retoma apenas a
+  identidade exata. Na IA isolada, o canary `isolated_ai_canary_v1` exige 8
+  resultados forward com pelo menos 7 acertos e saldo unitário positivo, com
+  reprovação antecipada quando a meta fica impossível; sem prova histórica
+  suficiente, vale a regra original de 30 resultados e 55%.
+- Compras com modelo treinado continuam restritas a conta demo.

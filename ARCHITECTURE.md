@@ -31,16 +31,34 @@ O diagrama representa responsabilidades, não uma ordem estrita de chamadas.
 execução. `bot.py` é um entrypoint alternativo para execução; `collector.py`
 também pode ser executado separadamente.
 
-O contrato de treino vigente usa candles de 15 minutos e uma janela móvel de
-sete dias (672 candles), com 50 candles por amostra. O scanner consulta o
+O Modelo de Treino isolado usa candles de 5 minutos para contratos de 15 minutos,
+com 50 candles por amostra e janela de 28 dias (até 8.064 posições). Os modos
+combinados mantêm candles de 15 minutos (até 2.688 posições). `model_contract.py`
+separa o timeframe da IA da base operacional homologada. `training_data.py`
+isola snapshots por ativo, registra quarentena e preserva vetos temporais.
+`training_history.py` complementa OHLC e ticks por conexão pública separada,
+com cache incremental exclusivo da IA em `.training_inputs/history/`.
+Páginas parciais e falhas não autorizam preencher preços ou liberar contratos.
+Esse limite da IA não altera o orçamento da coleta de sete dias/672 posições.
+`training_candles.py` mantém o buffer privado de 5 minutos, reaproveita ticks
+verificados e completa somente dados ausentes. O executor usa esse buffer
+apenas na IA isolada; Score e demais modos preservam os buffers de 15 minutos
+e seu aquecimento de 150 candles. Recuperação pública roda em worker separado
+e não fabrica candles menores a partir de OHLC de 15 minutos.
+O scanner consulta o
 catálogo `active_symbols`, exige ADX atualizado >= 25 e prioriza ativos não
 sintéticos; só tenta sintéticos abertos quando nenhum não sintético é elegível.
 `Histórico Ativos/` mantém candles OHLC independentes por símbolo, com merge
 incremental e limite local de 336 candles (`ASSET_HISTORY_CANDLES`); o treino ainda exige ticks identificados. Um
 bundle aprovado offline ainda
-precisa validar 30 resultados shadow não sobrepostos, acerto >= 55% e payout
-líquido observado >= 70%. O fluxo de modelos treinados pode abrir contratos
-somente em conta demo.
+precisa de validação forward sem compras. Na IA isolada de 5 minutos,
+`training_canary.py` admite o canary `isolated_ai_canary_v1` (8 resultados
+não sobrepostos, pelo menos 7 acertos e saldo unitário positivo) quando os
+metadados comprovam holdout elegível com ao menos 30 contratos; a reprovação é
+antecipada quando a meta fica impossível. Sem essa prova, ou nos modos
+combinados, vale a validação original de `shadow_monitor.py`: 30 resultados
+não sobrepostos e acerto >= 55%. Ambos exigem payout líquido observado >= 70%.
+O fluxo de modelos treinados pode abrir contratos somente em conta demo.
 
 ## Módulos homologados — 15/10/2026
 
@@ -49,7 +67,7 @@ congelados. Consulte o [registro de homologação](docs/HOMOLOGACAO_SCORE_COLETA
 e a [especificação do Score](docs/SCORE_PONDERADO_BOLLINGER.md). Não alterar seus
 resultados por manutenção de módulos compartilhados sem autorização explícita.
 
-O executor fornece fechamentos de candles de 15 minutos para a estratégia,
+Nos caminhos técnicos, o executor fornece fechamentos de 15 minutos para a estratégia,
 que usa os últimos 50, com Bollinger nos últimos 20. `MIN_CANDLES=150` define
 o aquecimento. O tick aciona a avaliação, mas não substitui o último fechamento.
 A coleta do pipeline grava ticks ao vivo; o backfill pesado de ticks está
@@ -67,6 +85,15 @@ de coleta/continuidade: `api_keepalive.py`, `market_calendar.py`,
 coordena o status por sessão. Recuperação mantém os candles válidos; novas
 avaliações de entrada permanecem bloqueadas enquanto o histórico está incompleto.
 
+O Modelo de Treino acompanha identidades de rótulos por símbolo em
+`training_policy.py`, inclusive quando o total da janela móvel fica constante.
+O pipeline prioriza candidatos com capacidade temporal verificada e pode ceder
+um bootstrap sem modelo a outro candidato pronto. `training_registry.py`
+preserva bundles compatíveis por símbolo/hash em `.training_inputs/models/`;
+`shadow_monitor.py` retoma estados completos da identidade exata a partir de
+`shadow_state.json.states/`. A seleção por dados não interrompe um bundle ativo
+em shadow. A política de avaliação 4 exige reavaliar artefatos anteriores.
+
 ## Responsabilidades
 
 | Área | Módulos e responsabilidade |
@@ -74,6 +101,7 @@ avaliações de entrada permanecem bloqueadas enquanto o histórico está incomp
 | Configuração e sessão | `config.py` concentra parâmetros; `deriv_session.py` gerencia autenticação Deriv legada e Bearer/PAT. |
 | Dados e features | `collector.py` coleta; `market_data.py` valida e persiste; `asset_history.py` mantém candles compartilhados por ativo; `indicators.py` calcula indicadores e Price Action; `feature_engine.py` calcula o mapa canônico de 27 features; `dataset_builder.py` constrói datasets temporais. |
 | Modelos | `train_model.py`, `training_evaluation.py` e `training_experiments.py` treinam/avaliam candidatos; `model_contract.py` valida compatibilidade e persistência de bundles. |
+| Modelo de Treino isolado | `training_data.py` prepara snapshots de 28 dias; `training_history.py` complementa dados públicos; `training_candles.py` mantém o buffer privado de 5 minutos; `training_policy.py` controla progresso e capacidade; `training_registry.py` reserva bundles; `shadow_monitor.py` e `training_canary.py` fazem a validação forward. |
 | Decisão e execução | `ai_predictor.py` faz inferência; `strategy.py` executa módulos independentes e exige maioria estrita na mesma direção; `risk_manager.py` controla limites persistentes; `executor.py` acompanha proposals e contratos; `pipeline.py` orquestra o fluxo. |
 | Simulação e interface | `backtest.py` executa simulações offline; `dashboard/server.py` serve API e frontend para monitoramento e ações autorizadas. |
 | Verificação | `tests/` cobre contratos, estratégia, risco, pipeline, execução, treino e endpoints do dashboard. |

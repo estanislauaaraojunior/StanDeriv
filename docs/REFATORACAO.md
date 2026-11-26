@@ -29,6 +29,9 @@ Relatórios datados e material de pesquisa foram agrupados em `docs/historico/`:
 - `pesquisa_treino_2026-09-11/`
 - `ARQUITETURA_ANTIGA.md`
 
+Registros posteriores à refatoração (outubro e novembro de 2026) estão listados
+no [índice dos registros históricos](historico/INDICE.md).
+
 Guias e prompts vigentes permanecem diretamente em `docs/`. O novo
 `ARCHITECTURE.md` descreve a estrutura atual. Links internos foram atualizados
 e verificados recursivamente.

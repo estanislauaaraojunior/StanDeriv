@@ -225,6 +225,10 @@ Respeite as responsabilidades existentes:
 | `pipeline.py` | Orquestracao geral do sistema |
 | `backtest.py` | Simulacao offline, payout, custos, risco, drawdown e relatorios |
 | `dashboard/` | Interface Flask, API protegida e frontend |
+| `training_data.py`, `training_history.py`, `training_candles.py` | Preparacao, complemento publico e buffer privado de 5 minutos do Modelo de Treino isolado |
+| `training_policy.py`, `training_registry.py` | Progresso por rotulo, capacidade temporal e reserva de bundles por simbolo/hash |
+| `shadow_monitor.py`, `training_canary.py` | Validacao forward sem compras: shadow original (30/55%) e canary 8/7 da IA isolada |
+| `training_evaluation.py`, `training_experiments.py`, `payout_quotes.py` | Avaliacao temporal, estudos offline e cotacoes de payout sem compra |
 | `tests/` | Suite pytest de validacao |
 
 Alteracoes em `executor.py`, `risk_manager.py`, `deriv_session.py`,

@@ -6,6 +6,11 @@
 > e modelos de duração não fazem parte do fluxo v2 atual. Para implementação e
 > responsabilidades vigentes, priorize `README.md`, `ARCHITECTURE.md`,
 > `docs/GUIA_TECNICO.md`, o código e os testes.
+>
+> O "estado conhecido de referência" (PR #6, `backtester.py`) e a menção a
+> `pyproject.toml` estão superados: o backtest atual é `backtest.py`, coberto por
+> `tests/test_backtest.py`, e o checkout não possui `pyproject.toml`. A tarefa
+> descrita na seção 24 não é o ponto de retomada atual.
 
 > Score Ponderado e coleta foram homologados em 15/10/2026 e estão congelados.
 > Consulte [o escopo homologado](HOMOLOGACAO_SCORE_COLETA_2026-10-15.md) antes de

@@ -22,7 +22,7 @@ controles de risco ou dos modelos treinados.
 - [Score Ponderado](docs/SCORE_PONDERADO_BOLLINGER.md): fórmulas, pesos, votos e base temporal.
 - [Guia técnico](docs/GUIA_TECNICO.md) e [instruções de manutenção](AGENTS.md): leitura por área e regras para alterações.
 - [Correções e migração](docs/CORRECOES_CONTRATOS_2026-09-08.md): registro cronológico; seções posteriores substituem políticas antigas.
-- [Refatoração](docs/REFATORACAO.md) e `docs/historico/`: evidências das etapas anteriores, sem redefinir os contratos atuais.
+- [Refatoração](docs/REFATORACAO.md) e [`docs/historico/`](docs/historico/INDICE.md): evidências das etapas anteriores, sem redefinir os contratos atuais.
 
 ## Instruções para assistentes de IA
 
@@ -40,6 +40,13 @@ arquivos Markdown arbitrários não são carregados automaticamente. Após alter
 essas instruções, inicie uma nova sessão no repositório ou peça à sessão atual
 para reler `AGENTS.md`. Em outros assistentes, indique esse arquivo explicitamente
 se a ferramenta não oferecer suporte a essa convenção.
+
+No Claude Code, `.claude/settings.json` bloqueia a leitura de `.env` e a execução
+direta de bot, pipeline, coletor e dashboard, e pede confirmação antes de editar
+módulos homologados/compartilhados ou arquivos operacionais. As skills do projeto
+ficam em `.claude/skills/`: `standeriv-testes-isolados` (pytest em cópia
+temporária com rede bloqueada), `standeriv-homologacao` (hashes e AST dos módulos
+homologados) e `standeriv-auditoria-status` (resumo somente leitura do estado).
 
 ---
 
@@ -88,8 +95,12 @@ modelos e estado operacional não foram movidos.
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.11+ (a suíte foi validada em 26/11/2026 com Python 3.14.4)
 - Conta na Deriv (demo ou real) com token de API
+- Para desenvolvimento e testes: `pip install -r requirements-dev.txt` (`pytest`)
+
+`torch` saiu das dependências em 26/11/2026: o TFT foi removido do fluxo v2 e
+nenhum módulo atual o importa.
 
 ### Instalação
 
@@ -136,6 +147,16 @@ python pipeline.py --demo --balance 1000
 
 Com `USE_AI_MODEL=True`, a execução exige modelo aprovado compatível e confirmação shadow. Sem IA, o pipeline preserva os artefatos, ignora treino/retreino e permite entradas pelos módulos técnicos habilitados. Com IA ativa e sem bundle compatível, o pipeline tenta treino quando há dados
 suficientes; `--force-retrain` força nova tentativa mesmo com modelo existente. Nenhum candidato substitui o modelo ativo sem passar pela avaliação temporal. A opção `--demo` é confrontada com a conta autenticada.
+
+Opções do pipeline: `--demo`/`--real`, `--balance`, `--min-ticks`, `--skip-collect`,
+`--force-retrain`, `--history-count`, `--no-scan`, `--top-symbols` (até 5),
+`--reuse-training-data` (reutiliza dados e modelos; por padrão inicia nova coleta
+e treino) e `--fresh-collect` (arquiva também os ticks e baixa a janela de novo).
+Os geradores podem ser escolhidos por sessão com as variáveis
+`STANDERIV_USE_AI_MODEL`, `STANDERIV_USE_WEIGHTED_SIGNAL`,
+`STANDERIV_PRICE_ACTION_FILTER` e `STANDERIV_CANDLE_PATTERN_FILTER`; o painel as
+usa ao iniciar uma sessão. Confira as flags efetivas no status, não apenas o
+campo textual `execution_signal_mode`.
 
 ### Apenas o bot (módulos configurados)
 
@@ -233,6 +254,17 @@ bot ao vivo estiver parado. Os relatórios ficam isolados por execução em
 | `runtime_status.py` | Status concorrente por sessão, símbolo e proprietário dos campos |
 | `operational_diagnostics.py` | Diagnóstico de conexão com ocultação de informações sensíveis |
 | `backtest.py` | Simulação offline de sinais, duração, payout, custos, risco e drawdown, com relatórios JSON/CSV |
+| `bot.py` | Entrypoint alternativo de execução com as flags de decisão de `config.py` |
+| `payout_quotes.py` | Amostragem de propostas CALL/PUT sem compra e consulta causal de payout (`QuoteHistory`) |
+| `training_evaluation.py` | Simulação temporal de contratos, métricas, calibração e elegibilidade usadas pelo treinador |
+| `training_experiments.py` | Estudos offline (contexto, receita de treino, ablação) em diretório novo, sem publicar bundle |
+| `training_data.py` | Snapshot de treino por ativo com janela de 28 dias, quarentena e vetos temporais |
+| `training_history.py` | Complemento público de OHLC/ticks exclusivo da IA, com cache em `.training_inputs/history/` |
+| `training_candles.py` | Buffer privado de candles de 5 minutos da IA isolada no executor |
+| `training_policy.py` | Progresso por identidade de rótulos, capacidade temporal e lote de retreino |
+| `training_registry.py` | Reserva de bundles aprovados por símbolo/hash em `.training_inputs/models/` |
+| `shadow_monitor.py` | Validação forward original (30 resultados, 55%) com estados por identidade |
+| `training_canary.py` | Canary `isolated_ai_canary_v1` (8 resultados, 7 acertos) com reprovação antecipada |
 | `dashboard/` | Interface web com Flask (server.py), autenticação por token e frontend (HTML/JS/CSS) |
 
 ## Price Action (11 Features)
@@ -266,14 +298,164 @@ Cada padrão inclui `strength` (0-1) e notificação em tempo real no terminal e
 
 ## Modelos e contrato temporal
 
-O treino usa uma janela móvel máxima de sete dias: 672 candles OHLC de 15 minutos, com janela de 50 candles por amostra. RandomForest, BalancedLogisticRegression, ExtraTrees, HistGradientBoosting e XGBoost são comparados no mesmo snapshot temporal; o desenvolvimento separa ajuste, calibração e seleção do holdout final com embargo. ROC-AUC é uma métrica, não um modelo. A amostra semanal precisa sustentar pelo menos 30 operações no teste; dados/classes insuficientes reprovam o candidato.
+O **Modelo de Treino isolado** usa 50 candles fechados de **5 minutos** para
+avaliar contratos de **15 minutos**. Treino e inferência compartilham esse
+perfil de 300/900 segundos, separado do timeframe operacional. Score Ponderado,
+Price Action, padrões e modos combinados preservam candles de 15 minutos;
+`CANDLE_TIMEFRAME_SEC=900` permanece inalterado.
 
-Após aprovação offline, o bundle passa por shadow forward sem compras. A liberação só ocorre após pelo menos 30 resultados direcionais não sobrepostos, acerto mínimo de 55% e payout líquido observado de pelo menos 70%, todos do mesmo `model_id`. Esse fluxo permite compras somente em conta demo; conta real permanece bloqueada.
+A janela móvel da IA tem até **28 dias**: 8.064 posições em 5 minutos ou 2.688
+em 15 minutos. O piso estrutural é de **593 rótulos na IA isolada** e 579 no
+perfil de 15 minutos. Além do piso, são verificadas classes, divisões temporais
+externas e internas e capacidade para pelo menos 30 contratos sem sobreposição
+na validação e no teste. Rótulos de 15 minutos gerados a cada 5 minutos se
+sobrepõem; três rótulos não equivalem a três operações independentes.
+
+Esse limite pertence somente à preparação da IA em `training_data.py`; a coleta
+continua em sete dias/672 posições, e o histórico compartilhado por ativo,
+limitado a 336 candles. RandomForest, BalancedLogisticRegression, ExtraTrees,
+HistGradientBoosting e XGBoost são comparados no mesmo snapshot; ajuste,
+calibração e seleção ficam separados do holdout final por embargo. ROC-AUC é
+uma métrica. Dados suficientes permitem tentar treino, sem garantir aprovação.
+
+O pipeline prepara snapshots por ativo em `.training_inputs/` junto ao dataset, sem substituir `ticks_v2.csv`. Registros inválidos ou conflitantes com época conhecida ficam no relatório de quarentena; amostras que atravessem suas épocas são vetadas. Corrupção atribuível ao ativo sem época segura bloqueia a preparação. O histórico OHLC válido pode aquecer as features apesar de lacunas anteriores de ticks; entrada e vencimento ainda exigem ticks identificados e continuidade dentro do contrato. Candles derivados de ticks com cobertura incompleta não preenchem lacunas. A nova política é versionada nos metadados e exige reconstrução/reavaliação dos artefatos anteriores, sem promover modelos automaticamente.
+
+Para recuperar um snapshot offline em **diretório novo**, sem treinar ou conectar:
+
+```bash
+.venv/bin/python training_data.py --input ticks_v2.csv --symbol frxGBPCAD \
+  --history 'Histórico Ativos/frxGBPCAD-bf233306bc.csv' \
+  --output-dir /tmp/standeriv-gbpcad-preparado
+```
+
+Preserve `prices.csv.preparation.json` junto de `prices.csv`: ele contém hashes, quarentena e vetos temporais. O painel recebe o progresso real da preparação da IA (amostras, candles válidos e gaps), com diagnóstico atualizado a cada 60 segundos. A janela maior não garante dados suficientes ou aprovação e não aumenta a retenção da coleta existente.
+
+A preparação da IA também usa `training_history.py` para complementar os candles fechados ausentes e recuperar ticks históricos identificados. O cliente usa somente o [WebSocket público da Deriv](https://developers.deriv.com/docs/options/websocket/), sem token, OTP, conta ou assinatura ao vivo. O cache incremental fica em `.training_inputs/history/`, separado de `ticks_v2.csv` e de `Histórico Ativos/`. O limite homologado da coleta e seu backfill desativado permanecem intactos.
+
+A cada diagnóstico, a recuperação dispõe de até 12 consultas e 15 segundos, com intervalo mínimo de um segundo entre envios. Candles usam páginas de até 1.000 posições; ticks, páginas explícitas de 5.000 registros com paginação regressiva. Somente lacunas são consultadas. O cache conserva progresso entre rodadas e reinícios; páginas vazias permanecem pendentes por pelo menos cinco minutos, e rate limit impõe backoff compartilhado entre os ativos da IA. Respostas sem cobertura suficiente não criam candles ou ticks. Retenção e disponibilidade efetivas continuam sujeitas à API; a janela de 28 dias não demonstra que a corretora fornecerá esse período.
+
+Na IA isolada, primeiro são reaproveitados os ticks locais e os caches
+verificados, incluindo ticks do cache de 15 minutos. OHLC de 15 minutos não é
+dividido em candles de 5 minutos: esses candles vêm do histórico público ou de
+ticks com cobertura comprovada. Se ainda faltarem dados, o ativo atual pode
+continuar até quatro lotes, com teto total de 48 consultas/45 segundos, sem
+esperar novos ticks entre eles. O complemento para ao atingir prontidão,
+esgotar o orçamento, não progredir ou encontrar busy/backoff. Um lock ocupado
+preserva o último snapshot/diagnóstico verificado, quando disponível.
+
+O executor da IA isolada carrega 50 candles privados de 5 minutos e completa
+lacunas em worker separado, sem bloquear o callback de ticks nem exigir o
+aquecimento técnico de 150 candles de 15 minutos. O complemento ao vivo
+consulta as últimas seis horas, mantendo o cache de 28 dias. Modos técnicos
+preservam seu aquecimento e recuperação existentes. Uma origem corrompida pode
+ser excluída integralmente de um snapshot independente da IA, com hash e motivo
+registrados, para reconstrução por histórico público validado; o CSV original
+e os vetos conhecidos são preservados.
+
+Para complementar dados públicos sem reiniciar o bot ou treinar modelos, use um **diretório de saída novo**:
+
+```bash
+.venv/bin/python training_history.py --input ticks_v2.csv --symbol frxEURJPY \
+  --history 'Histórico Ativos/frxEURJPY-7a28647167.csv' \
+  --cache-dir .training_inputs/history \
+  --output-dir /tmp/standeriv-eurjpy-complementado --max-requests 12 --seconds 15
+```
+
+Para preparar exclusivamente o histórico de 5 minutos, sem iniciar o bot ou
+treinar, o CLI também aceita `--timeframe 300 --duration 900 --rounds 4
+--total-requests 48 --total-seconds 45`. A saída deve continuar em diretório
+novo; o cache é separado por símbolo/timeframe e os lotes preservam seu progresso.
+
+O relatório `history_recovery` registra consultas, páginas obtidas, intervalos ainda ausentes, erros, timeouts e latência das consultas públicas. O diagnóstico do pipeline também resume os timeouts já registrados pelo coletor no trecho final do log, limitado a 256 KB e filtrado pela sessão. Ele não altera ping/pong, reconexão ou callbacks e não atribui os timeouts a uma causa de rede sem medição. A rotina de preparação e os critérios de aprovação/shadow só entram no processo após ele carregar o código atualizado; o comando acima apenas prepara o cache e o snapshot.
+
+Após aprovação offline, o bundle passa por shadow forward sem compras.
+Na **IA isolada de 5 minutos**, `training_canary.py` admite um canary de
+**8 resultados não sobrepostos**, exigindo **pelo menos 7 acertos e saldo
+unitário positivo**, se os metadados comprovarem teste histórico elegível com
+ao menos 30 contratos, seleção separada e embargo temporal. Seu mínimo teórico
+é de **2 horas desde a primeira previsão elegível**; não equivale à evidência
+de 30 resultados novos. Payout observado mínimo de 70%, confiança, gaps,
+identidade do bundle e demais gates de execução permanecem obrigatórios.
+
+A reprovação é antecipada quando `acertos + resultados restantes < 7`.
+Por exemplo, o segundo erro já impede 7/8 e encerra a tentativa, acionando
+a busca de outro mercado. A aprovação continua exigindo os oito resultados.
+Estados antigos inviáveis são reconhecidos sem zerar contagens: conservam
+resultados e eventuais previsões simuladas pendentes para auditoria. A troca
+de mercado continua aguardando a reconciliação de qualquer contrato financeiro
+ativo. O status informa os acertos, o máximo ainda possível e o motivo da
+reprovação (`minimum_wins_unreachable`).
+
+A política `isolated_ai_canary_v1` tem estado próprio em
+`shadow_state.json.canary/`, com época de ativação, prova histórica e ledger
+dos períodos já utilizados. Resultados anteriores não são importados como
+forward do canary. A validação original continua preservada em
+`shadow_state.json`, acumulando seus resultados e pendências; aprovações e
+reprovações antigas não são convertidas. O mesmo bundle/política retoma a
+sequência após reinício, sem repetir janelas até passar. Reprovação ou arquivo
+canary inválido bloqueia a reutilização daquele bundle. Candidatos diferentes
+não reutilizam um período histórico já admitido nessa política curta.
+
+Sem prova histórica suficiente ou com período já consumido, permanece a
+regra original de **30 resultados e 55% de acerto**, sem reduzir o piso por
+simples contagem de candles. Os modos combinados mantêm a política original.
+Ambos os caminhos permitem compras somente em conta demo; conta real permanece
+bloqueada. As mudanças entram em uso quando o processo carregar o código;
+não reiniciam nem substituem modelos em execução.
+
+A inferência da IA isolada reutiliza a previsão enquanto os 50 candles
+fechados, preços, modelo e limiar forem idênticos. A causalidade é conferida
+antes do cache, e payout/risco/compra continuam sendo avaliados normalmente.
+O status publica liquidações intermediárias, contagens separadas do canary e
+da validação original, duração do trecho de análise do callback e timeouts
+separados de coletor/executor. Essa medição não cobre o callback inteiro nem
+comprova que timeouts de conexão tenham sido eliminados.
 
 O target representa alta, queda ou empate entre o primeiro tick após o sinal e o primeiro tick no vencimento. Empate perde tanto CALL quanto PUT. A duração atual é fixa em 15 minutos (`DURATION=15`, `DURATION_UNIT="m"`). As duas próximas observações e sua média não são usadas como target.
 
 No caminho com IA ativa, abstenção, falta de dados e modelo incompatível
 impedem o voto do modelo; entradas dependem também do consenso dos módulos. A força técnica real participa do score; o score não representa probabilidade de vitória. Antes da compra, a probabilidade calibrada da direção é confrontada com preço e payout da proposta.
+
+### Progresso e escolha de candidatos do Modelo de Treino
+
+A avaliação do Modelo de Treino isolado usa sua previsão e os gates de
+confiança, payout e retorno esperado; não exige o score combinado dos módulos
+técnicos desligados. A política de avaliação passa à versão 4 e identifica os
+geradores habilitados. Bundles avaliados sob políticas anteriores permanecem
+preservados, mas exigem reavaliação antes de serem usados pelo código atualizado.
+
+O progresso em `.training_inputs/progress.json` reconhece rótulos por identidade
+temporal e resultado, separadamente por ativo. Entrar informação nova e expirar
+informação antiga na janela de 28 dias não zera esse progresso. Uma tentativa
+consome somente os rótulos de seu snapshot, mantendo os lotes de renovação já
+definidos e os critérios de aprovação.
+
+Após uma tentativa, o complemento da IA só considera os dados prontos quando
+também há rótulos ainda não usados suficientes para o lote de retreino. Ter
+1.323 rótulos antigos, por exemplo, não encerra a recuperação se faltam os
+120 novos exigidos após reprovação de desempenho. O bootstrap pode completar
+lacunas históricas antes de existir modelo aprovado ou executor iniciado,
+sem consumir esses rótulos durante o diagnóstico.
+
+Entre os candidatos elegíveis do scanner existente, a IA prioriza dados prontos
+e capacidade para pelo menos 30 contratos sem sobreposição na validação e no
+teste. Esse limite superior não garante sinais nem aprovação. Durante a espera
+sem modelo, consulta até dois alternativos por rodada, com intervalo mínimo de
+60 segundos entre rodadas; só pede troca quando outro candidato estiver pronto
+para treino ou tiver um bundle compatível. A sessão anterior é encerrada antes
+da troca. Contratos pendentes continuam tendo prioridade de reconciliação.
+Na IA isolada, os candidatos já consultados saem temporariamente da próxima
+pesquisa: o percurso alcança os elegíveis além dos cinco primeiros, preservando
+os filtros do scanner. Um bundle avançando no shadow não é interrompido por
+essa busca de dados.
+
+Bundles aprovados são reservados por símbolo e hash em
+`.training_inputs/models/`. A retomada valida contrato, política, dependências,
+hash e payload. O shadow guarda estados completos em `shadow_state.json.states/`
+e só recupera a identidade exata de símbolo, modelo, timeframe e vencimento.
+Um bundle em shadow não é trocado por simples espera de dados; reprovação
+shadow permanece associada ao bundle e não é apagada ao voltar ao ativo.
+Os gates de shadow/demo, Score Ponderado e coleta permanecem preservados.
 
 ## Seleção e histórico de ativos
 
@@ -288,8 +470,8 @@ estar abertos, sem suspensão, atender ao ADX e à sondagem CALL/PUT.
 `Histórico Ativos/` mantém um CSV OHLC no esquema v2 por símbolo, além de
 metadados temporários de epochs sem candle. A sincronização lê primeiro o disco,
 busca gaps e candles posteriores e grava os resultados ordenados e deduplicados
-atomicamente. O limite local é `ASSET_HISTORY_CANDLES=336` candles; o orçamento de treino
-continua sendo de sete dias/672 candles. Falha de sincronização
+atomicamente. O limite local é `ASSET_HISTORY_CANDLES=336` candles; o orçamento histórico
+da coleta continua sendo de sete dias/672 candles, separado dos 28 dias da preparação da IA. Falha de sincronização
 não remove candles recentes válidos. O executor reutiliza esse histórico no
 buffer compartilhado. O treino continua exigindo ticks identificados; candles
 não são convertidos em ticks.
@@ -485,7 +667,7 @@ a execução técnica valida preço e payout sem exigir ou inventar probabilidad
 calibrada; treino, promoção e shadow de modelo não liberam nem bloqueiam esse caminho.
 
 ### Candles Baseados em Tempo
-`CANDLE_TIMEFRAME_SEC = 900` define o timeframe operacional atual: candles de 15 minutos. O treino e a inferência usam o mesmo timeframe e vencimento de 15 minutos.
+`CANDLE_TIMEFRAME_SEC = 900` define o timeframe operacional atual: candles de 15 minutos para Score Ponderado, Price Action, padrões e modos combinados. O Modelo de Treino isolado (IA habilitada e demais geradores desligados) usa candles próprios de 300 segundos, definidos por `model_contract.model_timeframe_sec()`, sem alterar este parâmetro. O vencimento continua em 15 minutos nos dois perfis.
 
 ### Buffer de Preços
 `PRICE_BUFFER_SIZE = 500` limita o buffer bruto. Features de modelos usam a janela canônica de 50 candles definida em `model_contract.py`.
@@ -545,6 +727,12 @@ Defina `DASHBOARD_TOKEN` no `.env` para proteger as rotas de controle do bot com
 | `ADX_MIN` | 30 | Tendência mínima exigida para sinal técnico em modo balanceado |
 | `ADX_ADAPTIVE_PERCENTILE` | 50 | Percentil do histórico de ADX usado como piso adaptativo |
 | `TARGET_LOOKFORWARD` | 1 | Candles de 15 minutos até o vencimento; o target é calculado por timestamps |
+| `SHADOW_MIN_RESULTS` | 30 | Resultados forward da validação original; não reduzir para o canary |
+| `SHADOW_MIN_ACCURACY` | 55% | Acerto mínimo da validação original |
+| `SHADOW_MIN_NET_PAYOUT` | 70% | Payout líquido observado mínimo no shadow e no canary |
+| `RETRAIN_NEW_LABELS_TRIGGER` | 120 | Rótulos novos exigidos para retreino após reprovação de desempenho |
+| `TRAINING_HISTORY_DAYS` | 7 | Orçamento da coleta; a preparação da IA usa 28 dias em `training_data.py` |
+| `ASSET_HISTORY_CANDLES` | 336 | Limite local do histórico OHLC por ativo |
 
 ## Histórico de Mudanças anteriores ao contrato v2
 

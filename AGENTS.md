@@ -20,3 +20,9 @@ Estas instruções aplicam-se a todo o repositório. Atue como engenheiro de sof
 - Não trate `--demo` como garantia de isolamento: confira o fluxo de autenticação e a conta efetivamente utilizada antes de qualquer execução conectada.
 - Não invente resultados de testes, APIs, métricas ou promessas de rentabilidade. Diferencie comportamento observado de hipótese.
 - Conclua com o resultado, arquivos relevantes, verificações realizadas e limitações reais.
+
+## Ferramentas do projeto
+
+- Rode testes em cópia isolada com `.claude/skills/standeriv-testes-isolados/scripts/run_isolated.sh`.
+- Confira a homologação com `.claude/skills/standeriv-homologacao/scripts/check_homologacao.py` antes e depois de mexer em módulos congelados ou compartilhados.
+- Para diagnóstico operacional somente leitura, use `.claude/skills/standeriv-auditoria-status/scripts/audit_status.py`; registros novos vão para `docs/historico/` e para seu [índice](docs/historico/INDICE.md).
