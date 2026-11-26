@@ -26,35 +26,42 @@ def _make_down_prices(n=200, base=6600.0, step=-0.1):
 # ─── Testes de indicadores existentes ──────────────────────────
 
 class TestExistingIndicators:
+    """Verifica retornos básicos dos indicadores clássicos."""
 
     def test_ema_basic(self):
+        """Garante que ema retorna float com dados suficientes."""
         prices = _make_prices(50)
         result = ind.ema(prices, 9)
         assert result is not None
         assert isinstance(result, float)
 
     def test_ema_insufficient(self):
+        """Garante que ema retorna None com poucos preços."""
         assert ind.ema([1.0, 2.0], 9) is None
 
     def test_rsi_range(self):
+        """Garante que rsi retorna valor entre 0 e 100."""
         prices = _make_prices(100)
         result = ind.rsi(prices, 14)
         assert result is not None
         assert 0.0 <= result <= 100.0
 
     def test_macd_returns_tuple(self):
+        """Garante que macd retorna uma tupla de três valores."""
         prices = _make_prices(100)
         result = ind.macd(prices, 12, 26, 9)
         assert result is not None
         assert len(result) == 3
 
     def test_adx_positive(self):
+        """Garante que adx retorna valor não negativo."""
         prices = _make_prices(100)
         result = ind.adx(prices, 14)
         assert result is not None
         assert result >= 0.0
 
     def test_bollinger_order(self):
+        """Garante que as bandas de bollinger vêm ordenadas como superior >= média >= inferior."""
         prices = _make_prices(50)
         result = ind.bollinger(prices, 20, 2.0)
         assert result is not None
@@ -62,6 +69,7 @@ class TestExistingIndicators:
         assert upper >= mid >= lower
 
     def test_momentum_sign(self):
+        """Garante que momentum retorna valor (não None) com dados suficientes."""
         prices = _make_prices(20)
         result = ind.momentum(prices, 3)
         assert result is not None
@@ -70,13 +78,16 @@ class TestExistingIndicators:
 # ─── Testes de ticks_to_candles ─────────────────────────────────
 
 class TestTicksToCandles:
+    """Verifica a agregação de ticks em velas."""
 
     def test_basic_conversion(self):
+        """Garante que 50 ticks com vela de 10 geram 5 velas."""
         prices = list(range(1, 51))  # 50 ticks
         candles = ind.ticks_to_candles(prices, candle_size=10)
         assert len(candles) == 5
 
     def test_candle_ohlc(self):
+        """Garante que a vela calcula corretamente abertura, fechamento, máxima e mínima."""
         prices = [10.0, 12.0, 8.0, 11.0, 9.0, 13.0, 7.0, 14.0, 10.0, 15.0]
         candles = ind.ticks_to_candles(prices, candle_size=10)
         assert len(candles) == 1
@@ -87,11 +98,13 @@ class TestTicksToCandles:
         assert c["low"] == 7.0
 
     def test_partial_ignored(self):
+        """Garante que a vela incompleta final é descartada."""
         prices = list(range(1, 16))  # 15 ticks, candle_size=10
         candles = ind.ticks_to_candles(prices, candle_size=10)
         assert len(candles) == 1  # apenas 1 vela completa
 
     def test_empty(self):
+        """Garante que lista vazia de ticks gera lista vazia de velas."""
         candles = ind.ticks_to_candles([], candle_size=10)
         assert candles == []
 
@@ -99,13 +112,16 @@ class TestTicksToCandles:
 # ─── Testes de Price Action features ───────────────────────────
 
 class TestPriceActionFeatures:
+    """Verifica as features de Price Action."""
 
     def test_insufficient_candles_returns_none(self):
+        """Garante que price_action_features retorna None com poucas velas."""
         candles = [{"open": 1, "high": 2, "low": 0.5, "close": 1.5} for _ in range(10)]
         result = ind.price_action_features(candles)
         assert result is None
 
     def test_sufficient_candles_returns_dict(self):
+        """Garante que com velas suficientes o resultado tem 11 features."""
         prices = _make_prices(300)
         candles = ind.ticks_to_candles(prices, 10)
         assert len(candles) >= 15
@@ -114,6 +130,7 @@ class TestPriceActionFeatures:
         assert len(result) == 11
 
     def test_all_features_in_range(self):
+        """Garante que cada feature de PA respeita sua faixa ([-1, 1] ou [0, 1])."""
         prices = _make_prices(300)
         candles = ind.ticks_to_candles(prices, 10)
         result = ind.price_action_features(candles)
@@ -136,6 +153,7 @@ class TestPriceActionFeatures:
             assert 0.0 <= result[key] <= 1.0, f"{key}={result[key]} fora de [0, 1]"
 
     def test_feature_keys(self):
+        """Garante que o conjunto de chaves de PA é exatamente o esperado."""
         prices = _make_prices(300)
         candles = ind.ticks_to_candles(prices, 10)
         result = ind.price_action_features(candles)
@@ -151,17 +169,21 @@ class TestPriceActionFeatures:
 # ─── Testes de detecção de padrões de vela ─────────────────────
 
 class TestDetectCandlePatterns:
+    """Verifica a detecção de padrões de vela."""
 
     def test_empty_candles(self):
+        """Garante que lista vazia de velas não gera padrões."""
         result = ind.detect_candle_patterns([])
         assert result == []
 
     def test_insufficient_candles(self):
+        """Garante que uma única vela não gera padrões."""
         candles = [{"open": 1, "high": 2, "low": 0.5, "close": 1.5}]
         result = ind.detect_candle_patterns(candles)
         assert result == []
 
     def test_bullish_engulfing(self):
+        """Garante a detecção de Bullish Engulfing."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},  # filler
             {"open": 100, "high": 101, "low": 99, "close": 100},  # filler
@@ -173,6 +195,7 @@ class TestDetectCandlePatterns:
         assert "Bullish Engulfing" in names
 
     def test_bearish_engulfing(self):
+        """Garante a detecção de Bearish Engulfing."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},
             {"open": 100, "high": 101, "low": 99, "close": 100},
@@ -184,6 +207,7 @@ class TestDetectCandlePatterns:
         assert "Bearish Engulfing" in names
 
     def test_hammer(self):
+        """Garante a detecção de Hammer."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},
             {"open": 100, "high": 101, "low": 99, "close": 100},
@@ -196,6 +220,7 @@ class TestDetectCandlePatterns:
         assert "Hammer" in names
 
     def test_shooting_star(self):
+        """Garante a detecção de Shooting Star."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},
             {"open": 100, "high": 101, "low": 99, "close": 100},
@@ -208,6 +233,7 @@ class TestDetectCandlePatterns:
         assert "Shooting Star" in names
 
     def test_doji(self):
+        """Garante a detecção de Doji."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},
             {"open": 100, "high": 101, "low": 99, "close": 100},
@@ -220,6 +246,7 @@ class TestDetectCandlePatterns:
         assert "Doji" in names
 
     def test_three_white_soldiers(self):
+        """Garante a detecção de Three White Soldiers."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},  # filler
             {"open": 100, "high": 103, "low": 99.5, "close": 102},
@@ -231,6 +258,7 @@ class TestDetectCandlePatterns:
         assert "Three White Soldiers" in names
 
     def test_three_black_crows(self):
+        """Garante a detecção de Three Black Crows."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},  # filler
             {"open": 102, "high": 102.5, "low": 99, "close": 100},
@@ -242,6 +270,7 @@ class TestDetectCandlePatterns:
         assert "Three Black Crows" in names
 
     def test_pattern_has_strength(self):
+        """Garante que cada padrão traz força em [0, 1] e direção válida."""
         candles = [
             {"open": 100, "high": 101, "low": 99, "close": 100},
             {"open": 100, "high": 101, "low": 99, "close": 100},

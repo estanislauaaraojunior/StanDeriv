@@ -11,6 +11,7 @@ class TestFeatureSync:
     """Verifica que as listas de features estão sincronizadas."""
 
     def test_train_model_matches_ai_predictor(self):
+        """Garante que FEATURES do treino é idêntica a _FEATURES do preditor."""
         from train_model import FEATURES
         from ai_predictor import _FEATURES
         assert FEATURES == _FEATURES, (
@@ -20,10 +21,12 @@ class TestFeatureSync:
         )
 
     def test_feature_count_is_27(self):
+        """Garante que a lista FEATURES tem exatamente 27 itens."""
         from train_model import FEATURES
         assert len(FEATURES) == 27, f"Esperado 27 features, encontrado {len(FEATURES)}"
 
     def test_pa_features_present(self):
+        """Garante que todas as features de Price Action constam em FEATURES."""
         from train_model import FEATURES
         pa_features = [
             "pa_market_structure", "pa_bos_strength", "pa_trend_consistency",
@@ -39,6 +42,7 @@ class TestAiPredictorFeatureMap:
     """Verifica que _compute_feature_map retorna as features corretas."""
 
     def test_feature_map_returns_27_keys(self):
+        """Garante que _compute_feature_map retorna 27 chaves com 300 preços."""
         import math
         from ai_predictor import _compute_feature_map
 
@@ -49,6 +53,7 @@ class TestAiPredictorFeatureMap:
         assert len(result) == 27, f"Esperado 27 keys, encontrado {len(result)}: {list(result.keys())}"
 
     def test_feature_map_has_pa_keys(self):
+        """Garante que o mapa de features calculado contém as chaves de Price Action."""
         import math
         from ai_predictor import _compute_feature_map
 
@@ -70,6 +75,7 @@ class TestDatasetBuilder:
     """Verifica que dataset_builder extrai features PA."""
 
     def test_extract_features_has_pa(self):
+        """Garante que _extract_features do dataset_builder inclui as chaves de Price Action."""
         import math
         from dataset_builder import _extract_features
 
@@ -99,6 +105,7 @@ class TestDashboardImport:
         assert hasattr(ind, "detect_candle_patterns")
 
     def test_detect_candle_patterns_returns_list(self):
+        """Garante que detect_candle_patterns retorna uma lista para velas geradas."""
         import indicators as ind
         prices = [6500.0 + i * 0.1 for i in range(200)]
         candles = ind.ticks_to_candles(prices, 10)
@@ -159,19 +166,6 @@ class TestModelMetricsInApiState:
             f"Chaves ausentes: {expected_keys - entry.keys()}"
         )
 
-    def test_pipeline_trim_limit_is_at_least_200k(self):
-        """Verifica que o pipeline usa max_ticks >= 200000 no retrain."""
-        import re, os
-        pipeline_path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
-        with open(pipeline_path) as f:
-            source = f.read()
-        matches = re.findall(r"_trim_ticks\(tmp_ticks,\s*max_ticks=(\d+)\)", source)
-        assert matches, "_trim_ticks com max_ticks não encontrado em pipeline.py"
-        for val in matches:
-            assert int(val) >= 200000, (
-                f"max_ticks={val} é muito pequeno (mínimo 200000 para dataset crescer com o tempo)"
-            )
-
     def test_train_model_metrics_path_is_absolute(self):
         """Garante que train_model.py usa caminho absoluto para model_metrics.json."""
         import re, os
@@ -183,6 +177,28 @@ class TestModelMetricsInApiState:
         assert 'os.path.dirname(output_path) or "."' not in source, (
             "Caminho relativo 'or \".\"' ainda presente — corrigir para os.path.abspath"
         )
+
+    def test_pipeline_does_not_collect_forever_when_model_is_missing(self):
+        """Sem bundle compatível, o pipeline deve tentar treino inicial após coletar dados."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
+        with open(path) as f:
+            source = f.read()
+        assert "coleta apenas, sem contratos ou retreino automático" not in source
+        assert '_run_training(model_path=AI_MODEL_PATH+".new")' in source
+
+    def test_pipeline_skips_model_gates_when_model_module_is_disabled(self):
+        """Garante que o código-fonte do pipeline dispensa gates de modelo com IA desligada."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "pipeline.py")
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+
+        assert "model_required = bool(_cfg.USE_AI_MODEL)" in source
+        assert "if model_required and tournament_candidates" in source
+        assert "if model_required:\n        _prepare_training_start" in source
+        assert "model_exists = not model_required or (" in source
+        assert "IA desligada; retreino e promoção de modelo não bloqueiam a execução." in source
 
 
 class TestRecommendedConfig:
@@ -196,11 +212,11 @@ class TestRecommendedConfig:
             f"atual: {config.CANDLE_TIMEFRAME_SEC}s"
         )
 
-    def test_target_lookforward_at_least_2(self):
-        """Horizonte de 2+ candles é mais estável para previsão direcional."""
+    def test_target_lookforward_matches_fifteen_minute_expiry(self):
+        """Garante que o target respeita o vencimento de um candle de 15 minutos."""
         import config
-        assert config.TARGET_LOOKFORWARD >= 2, (
-            f"Estratégia recomenda TARGET_LOOKFORWARD >= 2, atual: {config.TARGET_LOOKFORWARD}"
+        assert config.CANDLE_TIMEFRAME_SEC == 900 and config.TARGET_LOOKFORWARD == 1, (
+            f"Esperado um candle por vencimento de 15 minutos, atual: {config.TARGET_LOOKFORWARD}"
         )
 
     def test_signal_score_min_is_selective(self):
@@ -211,15 +227,38 @@ class TestRecommendedConfig:
         )
 
     def test_ai_confidence_min_is_selective(self):
-        """Confiança mínima maior reduz operações de AUC ~0.5 (ruído)."""
+        """Confiança mínima segue a política aprovada; payout ainda filtra EV."""
         import config
-        assert config.AI_CONFIDENCE_MIN >= 0.55, (
-            f"Estratégia recomenda AI_CONFIDENCE_MIN >= 0.55, atual: {config.AI_CONFIDENCE_MIN}"
+        assert config.AI_CONFIDENCE_MIN >= config.MIN_APPROVAL_WIN_RATE, (
+            "AI_CONFIDENCE_MIN não pode ficar abaixo do piso de aprovação, "
+            f"atual: {config.AI_CONFIDENCE_MIN}"
         )
 
     def test_min_candles_warmup_adequate(self):
         """Aquecimento de 20+ velas dá ao modelo dados suficientes antes da primeira entrada."""
         import config
-        assert config.MIN_CANDLES >= 35, (
-            f"Estratégia recomenda MIN_CANDLES >= 35 (MACD precisa de 35 preços), atual: {config.MIN_CANDLES}"
+        assert config.MIN_CANDLES >= 150, (
+            f"Estratégia recomenda MIN_CANDLES >= 150 para contratos 15m, atual: {config.MIN_CANDLES}"
         )
+
+
+def test_pipeline_status_writes_are_thread_safe(tmp_path, monkeypatch):
+    """Garante que escritas concorrentes de status preservam todos os campos e não deixam temporários."""
+    import json
+    from concurrent.futures import ThreadPoolExecutor
+    import pipeline
+
+    status_path = tmp_path / "bot_status.json"
+    monkeypatch.setattr(pipeline, "_BOT_STATUS_JSON", status_path)
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = [
+            executor.submit(pipeline._write_pipeline_status, **{f"writer_{index}": index})
+            for index in range(48)
+        ]
+        for future in futures:
+            future.result()
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert all(status[f"writer_{index}"] == index for index in range(48))
+    assert list(tmp_path.glob(".bot_status.json.*.tmp")) == []

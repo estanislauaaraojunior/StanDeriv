@@ -1,3 +1,6 @@
+"""Coletor autônomo de ticks da Deriv que grava em CSV."""
+from market_data import ensure_header, append_record
+import math
 """
 collector.py — coletor autônomo de ticks.
 
@@ -14,11 +17,10 @@ Pressione Ctrl+C para encerrar. A reconexão é automática (intervalo 5s).
 """
 
 import collections
-import csv
 import json
-import os
 import signal
 import sys
+import time
 import websocket
 from datetime import datetime
 
@@ -35,17 +37,16 @@ _last_price: float = 0.0          # P2: referência para detecção de spike
 # P5: deduplicação — guarda os últimos 10.000 epochs sem nunca limpar tudo de uma vez
 _seen_epochs_deque: collections.deque = collections.deque(maxlen=10_000)
 _seen_epochs_set: set = set()
+TICK_LOG_INTERVAL = 200
 
 
 # ─────────────────────────────────────────────────────────────
 #  Utilitários
 # ─────────────────────────────────────────────────────────────
 
-def _ensure_header() -> None:
-    """Cria o arquivo com cabeçalho se não existir ou estiver vazio."""
-    if not os.path.exists(TICKS_CSV) or os.path.getsize(TICKS_CSV) == 0:
-        with open(TICKS_CSV, "w", newline="") as f:
-            csv.writer(f).writerow(["epoch", "datetime", "symbol", "price"])
+def _ensure_header():
+    """Garante o cabeçalho do CSV de ticks."""
+    ensure_header(TICKS_CSV)
 
 
 def _is_valid_tick(prev: float, new_price: float) -> bool:
@@ -56,10 +57,12 @@ def _is_valid_tick(prev: float, new_price: float) -> bool:
 
 
 def _uses_bearer_auth() -> bool:
+    """Indica se a sessão usa autenticação Bearer com conta definida."""
     return AUTH_MODE == "bearer" and bool(ACCOUNT_ID)
 
 
 def _get_ws_url() -> str:
+    """URL do WebSocket: a padrão no modo legado ou a obtida via OTP no modo Bearer."""
     if not _uses_bearer_auth():
         return WS_URL
     return deriv_session.get_options_ws_url(
@@ -100,6 +103,7 @@ def _setup_auth() -> bool:
 # ─────────────────────────────────────────────────────────────
 
 def on_open(ws) -> None:
+    """Ao conectar, autoriza (modo legado) e assina os ticks do símbolo."""
     print(f"[COLETOR] Conectado | Símbolo: {SYMBOL}")
     if not _uses_bearer_auth():
         ws.send(json.dumps({"authorize": TOKEN}))
@@ -107,6 +111,7 @@ def on_open(ws) -> None:
 
 
 def on_message(ws, message: str) -> None:
+    """Processa mensagens: valida, deduplica, rejeita spikes e grava cada tick no CSV."""
     global _tick_count, _last_price, _seen_epochs_deque, _seen_epochs_set
 
     data = json.loads(message)
@@ -123,6 +128,8 @@ def on_message(ws, message: str) -> None:
         tick      = data["tick"]
         epoch     = tick["epoch"]
         price     = tick["quote"]
+        if tick.get("symbol") != SYMBOL or not math.isfinite(price) or price <= 0:
+            return
         dt_str    = datetime.fromtimestamp(epoch).isoformat()
 
         # P5: deduplicação — ignora ticks já vistos (ex: reconexão)
@@ -145,23 +152,27 @@ def on_message(ws, message: str) -> None:
         _last_price = price
         _tick_count += 1
 
-        with open(TICKS_CSV, "a", newline="") as f:
-            csv.writer(f).writerow([epoch, dt_str, SYMBOL, price])
+        append_record(TICKS_CSV,epoch,SYMBOL,price)
 
-        # Exibe contador na mesma linha para não poluir o terminal
-        print(
-            f"\r[COLETOR] Ticks coletados: {_tick_count:>7,} | "
-            f"Último: {price} @ {dt_str}",
-            end="",
-            flush=True,
-        )
+        if _tick_count == 1 or _tick_count % TICK_LOG_INTERVAL == 0:
+            print(
+                f"[COLETOR] Ticks coletados: {_tick_count:>7,} | "
+                f"Último: {price} @ {dt_str}",
+                flush=True,
+            )
 
 
 def on_error(ws, error) -> None:
+    """Imprime erros do WebSocket e fecha a sessão atual para reconectar com nova URL."""
     print(f"\n[COLETOR] Erro WebSocket: {error}")
+    try:
+        ws.close()
+    except Exception:
+        pass
 
 
 def on_close(ws, close_status_code, close_msg) -> None:
+    """Informa o encerramento da conexão; o loop principal recria a sessão."""
     print(f"\n[COLETOR] Conexão encerrada (código: {close_status_code}) — reconectando...")
 
 
@@ -170,6 +181,7 @@ def on_close(ws, close_status_code, close_msg) -> None:
 # ─────────────────────────────────────────────────────────────
 
 def _handle_interrupt(sig, frame) -> None:
+    """Trata Ctrl+C: informa o total coletado, fecha o WebSocket e encerra o processo."""
     print(f"\n\n[COLETOR] Interrompido. {_tick_count:,} ticks salvos em '{TICKS_CSV}'.")
     if _ws_instance:
         _ws_instance.close()
@@ -177,6 +189,7 @@ def _handle_interrupt(sig, frame) -> None:
 
 
 def main() -> None:
+    """Prepara a autenticação e executa o WebSocket de coleta com reconexão automática."""
     global _ws_instance
 
     _ensure_header()
@@ -192,8 +205,6 @@ def main() -> None:
     print("  Pressione Ctrl+C para encerrar")
     print("=" * 55)
 
-    # Para autenticação Bearer/OTP a URL expira em ~60s.
-    # reconnect=5 reutilizaria a URL expirada → 401. Usamos loop manual.
     while True:
         try:
             ws = websocket.WebSocketApp(
@@ -205,8 +216,10 @@ def main() -> None:
             )
             _ws_instance = ws
             ws.run_forever()
+        except KeyboardInterrupt:
+            _handle_interrupt(None, None)
         except Exception as exc:
-            print(f"\n[COLETOR] Exceção inesperada: {exc}")
+            print(f"\n[COLETOR] Exceção inesperada: {exc} — reconectando em 5s")
         time.sleep(5)
 
 

@@ -5,13 +5,14 @@ Consolida a lógica de _extract_features / _compute_feature_map que estava
 duplicada em dataset_builder.py e ai_predictor.py.
 
 Uso:
-    from feature_engine import compute_feature_map, extract_feature_vector
+    from feature_engine import compute_feature_map
 
-    fm = compute_feature_map(prices)           # -> dict | None
-    vec = extract_feature_vector(prices, FEATURES)  # -> list[float] | None
+    feature_map = compute_feature_map(prices)  # -> dict | None
 """
 
 from typing import Optional
+import math
+from model_contract import FEATURE_WINDOW
 
 import indicators as ind
 from config import (
@@ -49,12 +50,19 @@ _PA_DEFAULTS = {
 }
 
 
-def compute_feature_map(prices: list) -> Optional[dict]:
+def compute_feature_map(prices: list, candles: list = None) -> Optional[dict]:
     """
     Calcula todos os indicadores para uma janela de preços.
 
     Retorna dict com 27 features ou None se dados insuficientes.
     """
+    prices = list(prices[-FEATURE_WINDOW:])
+    if not prices or any(not math.isfinite(float(p)) or p <= 0 for p in prices):
+        return None
+    if candles is not None:
+        candles = list(candles[-FEATURE_WINDOW:])
+        if len(candles) != len(prices) or any(c['close'] != p for c, p in zip(candles, prices)):
+            return None
     ema9  = ind.ema(prices, EMA_FAST)
     ema21 = ind.ema(prices, EMA_SLOW)
     rsi_v = ind.rsi(prices, RSI_PERIOD)
@@ -81,12 +89,14 @@ def compute_feature_map(prices: list) -> Optional[dict]:
             bb_position = (price - bb_lower) / band_range
 
     def _ret(n: int) -> float:
+        """Retorno percentual do preço atual em relação ao de `n` candles atrás."""
         if len(prices) <= n:
             return 0.0
         p_prev = prices[-1 - n]
         return (price - p_prev) / p_prev if p_prev != 0 else 0.0
 
     def _vol(n: int) -> float:
+        """Desvio-padrão dos retornos simples dos últimos `n` candles."""
         slice_ = prices[-n - 1:]
         if len(slice_) < 2:
             return 0.0
@@ -104,7 +114,8 @@ def compute_feature_map(prices: list) -> Optional[dict]:
     low5  = min(last5)
     hl5   = (high5 - low5) / price if price != 0 else 0.0
 
-    candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+    if candles is None:
+        candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
     pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
     pa_features = pa if pa is not None else _PA_DEFAULTS
 
@@ -129,13 +140,31 @@ def compute_feature_map(prices: list) -> Optional[dict]:
     }
 
 
-def extract_feature_vector(prices: list, feature_order: list) -> Optional[list]:
-    """
-    Extrai features de uma lista de preços como vetor ordenado.
+EXPERIMENTAL_FEATURES_VERSION = 'horizon_context_v1'
+EXPERIMENTAL_FEATURES = ['return_15m', 'return_30m', 'return_60m', 'volatility_30m',
+                         'distance_ema9', 'distance_ema21', 'hour_sin', 'hour_cos']
 
-    Retorna list[float] na ordem de feature_order, ou None se dados insuficientes.
-    """
-    fm = compute_feature_map(prices)
-    if fm is None:
+
+def compute_experimental_features(prices, signal_epoch, timeframe_sec):
+    """Experimento causal; não modifica as 27 entradas do bundle operacional v2."""
+    from datetime import datetime, timezone
+    prices = list(prices[-FEATURE_WINDOW:])
+    steps = {minutes: math.ceil(minutes*60/timeframe_sec) for minutes in (15, 30, 60)}
+    if len(prices) <= max(steps.values()):
         return None
-    return [fm.get(f, 0.0) for f in feature_order]
+    if any(not math.isfinite(p) or p <= 0 for p in prices):
+        return None
+    result = {f'return_{minutes}m': prices[-1]/prices[-1-count]-1 for minutes, count in steps.items()}
+    tail = prices[-steps[30]-1:]
+    returns = [b/a-1 for a, b in zip(tail, tail[1:])]
+    mean = sum(returns)/len(returns)
+    result['volatility_30m'] = math.sqrt(sum((r-mean)**2 for r in returns)/len(returns))
+    for name, period in [('ema9', EMA_FAST), ('ema21', EMA_SLOW)]:
+        ema = ind.ema(prices, period)
+        if ema is None:
+            return None
+        result['distance_'+name] = prices[-1]/ema-1
+    dt = datetime.fromtimestamp(signal_epoch, timezone.utc)
+    hour = dt.hour + dt.minute/60
+    result.update(hour_sin=math.sin(2*math.pi*hour/24), hour_cos=math.cos(2*math.pi*hour/24))
+    return result

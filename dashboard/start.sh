@@ -7,9 +7,9 @@ set -e
 # Vai para a raiz do projeto independente de onde o script é chamado
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 
-# Detecta o Python correto (venv do usuário, venv local ou sistema)
+# Detecta o Python correto (prioriza o venv local do projeto)
 PYTHON=""
-for PY in "$HOME/.venv/bin/python3" ".venv/bin/python3" "$(which python3 2>/dev/null)"; do
+for PY in ".venv/bin/python3" "$HOME/.venv/bin/python3" "$(command -v python3 2>/dev/null)"; do
     if [ -x "$PY" ]; then
         PYTHON="$PY"
         break

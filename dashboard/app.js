@@ -6,8 +6,9 @@
 'use strict';
 
 // ─── Backend URL ────────────────────────────────────────────────────────────
-// Aponta para o servidor local Flask. Altere se o servidor rodar em outro IP.
-const API_BASE_URL = 'http://localhost:5055';
+// Por padrão usa a mesma origem que serviu o dashboard. Para proxy/túnel,
+// defina window.STANDERIV_API_BASE_URL antes de carregar este arquivo.
+const API_BASE_URL = window.STANDERIV_API_BASE_URL || '';
 
 // ─── Estado ────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,8 @@ const state = {
   histFilter:   'all',
   allTrades:    [],
   activeContract: null,
+  backtestRunId: null,
+  backtestResultRunId: null,
 
   // Chart instances
   charts: {
@@ -25,6 +28,7 @@ const state = {
     rsi:    null,
     macd:   null,
     rtContract: null,
+    backtestEquity: null,
   },
 
   // Dados locais para RSI/MACD (série temporal de indicadores)
@@ -41,29 +45,142 @@ const POLL_IND      = 5_000;
 const POLL_MODEL    = 10_000;
 const POLL_LOGS     = 2_000;
 const POLL_CONTRACT = 2_000;
+const POLL_BACKTEST = 2_000;
+const POLL_PATTERNS = 15_000;
 
-// Candlestick desativado por padrão no gráfico técnico para evitar renderização distorcida.
+// Candlestick desativado por padrão para evitar renderização distorcida de velas.
 const ENABLE_CANDLESTICK = false;
-const RT_CONTRACT_CANDLE_SECONDS = 60;
+
+const _pollJobs = new Map();
+
+function _startPoller(name, callback, interval) {
+  if (_pollJobs.has(name)) return;
+  const job = { active: true, timer: null, running: false, run: null };
+  _pollJobs.set(name, job);
+
+  const run = async () => {
+    if (!job.active || document.hidden || job.running) return;
+    job.running = true;
+    try {
+      await callback();
+    } catch (error) {
+      console.warn(`[dashboard:${name}]`, error);
+    } finally {
+      job.running = false;
+      if (job.active && !document.hidden && _pollJobs.get(name) === job) {
+        job.timer = setTimeout(run, interval);
+      }
+    }
+  };
+
+  job.run = run;
+  run();
+}
+
+function _stopPoller(name) {
+  const job = _pollJobs.get(name);
+  if (!job) return;
+  job.active = false;
+  clearTimeout(job.timer);
+  _pollJobs.delete(name);
+}
+
+function _syncTabPollers(tab = state.activeTab) {
+  const tabJobs = {
+    overview: [
+      ['contract', pollContractRealtime, POLL_CONTRACT],
+      ['equity', pollEquity, POLL_TRADES],
+      ['history', loadHistory, POLL_TRADES],
+      ['patterns', pollCandlePatterns, POLL_PATTERNS],
+    ],
+    technical: [
+      ['ticks', pollTicks, POLL_TICKS],
+      ['indicators', pollIndicators, POLL_IND],
+      ['patterns', pollCandlePatterns, POLL_PATTERNS],
+    ],
+    ai: [['model-metrics', pollModelMetrics, POLL_MODEL]],
+    history: [['history', loadHistory, POLL_TRADES]],
+    stats: [['stats', pollStats, POLL_TRADES]],
+    backtest: [['backtest', pollBacktestStatus, POLL_BACKTEST]],
+    pipeline: [
+      ['logs', pollLogs, POLL_LOGS],
+      ['system', pollSystem, 5_000],
+    ],
+  };
+  const desired = new Map((tabJobs[tab] || []).map(([name, callback, interval]) => [
+    name,
+    [callback, interval],
+  ]));
+
+  for (const name of _pollJobs.keys()) {
+    if (name !== 'state' && !desired.has(name)) _stopPoller(name);
+  }
+  for (const [name, [callback, interval]] of desired) {
+    _startPoller(name, callback, interval);
+  }
+
+  if (tab !== 'overview' && _rtContractTimerInterval) {
+    clearInterval(_rtContractTimerInterval);
+    _rtContractTimerInterval = null;
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    for (const job of _pollJobs.values()) {
+      clearTimeout(job.timer);
+      job.timer = null;
+    }
+    if (_rtContractTimerInterval) {
+      clearInterval(_rtContractTimerInterval);
+      _rtContractTimerInterval = null;
+    }
+    return;
+  }
+
+  for (const job of _pollJobs.values()) job.run();
+});
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/** Formata número com `dec` casas decimais; retorna '—' para null/undefined. */
 function fmt(v, dec = 2)   { return v == null ? '—' : Number(v).toFixed(dec); }
+/** Formata valor como percentual com 2 casas (ex.: '12.34%'). */
 function fmtPct(v)          { return v == null ? '—' : fmt(v, 2) + '%'; }
+/** Formata valor em dólares com 2 casas (ex.: '$10.00'). */
 function fmtUsd(v)          { return v == null ? '—' : '$' + fmt(v, 2); }
+/** Converte segundos em texto 'Xh Ym Zs'; retorna '—' se vazio. */
 function fmtUptime(sec)     {
   if (!sec) return '—';
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
   return `${h}h ${m}m ${s}s`;
 }
+/** Atalho para document.getElementById. */
 function el(id)             { return document.getElementById(id); }
+/**
+ * Adiciona ou remove a classe `cls` do elemento conforme `flag`.
+ * @param {Element|string} elem Elemento ou id do elemento.
+ */
 function setClass(elem, cls, flag) {
   if (typeof elem === 'string') elem = el(elem);
   elem?.classList[flag ? 'add' : 'remove'](cls);
 }
+/** Escapa caracteres especiais de HTML para inserção segura em innerHTML. */
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
 
 // ─── Toast ──────────────────────────────────────────────────────────────────
 
+/**
+ * Exibe o toast com a mensagem por 3,5 s.
+ * @param {string} type Classe CSS adicional (ex.: 'ok', 'err').
+ */
 function showToast(msg, type = '') {
   const t = el('toast');
   t.textContent = msg;
@@ -83,6 +200,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     el('tab-' + tab)?.classList.add('active');
     el('topbarTitle').textContent = item.querySelector('.nav-label').textContent;
     state.activeTab = tab;
+    _syncTabPollers(tab);
 
     // Close mobile sidebar when selecting a tab
     _closeMobileSidebar();
@@ -94,27 +212,43 @@ document.querySelectorAll('.nav-item').forEach(item => {
         state.charts.rsi?.resize();
         state.charts.macd?.resize();
       }, 50);
-      _loadIndicatorSeries();
-      pollTicks();
     }
     if (tab === 'overview') {
       setTimeout(() => { state.charts.rtContract?.resize(); }, 50);
-      pollContractRealtime();
     }
     if (tab === 'stats') {
       setTimeout(() => { _profitDistChart?.resize(); }, 50);
-      pollStats();
     }
-    if (tab === 'pipeline') {
-      pollSystem();
-    }
-    if (tab === 'ai') {
-      pollModelMetrics();
+    if (tab === 'backtest') {
+      setTimeout(() => { state.charts.backtestEquity?.resize(); }, 50);
     }
   });
 });
 
-// ─── Chart.js defaults ──────────────────────────────────────────────────────
+// ─── Chart.js fallback/defaults ──────────────────────────────────────────────
+
+if (typeof window.Chart === 'undefined') {
+  window.Chart = class ChartFallback {
+    static defaults = {
+      color: '#8b949e',
+      borderColor: '#30363d',
+      font: {},
+      plugins: { legend: {} },
+      animation: {},
+    };
+    static registry = { controllers: { get: () => null } };
+
+    constructor(_ctx, config = {}) {
+      this.config = config;
+      this.data = config.data || { labels: [], datasets: [] };
+      this.options = config.options || {};
+    }
+
+    update() {}
+    resize() {}
+  };
+  console.warn('[dashboard] Chart.js indisponível; gráficos desativados, controles e APIs continuam ativos.');
+}
 
 Chart.defaults.color            = '#8b949e';
 Chart.defaults.borderColor      = '#30363d';
@@ -135,6 +269,7 @@ const baseChartOptions = {
 
 // ─── Equity Chart ───────────────────────────────────────────────────────────
 
+/** Cria o gráfico de linha da curva de saldo em state.charts.equity. */
 function initEquityChart() {
   const ctx = el('equityChart').getContext('2d');
   state.charts.equity = new Chart(ctx, {
@@ -163,17 +298,19 @@ function initEquityChart() {
   });
 }
 
+/** Atualiza a curva de saldo com os pontos (timestamp, balance_after, result) recebidos. */
 function updateEquityChart(data) {
   const chart = state.charts.equity;
   if (!chart) return;
 
   chart.data.labels = data.map(d => d.timestamp?.slice(0, 16) || '');
-  chart.data.datasets[0].data = data.map(d => ({ y: d.balance_after, _result: d.result }));
-  chart.update();
+  chart.data.datasets[0].data = data.map(d => ({ x: d.timestamp?.slice(0, 16) || '', y: d.balance_after, _result: d.result }));
+  chart.update('none');
 }
 
 // ─── Price Chart ────────────────────────────────────────────────────────────
 
+/** Cria o gráfico de preço (candlestick se habilitado e disponível, senão linha) com datasets de EMA 9 e 21. */
 function initPriceChart() {
   const ctx = el('priceChart').getContext('2d');
   // Usa candlestick apenas se habilitado e com plugin disponível.
@@ -240,10 +377,10 @@ function initPriceChart() {
 }
 
 // Polling periódico de candles (para gráfico candlestick)
+/** Busca /api/candles e atualiza OHLC e EMAs do gráfico de preço (apenas no modo candlestick). */
 async function pollCandles() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/candles?n=100');
-    const candles = await r.json();
+    const candles = await _fetchJson('/api/candles?n=100');
     if (!Array.isArray(candles) || !candles.length) return;
     const chart = state.charts.price;
     if (!chart || !state._priceChartIsCandlestick) return;
@@ -256,162 +393,88 @@ async function pollCandles() {
     chart.data.datasets[1].data = ema9d;
     chart.data.datasets[2].data = ema21d;
     chart.update('none');
-  } catch (_) {}
+  } catch (error) {
+    _recordPollError('candles', error);
+  }
 }
 
+/** Atualiza o gráfico de preço em modo linha com os ticks (epoch, price) e suas EMAs 9/21. */
 function updatePriceChart(ticks) {
   const chart = state.charts.price;
-  if (!chart || !ticks.length) return;
+  if (!chart) return;
   if (state._priceChartIsCandlestick) return; // updated by pollCandles
 
-  chart.data.datasets[0].data = ticks.map(t => ({ x: t.epoch, y: t.price }));
-  const prices = ticks.map(t => t.price);
+  const validTicks = Array.isArray(ticks) ? ticks : [];
+  chart.data.datasets[0].data = validTicks.map(t => ({ x: t.epoch, y: t.price }));
+  const prices = validTicks.map(t => t.price);
   chart.data.datasets[1].data = calcEma(prices, 9).map((v, i) => ({ x: ticks[i]?.epoch, y: v }));
   chart.data.datasets[2].data = calcEma(prices, 21).map((v, i) => ({ x: ticks[i]?.epoch, y: v }));
   chart.update('none');
 }
 
-// Helper: agrega ticks em velas OHLC de 30 segundos
-function ticksToCandles30s(ticks) {
-  if (!ticks || !ticks.length) return [];
-  const SIZE = RT_CONTRACT_CANDLE_SECONDS;
-  const candles = [];
-  let bucket = null;
-  for (const t of ticks) {
-    const epoch = Number(t.epoch);
-    const price = Number(t.price);
-    const bs = Math.floor(epoch / SIZE) * SIZE;
-    if (!bucket || bucket._bs !== bs) {
-      if (bucket) candles.push({ x: bucket._bs * 1000, o: bucket.o, h: bucket.h, l: bucket.l, c: bucket.c });
-      bucket = { _bs: bs, o: price, h: price, l: price, c: price };
-    } else {
-      if (price > bucket.h) bucket.h = price;
-      if (price < bucket.l) bucket.l = price;
-      bucket.c = price;
-    }
-  }
-  if (bucket) candles.push({ x: bucket._bs * 1000, o: bucket.o, h: bucket.h, l: bucket.l, c: bucket.c });
-  return candles;
-}
-
-// Plugin inline para desenhar velas OHLC sem depender de CDN externo
-const _inlineCandlestickPlugin = {
-  id: 'inlineCandlestick',
-
-  beforeDatasetsDraw(chart) {
-    const ds = chart.data.datasets[0];
-    if (!ds || !ds.data || !ds.data.length) return;
-    if (ds.data[0] == null || ds.data[0].o == null) return;
-
-    const { ctx, scales: { x: xS, y: yS } } = chart;
-    const total = ds.data.length;
-    const barW  = Math.max(4, (xS.right - xS.left) / Math.max(total, 1) * 0.70);
-
-    ctx.save();
-    ds.data.forEach(c => {
-      if (c.o == null) return;
-      const px  = xS.getPixelForValue(c.x);
-      const pyH = yS.getPixelForValue(c.h);
-      const pyL = yS.getPixelForValue(c.l);
-      const pyO = yS.getPixelForValue(c.o);
-      const pyC = yS.getPixelForValue(c.c);
-      const bull = c.c >= c.o;
-      // Cores estilo Deriv/TradingView
-      const clr     = bull ? '#26a69a' : '#ef5350';
-      const clrDark = bull ? '#1a7a71' : '#c62828';
-
-      // Pavio superior (topo → corpo) e inferior (corpo → fundo) — separados
-      ctx.lineWidth   = 1.5;
-      ctx.strokeStyle = clr;
-      ctx.beginPath();
-      ctx.moveTo(px, pyH);
-      ctx.lineTo(px, Math.min(pyO, pyC));
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(px, pyL);
-      ctx.lineTo(px, Math.max(pyO, pyC));
-      ctx.stroke();
-
-      // Corpo da vela — mínimo 2px para dojis ficarem visíveis
-      const bodyTop = Math.min(pyO, pyC);
-      const bodyH   = Math.max(2, Math.abs(pyO - pyC));
-      ctx.fillStyle   = clr;
-      ctx.strokeStyle = clrDark;
-      ctx.lineWidth   = 1;
-      ctx.fillRect(px - barW / 2, bodyTop, barW, bodyH);
-      ctx.strokeRect(px - barW / 2, bodyTop, barW, bodyH);
-    });
-    ctx.restore();
-  },
-};
-
+/** Cria o gráfico em tempo real do contrato (série de preço e marcador de entrada). */
 function initRtContractChart() {
   const canvas = el('rtContractChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
-  // Usa sempre scatter + plugin inline para garantir renderização das velas
-  // independentemente de CDNs externas (chartjs-chart-financial 0.2.1 tem
-  // incompatibilidades com Chart.js 4.4.x nos internals do BarController)
   state.charts.rtContract = new Chart(ctx, {
-    type: 'scatter',
-    plugins: [_inlineCandlestickPlugin],
+    type: 'line',
     data: {
       datasets: [
         {
-          label: `Velas ${RT_CONTRACT_CANDLE_SECONDS}s`,
+          label: 'Preço',
           data: [],
-          pointRadius: 0, // pontos ocultos — plugin desenha as velas OHLC
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.05)',
+          pointRadius: 0,
+          borderWidth: 1.6,
+          tension: 0.18,
+          fill: true,
+          order: 2,
         },
         {
           label: 'Entrada',
           data: [],
+          type: 'scatter',
           borderColor: '#ffb830',
           backgroundColor: '#ffb830',
-          pointRadius: 7,
-          pointHoverRadius: 8,
+          pointRadius: 5,
+          pointHoverRadius: 6,
           pointBorderWidth: 2,
           pointBorderColor: '#0d1117',
           showLine: false,
+          order: 1,
         },
       ],
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          mode: 'nearest',
-          intersect: false,
-          callbacks: {
-            label: ctx => {
-              const r = ctx.raw || {};
-              if (r.o != null) return `O ${fmt(r.o, 5)}  H ${fmt(r.h, 5)}  L ${fmt(r.l, 5)}  C ${fmt(r.c, 5)}`;
-              return `Entrada: ${fmt(r.y, 5)}`;
-            },
-          },
-        },
-      },
+      ...baseChartOptions,
       scales: {
         x: {
           type: 'linear',
-          grid: { color: '#1e2737' },
+          ...baseChartOptions.scales.x,
           ticks: {
             maxTicksLimit: 8,
             maxRotation: 0,
-            callback: v => new Date(v).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            callback: v => {
+              const d = new Date(v * 1000);
+              return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            },
           },
         },
-        y: { grid: { color: '#1e2737' }, position: 'right' },
+        y: { ...baseChartOptions.scales.y, position: 'right' },
       },
     },
   });
-  state._rtContractIsCandlestick = true;
 }
 
 let _rtContractTimerInterval = null;
 
+/**
+ * Atualiza textos, direção, barra de progresso e cronômetro do contrato (reinicia o setInterval de 1 s).
+ * Sem `contract`, mostra o estado ocioso.
+ */
 function _setRtContractStatus(contract, entryTick, lastTick) {
   const statusEl = el('rtContractStatus');
   const metaEl   = el('rtContractMeta');
@@ -431,26 +494,36 @@ function _setRtContractStatus(contract, entryTick, lastTick) {
   }
 
   const isBuy   = contract.direction === 'BUY' || contract.direction === 'CALL';
+  const isClosed = !!contract.closed;
   const side    = isBuy ? '▲ CALL / BUY' : '▼ PUT / SELL';
   const dirColor = isBuy ? '#00ff88' : '#ff4757';
   const dirBg    = isBuy ? 'rgba(0,255,136,0.12)' : 'rgba(255,71,87,0.12)';
 
-  if (statusEl) { statusEl.textContent = `${contract.symbol || '—'} • ${isBuy ? 'CALL/BUY' : 'PUT/SELL'}`; statusEl.style.color = dirColor; }
+  if (statusEl) {
+    statusEl.textContent = `${isClosed ? 'Último contrato' : (contract.phase || 'Ativo')} • ${contract.symbol || '—'} • ${isBuy ? 'CALL/BUY' : 'PUT/SELL'}`;
+    statusEl.style.color = dirColor;
+  }
   if (dirEl)    { dirEl.textContent = side; dirEl.style.background = dirBg; dirEl.style.color = dirColor; }
 
   const entryTxt   = entryTick ? fmt(entryTick.price, 5) : fmt(contract.entry_price, 5);
   const durationSec = (Number(contract.duration) || 0) * 60;
   const startEpoch  = Number(contract.buy_timestamp) || Number(contract.entry_epoch) || 0;
+  const endEpoch    = Number(contract.exit_epoch) || 0;
 
+  /** Recalcula tempo decorrido/restante e redesenha timer, progresso e meta. */
   function _tick() {
-    const now       = Date.now() / 1000;
+    const now       = isClosed && endEpoch > 0 ? endEpoch : Date.now() / 1000;
     const elapsed   = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
     const remaining = durationSec > 0 ? Math.max(0, durationSec - elapsed) : null;
     const pct       = durationSec > 0 ? Math.min(100, (elapsed / durationSec) * 100) : 0;
     const currentTxt = lastTick ? fmt(lastTick.price, 5) : '—';
 
     let timerTxt = '';
-    if (remaining !== null) {
+    if (isClosed) {
+      const profit = Number(contract.profit);
+      const result = contract.result || 'ENCERRADO';
+      timerTxt = `${result}${Number.isFinite(profit) ? ` ${profit >= 0 ? '+' : ''}${fmt(profit, 2)} USD` : ''}`;
+    } else if (remaining !== null) {
       const rm = Math.ceil(remaining);
       timerTxt = `⏱ ${Math.floor(rm / 60)}m ${rm % 60}s restantes de ${durationSec}s`;
     } else if (elapsed > 0) {
@@ -466,11 +539,17 @@ function _setRtContractStatus(contract, entryTick, lastTick) {
   _rtContractTimerInterval = setInterval(_tick, 1000);
 }
 
+/** Plota ticks válidos e o tick de entrada do contrato; sem contrato nem ticks, limpa o gráfico. */
 function updateRtContractChart(ticks, contract) {
   const chart = state.charts.rtContract;
   if (!chart) return;
+  const validTicks = Array.isArray(ticks)
+    ? ticks
+        .map(t => ({ epoch: Number(t.epoch), price: Number(t.price) }))
+        .filter(t => Number.isFinite(t.epoch) && Number.isFinite(t.price))
+    : [];
 
-  if (!contract && (!Array.isArray(ticks) || !ticks.length)) {
+  if (!contract && !validTicks.length) {
     chart.data.datasets[0].data = [];
     chart.data.datasets[1].data = [];
     chart.update('none');
@@ -478,64 +557,23 @@ function updateRtContractChart(ticks, contract) {
     return;
   }
 
-  if (state._rtContractIsCandlestick) {
-    // Modo candlestick: agrega ticks em velas de 30s
-    const candles = ticksToCandles30s(ticks);
-    chart.data.datasets[0].data = candles;
+  const series = validTicks.map(t => ({ x: t.epoch, y: t.price }));
+  chart.data.datasets[0].data = series;
 
-    // ── Ajuste dinâmico dos eixos ──────────────────────────────────────────
-    if (candles.length > 0) {
-      // Y: min/max do OHLC com padding proporcional
-      let minVal = Infinity, maxVal = -Infinity;
-      candles.forEach(c => {
-        if (isFinite(c.l) && c.l < minVal) minVal = c.l;
-        if (isFinite(c.h) && c.h > maxVal) maxVal = c.h;
-      });
-      if (isFinite(minVal) && isFinite(maxVal)) {
-        const range = maxVal - minVal;
-        const pad   = Math.max(range * 0.35, 0.0005);
-        chart.options.scales.y.min = minVal - pad;
-        chart.options.scales.y.max = maxVal + pad;
-      }
-      // X: garante que o eixo cubra todos os candles (ms)
-      const xFirst = candles[0].x;
-      const xLast  = candles[candles.length - 1].x + RT_CONTRACT_CANDLE_SECONDS * 1000;
-      chart.options.scales.x.min = xFirst;
-      chart.options.scales.x.max = xLast;
-    }
-
-    // Marcador de entrada: usa a vela mais próxima do epoch de entrada
-    let entryMarker = [];
-    if (contract && contract.entry_epoch) {
-      const entryMs = Number(contract.entry_epoch) * 1000;
-      const entryCandle = candles.find(c => c.x >= entryMs) || candles[0];
-      if (entryCandle) {
-        entryMarker = [{
-          x: entryCandle.x,
-          y: Number(contract.entry_price) || entryCandle.o,
-        }];
-      }
-    }
-    chart.data.datasets[1].data = entryMarker;
-  } else {
-    // Modo linha: plota ticks diretamente
-    const series = ticks.map(t => ({ x: Number(t.epoch), y: Number(t.price) }));
-    chart.data.datasets[0].data = series;
-
-    let entryTick = null;
-    if (contract && contract.entry_epoch) {
-      entryTick = ticks.find(t => Number(t.epoch) >= Number(contract.entry_epoch));
-      if (!entryTick && ticks.length) entryTick = ticks[0];
-    }
-    chart.data.datasets[1].data = entryTick ? [{ x: Number(entryTick.epoch), y: Number(entryTick.price) }] : [];
+  let entryTick = null;
+  if (contract && contract.entry_epoch) {
+    entryTick = validTicks.find(t => t.epoch >= Number(contract.entry_epoch));
+    if (!entryTick && validTicks.length) entryTick = validTicks[0];
   }
+  chart.data.datasets[1].data = entryTick ? [{ x: entryTick.epoch, y: entryTick.price }] : [];
 
   chart.update('active');
-  if (contract) _setRtContractStatus(contract, null, ticks[ticks.length - 1]);
+  if (contract) _setRtContractStatus(contract, entryTick, validTicks[validTicks.length - 1]);
 }
 
 // ─── RSI Chart ───────────────────────────────────────────────────────────────
 
+/** Cria o gráfico de RSI (escala 0–100, linhas destacadas em 30 e 70). */
 function initRsiChart() {
   const ctx = el('rsiChart').getContext('2d');
   state.charts.rsi = new Chart(ctx, {
@@ -571,6 +609,7 @@ function initRsiChart() {
 
 // ─── MACD Chart ────────────────────────────────────────────────────────────────────────────
 
+/** Cria o gráfico de barras do histograma MACD (verde positivo, vermelho negativo). */
 function initMacdChart() {
   const ctx = el('macdChart').getContext('2d');
   state.charts.macd = new Chart(ctx, {
@@ -604,6 +643,10 @@ function initMacdChart() {
 }
 
 // ─── Indicador EMA local (para gráfico de preço) ──────────────────────────────────────────────────
+/**
+ * Calcula a EMA de `prices`; valores antes do período completo ficam null.
+ * @returns {Array<number|null>} Série com o mesmo tamanho da entrada.
+ */
 function calcEma(prices, period) {
   if (prices.length < period) return new Array(prices.length).fill(null);
   const k = 2 / (period + 1);
@@ -622,10 +665,112 @@ function calcEma(prices, period) {
 
 let _pollFailures = 0;
 
+function _botOperationalCard(bot = {}, model = {}, riskState = {}, summary = {}, activeContract = {}) {
+  const status = bot.status || (bot.running ? 'running' : 'idle');
+  const pnlPct = Number(riskState.daily_pnl_pct ?? 0);
+  const pauseRemaining = Number(riskState.pause_remaining_sec ?? 0);
+  const isPaused = !!summary.is_paused || pauseRemaining > 0;
+  const useTrainedModel = bot.use_trained_model !== false;
+  const modelReady = model.ready === true;
+  const ticksCount = Number(model.ticks_count ?? 0);
+  const datasetRows = Number(model.dataset_rows ?? 0);
+  const minTicksTarget = Math.max(1, Number(model.min_ticks_target ?? 500));
+  const candleCount = Number(bot.candle_count ?? 0);
+  const minCandles = Math.max(1, Number(bot.min_candles ?? bot.model_feature_window ?? 0));
+  const warmupRemaining = Math.max(0, Number(bot.warmup_remaining_candles ?? Math.max(0, minCandles - candleCount)));
+  const hasActiveContract = !!activeContract.has_active;
+  const training = bot.training?.symbol === bot.symbol ? bot.training : {};
+
+  if (useTrainedModel && !modelReady) {
+    if (['invalid_data', 'training_error'].includes(training.stage)) {
+      return ['IA BLOQUEADA', 'card-value warning', training.reason || 'Dados inválidos para treinamento'];
+    }
+    if (training.stage === 'insufficient_samples') {
+      return ['AMOSTRAS INSUFICIENTES', 'card-value warning',
+        `${Number(training.labelable_contracts ?? 0)} / ${Number(training.required_contracts ?? 0)} amostras`
+        + ` | ${Number(training.feature_candles ?? 0)} candles válidos`
+        + ` | ${Number(training.tick_gaps ?? 0)} gaps de ticks`];
+    }
+    if (training.stage === 'preparing') {
+      return ['PREPARANDO DADOS', 'card-value warning', 'Validando snapshot do ativo'];
+    }
+    if (training.stage === 'training') {
+      return ['TREINANDO', 'card-value warning', `${Number(training.labelable_contracts ?? 0)} amostras`];
+    }
+    if (training.stage === 'model_rejected') {
+      return ['MODELO REPROVADO', 'card-value warning', (training.reason || 'Critérios de aprovação não atendidos')
+        + (training.next_training_at ? ` | Próximo treino: ${Number(training.labelable_contracts ?? 0)}/${Number(training.next_training_at)} amostras; faltam ${Number(training.remaining_samples)}` : '')];
+    }
+    if (training.stage === 'unchanged_dataset') {
+      return ['AGUARDANDO NOVOS DADOS', 'card-value warning', training.reason];
+    }
+  }
+
+  if (pnlPct <= -25) {
+    return ['STOP LOSS', 'card-value negative', `PnL: ${pnlPct.toFixed(1)}% — Dia encerrado`];
+  }
+  if (pnlPct >= 50) {
+    return ['TAKE PROFIT', 'card-value positive', `PnL: +${pnlPct.toFixed(1)}% — Meta atingida`];
+  }
+  if (isPaused) {
+    return [
+      'PAUSADO',
+      'card-value warning',
+      pauseRemaining > 0 ? `Retoma em ${Math.floor(pauseRemaining/60)}m ${pauseRemaining%60}s` : 'Losses consecutivos',
+    ];
+  }
+  if (useTrainedModel && modelReady && bot.shadow?.model_id && !bot.shadow.approved) {
+    const shadow = bot.shadow;
+    const detail = shadow.reason === 'missing_observed_payout'
+      ? 'Aguardando cotação observada para validar previsão'
+      : `${Number(shadow.result_count ?? 0)} / ${Number(shadow.minimum_results ?? 30)} resultados`;
+    return [shadow.reason === 'rejected' ? 'SHADOW REPROVADO' : 'VALIDANDO SHADOW', 'card-value warning', detail];
+  }
+  if (['collecting', 'starting'].includes(status)) {
+    const suffix = minCandles > 0 ? ` | ${candleCount} / ${minCandles} candles` : '';
+    return ['COLETANDO', 'card-value', `${ticksCount} / ${minTicksTarget} ticks coletados${suffix}`];
+  }
+  if (useTrainedModel && ['training', 'waiting_model'].includes(status)) {
+    const detail = warmupRemaining > 0
+      ? `Warm-up: faltam ${warmupRemaining} candles`
+      : `IA aprendendo (${datasetRows} linhas)`;
+    return ['TREINANDO', 'card-value warning', detail];
+  }
+  if (useTrainedModel && !modelReady) {
+    const candidate = model.last_candidate_metrics ?? {};
+    const reason = (candidate.rejection_reasons ?? []).join('; ')
+      || model.blocked_reason
+      || `Aguardando bundle aprovado (${ticksCount} ticks, ${datasetRows} linhas)`;
+    return ['IA BLOQUEADA', 'card-value warning', reason];
+  }
+  return [
+    'OPERANDO',
+    'card-value positive',
+    hasActiveContract
+      ? 'Contrato ativo em andamento'
+      : useTrainedModel
+        ? 'Procurando entrada com modelo aprovado'
+        : 'Aguardando oportunidade dos módulos técnicos',
+  ];
+}
+
+function _renderBotCard(bot = {}, model = {}, riskState = {}, summary = {}, activeContract = {}) {
+  if (!bot.running) {
+    el('cardStatus').textContent = 'PARADO';
+    el('cardStatus').className   = 'card-value';
+    el('cardStatusSub').textContent = '—';
+    return;
+  }
+  const [label, className, detail] = _botOperationalCard(bot, model, riskState, summary, activeContract);
+  el('cardStatus').textContent = label;
+  el('cardStatus').className   = className;
+  el('cardStatusSub').textContent = detail;
+}
+
+/** Consulta /api/state e atualiza status do bot, cards, risco, modelo e métricas; mostra banner após 3 falhas seguidas. */
 async function pollState() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/state', { cache: 'no-store' });
-    const d = await r.json();
+    const d = await _fetchJson('/api/state', { cache: 'no-store' });
     _pollFailures = 0;
     _updateConnectionBanner(false);
 
@@ -643,47 +788,7 @@ async function pollState() {
       el('btnStop').style.display  = '';
       el('logBotStatus').textContent = '● Rodando';
       el('logBotStatus').className   = 'log-stat log-bot-indicator running';
-      // — Estado operacional detalhado —
-      const rs = d.risk_state ?? {};
-      const pnlPct = rs.daily_pnl_pct ?? 0;
-      const isPaused = (d.summary?.is_paused) || (rs.pause_remaining_sec > 0);
-      const isStopLoss   = pnlPct <= -25;
-      const isTakeProfit = pnlPct >= 50;
-      const hasModel = !!d.model?.model_exists;
-      const ticksCount = Number(d.model?.ticks_count ?? 0);
-      const datasetRows = Number(d.model?.dataset_rows ?? 0);
-      const minTicksTarget = Math.max(1, Number(d.model?.min_ticks_target ?? 1000));
-      const hasActiveContract = !!d.active_contract?.has_active;
-      if (isStopLoss) {
-        el('cardStatus').textContent = 'STOP LOSS';
-        el('cardStatus').className   = 'card-value negative';
-        el('cardStatusSub').textContent = `PnL: ${pnlPct.toFixed(1)}% — Dia encerrado`;
-      } else if (isTakeProfit) {
-        el('cardStatus').textContent = 'TAKE PROFIT';
-        el('cardStatus').className   = 'card-value positive';
-        el('cardStatusSub').textContent = `PnL: +${pnlPct.toFixed(1)}% — Meta atingida`;
-      } else if (isPaused) {
-        el('cardStatus').textContent = 'PAUSADO';
-        el('cardStatus').className   = 'card-value warning';
-        const rem = rs.pause_remaining_sec ?? 0;
-        el('cardStatusSub').textContent = rem > 0
-          ? `Retoma em ${Math.floor(rem/60)}m ${rem%60}s`
-          : 'Losses consecutivos';
-      } else if (!hasModel && ticksCount < minTicksTarget) {
-        el('cardStatus').textContent = 'COLETANDO';
-        el('cardStatus').className   = 'card-value';
-        el('cardStatusSub').textContent = `${ticksCount} / ${minTicksTarget} ticks coletados`;
-      } else if (!hasModel && ticksCount >= minTicksTarget) {
-        el('cardStatus').textContent = 'CAPTANDO';
-        el('cardStatus').className   = 'card-value';
-        el('cardStatusSub').textContent = `IA aprendendo (${datasetRows} linhas)`;
-      } else {
-        el('cardStatus').textContent = 'OPERANDO';
-        el('cardStatus').className   = 'card-value positive';
-        el('cardStatusSub').textContent = hasActiveContract
-          ? 'Contrato ativo em andamento'
-          : 'Procurando entrada para o contrato';
-      }
+      _renderBotCard(d.bot, d.model, d.risk_state, d.summary, d.active_contract);
     } else {
       led.className  = 'status-led stopped';
       text.textContent = 'Parado';
@@ -697,10 +802,8 @@ async function pollState() {
     }
 
     // — Símbolo ativo —
-    if (d.active_symbol) {
-      const symEl = el('activeSymbol');
-      if (symEl) symEl.textContent = d.active_symbol;
-    }
+    const symEl = el('activeSymbol');
+    if (symEl) symEl.textContent = d.active_symbol || '';
 
     // — Resumo —
     const s = d.summary ?? {};
@@ -745,19 +848,48 @@ async function pollState() {
     const m = d.model ?? {};
     if (el('infoTicks')) el('infoTicks').textContent = m.ticks_count?.toLocaleString('pt-BR') ?? '—';
     if (el('infoDataset')) el('infoDataset').textContent = m.dataset_rows?.toLocaleString('pt-BR') ?? '—';
-    if (el('infoModel')) { el('infoModel').textContent = m.model_exists ? '✓ OK' : '✗ Ausente'; el('infoModel').style.color = m.model_exists ? '#00ff88' : '#ff4757'; }
-    if (el('infoTft')) { el('infoTft').textContent = m.tft_exists ? '✓ OK' : '✗ Ausente'; el('infoTft').style.color = m.tft_exists ? '#00ff88' : '#ff4757'; }
+    const candidate = m.last_candidate_metrics ?? {};
+    if (el('infoModel')) {
+      el('infoModel').textContent = m.ready ? '✓ Aprovado' : candidate.timestamp ? 'Treinado; aguardando aprovação' : 'Aguardando treino';
+      el('infoModel').style.color = m.ready ? '#00ff88' : '#ffb830';
+      el('infoModel').title = (candidate.rejection_reasons ?? []).join('; ') || m.blocked_reason || '';
+    }
     if (el('infoModelMtime') && m.model_mtime) el('infoModelMtime').textContent = new Date(m.model_mtime * 1000).toLocaleString('pt-BR');
 
     // — Métricas do último treino (via /api/state para atualização a cada 5s) —
-    const mm = m.last_metrics ?? {};
-    if (el('mmBestModel'))  el('mmBestModel').textContent  = mm.best_model || '—';
+    const mm = m.ready ? (m.last_metrics ?? {}) : candidate;
+    if (el('mmStatus')) el('mmStatus').textContent = m.ready
+      ? 'Modelo aprovado para operação.'
+      : candidate.timestamp
+        ? `Candidato treinado; operações bloqueadas. ${(candidate.rejection_reasons ?? []).join('; ') || m.blocked_reason || ''}`
+        : 'Aguardando dados e primeiro treinamento.';
+    if (el('mmBestModel'))  el('mmBestModel').textContent  = mm.best_model ? `${mm.best_model}${m.ready ? '' : ' (candidato)'}` : '—';
     if (el('mmAccuracy'))   el('mmAccuracy').textContent   = mm.accuracy != null ? fmtPct(mm.accuracy * 100) : '—';
     if (el('mmAuc'))        el('mmAuc').textContent        = mm.auc       != null ? fmt(mm.auc, 4)           : '—';
     if (el('mmF1'))         el('mmF1').textContent         = mm.f1        != null ? fmt(mm.f1, 4)            : '—';
     if (el('mmNTrain'))     el('mmNTrain').textContent     = mm.n_train   != null ? mm.n_train.toLocaleString('pt-BR') : '—';
     if (el('mmNTest'))      el('mmNTest').textContent      = mm.n_test    != null ? mm.n_test.toLocaleString('pt-BR')  : '—';
     if (el('mmTimestamp'))  el('mmTimestamp').textContent  = mm.timestamp ? new Date(mm.timestamp).toLocaleString('pt-BR') : '—';
+    if (el('mmDiagnostics')) {
+      const lines = [];
+      for (const [key, label] of [['ai_only', 'IA'], ['technical_only', 'Sinais técnicos'], ['combined', 'Estratégia completa']]) {
+        const result = mm.components?.[key];
+        if (result) lines.push(`${label}: ${result.trades} contratos simulados, ${result.wins} acertos (${fmtPct(result.win_rate * 100)}).`);
+      }
+      const selected = (mm.walk_forward ?? []).find(row => mm.selected_recipe
+        ? row.recipe_id === mm.selected_recipe : row.name === mm.best_model);
+      if (selected) lines.push(`Validação em ${selected.folds.length} janelas futuras: ${selected.trades} contratos; AUC média ${fmt(selected.mean_auc, 4)}.`);
+      if (mm.calibration) lines.push(`Qualidade das probabilidades: Brier ${fmt(mm.calibration.multiclass_brier, 4)}; log loss ${fmt(mm.calibration.log_loss, 4)} (menor é melhor).`);
+      if (mm.calibration_method) lines.push(`Calibração selecionada: ${mm.calibration_method}; calendário da avaliação: ${mm.evaluation_risk_timezone ?? 'não informado'}.`);
+      const observed = mm.observed_payout_evaluation;
+      if (observed) lines.push(`Payouts observados: ${observed.trades} contratos avaliados; ${observed.blockers?.missing_observed_payout ?? 0} entradas sem cotação histórica adequada.`);
+      for (const warning of mm.selection_warnings ?? []) lines.push(`Atenção: ${warning}.`);
+      el('mmDiagnostics').replaceChildren(...lines.map(line => {
+        const paragraph = document.createElement('p');
+        paragraph.textContent = line;
+        return paragraph;
+      }));
+    }
     if (el('mmAccuracy')) {
       el('mmAccuracy').style.color = mm.accuracy == null
         ? '#8b949e'
@@ -770,17 +902,25 @@ async function pollState() {
       const rem = rs.pause_remaining_sec;
       el('consecHint').textContent = `⚠ Pausado — ${Math.floor(rem/60)}m ${rem%60}s`;
     }
-  } catch (_) {
+    if (d.indicators && Object.keys(d.indicators).length) {
+      _applyIndicators(d.indicators);
+    }
+    if (d.contracts_source_error) {
+      console.warn('[dashboard:contracts]', d.contracts_source_error);
+    }
+  } catch (error) {
     _pollFailures++;
     if (_pollFailures >= 3) _updateConnectionBanner(true);
+    _recordPollError('state', error, 'lastUpdate');
   }
 }
 
 
 // ─── Limpar dados (operacoes + estados) ─────────────────────────────────────
+/** Após confirmação, pede ao servidor para apagar dados de operações/estado e recarrega estado, histórico e gráfico de saldo. */
 async function clearData() {
   try {
-    const confirmMsg = 'Confirma limpar TODOS os dados de operações?\n\nSerão apagados: operacoes_log.csv, risk_state.json e state.json. Esta ação é irreversível.';
+    const confirmMsg = 'Reiniciar a visualização da sessão?\n\nO histórico de contratos e o estado de risco serão preservados.';
     if (!confirm(confirmMsg)) return;
     showToast('Limpando dados...', '');
 
@@ -790,7 +930,7 @@ async function clearData() {
     });
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.ok) {
-      showToast('Dados limpos com sucesso', '');
+      showToast('Visualização da sessão reiniciada.', 'ok');
       // Atualiza estado e histórico na UI
       await pollState();
       await loadHistory();
@@ -803,10 +943,10 @@ async function clearData() {
       } catch (e) {}
     } else {
       const msg = j.msg || r.statusText || 'Erro desconhecido';
-      showToast('Falha ao limpar: ' + msg, 'error');
+      showToast('Falha ao limpar: ' + msg, 'err');
     }
   } catch (e) {
-    showToast('Erro ao limpar dados: ' + (e && e.message ? e.message : e), 'error');
+    showToast('Erro ao limpar dados: ' + (e && e.message ? e.message : e), 'err');
   }
 }
 
@@ -814,10 +954,12 @@ async function clearData() {
 
 const _notifState = { paused: false, stopLoss: false, drift: false };
 
+/** Dispara notificação/toast uma vez por ocorrência de pausa, stop diário e drift. */
 function _checkCriticalEvents(summary, riskState) {
   if (!('Notification' in window)) return;
   const hasPerm = Notification.permission === 'granted';
 
+  /** Mostra Notification (se permitido) e toast. */
   function _notify(title, body) {
     if (hasPerm) new Notification(title, { body });
     showToast(`🔔 ${title}: ${body}`, 'err');
@@ -850,6 +992,7 @@ function _checkCriticalEvents(summary, riskState) {
 
 // ─── Mobile sidebar toggle ──────────────────────────────────────────────────
 
+/** Fecha a sidebar mobile, o overlay e o estado do botão hambúrguer. */
 function _closeMobileSidebar() {
   const sidebar = el('sidebar');
   const overlay = el('sidebarOverlay');
@@ -859,6 +1002,7 @@ function _closeMobileSidebar() {
   if (btn) btn.classList.remove('open');
 }
 
+/** Alterna a abertura da sidebar mobile, do overlay e do botão hambúrguer. */
 function _toggleMobileSidebar() {
   const sidebar = el('sidebar');
   const overlay = el('sidebarOverlay');
@@ -882,6 +1026,7 @@ window.addEventListener('resize', () => {
 
 // ─── Banner de conexão perdida ────────────────────────────────────────────────
 
+/** Exibe ou oculta o banner de conexão perdida, criando-o na topbar se necessário. */
 function _updateConnectionBanner(show) {
   let banner = el('connectionBanner');
   if (!banner) {
@@ -894,8 +1039,26 @@ function _updateConnectionBanner(show) {
   banner.style.display = show ? '' : 'none';
 }
 
+function _recordPollError(scope, error, targetId = null) {
+  const message = error?.message || String(error || 'falha desconhecida');
+  console.warn(`[dashboard:${scope}]`, error);
+  if (targetId && el(targetId)) {
+    el(targetId).textContent = `Falha ao atualizar: ${message}`;
+  }
+}
+
+async function _fetchJson(path, options = {}) {
+  const response = await fetch(API_BASE_URL + path, options);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.msg || data?.error || response.statusText || `HTTP ${response.status}`);
+  }
+  return data;
+}
+
 // ─── Função compartilhada para aplicar indicadores aos elementos ─────────────
 
+/** Aplica indicadores (EMA, RSI, ADX, MACD, condição de mercado, confiança e score da IA) aos elementos da DOM. */
 function _applyIndicators(d) {
     el('indEma9').textContent  = fmt(d.ema9, 4);
     el('indEma21').textContent = fmt(d.ema21, 4);
@@ -928,6 +1091,7 @@ function _applyIndicators(d) {
     // RSI/MACD chart são atualizados exclusivamente por pollIndicators()
 }
 
+/** Consulta /api/bot/status e atualiza LED, botões e card de status do bot. */
 async function pollBotStatus() {
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/status');
@@ -947,9 +1111,7 @@ async function pollBotStatus() {
       btnStop.style.display  = '';
       el('logBotStatus').textContent = '● Rodando';
       el('logBotStatus').className   = 'log-stat log-bot-indicator running';
-      el('cardStatus').textContent = 'RODANDO';
-      el('cardStatus').className   = 'card-value positive';
-      el('cardStatusSub').textContent = fmtUptime(d.uptime_sec);
+      _renderBotCard(d, {}, {}, {}, {});
     } else {
       led.className  = 'status-led stopped';
       text.textContent = 'Parado';
@@ -961,24 +1123,13 @@ async function pollBotStatus() {
       el('cardStatus').className   = 'card-value';
       el('cardStatusSub').textContent = '—';
     }
-
-    // Badge de horário de mercado
-    const badge = el('marketStatusBadge');
-    if (badge) {
-      const isOpen = d.market_open;
-      badge.style.display = '';
-      badge.textContent   = isOpen ? '🟢 Mercado Aberto' : '🔴 Mercado Fechado';
-      badge.className     = 'market-status-badge ' + (isOpen ? 'market-open' : 'market-closed');
-      badge.title         = isOpen
-        ? 'Forex ativo — bot prioriza mercados reais'
-        : 'Forex fechado — bot usa índices sintéticos';
-    }
   } catch (_) {}
 }
 
 
 // ─── Polling: Summary ─────────────────────────────────────────────────────────
 
+/** Consulta /api/summary e atualiza saldo, P&L, win rate, drawdown, losses consecutivos e alerta de drift. */
 async function pollSummary() {
   try {
     const r = await fetch(API_BASE_URL + '/api/summary');
@@ -1031,46 +1182,57 @@ async function pollSummary() {
 
 // ─── Polling: Ticks ──────────────────────────────────────────────────────────
 
+/** Busca os últimos 300 ticks e atualiza o gráfico de preço. */
 async function pollTicks() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/ticks?n=300');
-    const ticks = await r.json();
+    const symbol = el('activeSymbol')?.textContent?.trim();
+    const params = new URLSearchParams({ n: '300' });
+    if (symbol) params.set('symbol', symbol);
+    const ticks = await _fetchJson('/api/ticks?' + params.toString(), { cache: 'no-store' });
 
-    if (ticks.length) updatePriceChart(ticks);
-  } catch (_) {}
+    updatePriceChart(Array.isArray(ticks) ? ticks : []);
+  } catch (error) {
+    _recordPollError('ticks', error);
+  }
 }
 
+/** Busca o contrato ativo (ou o último) e seus ticks, atualizando o gráfico em tempo real; sem contrato, opera como monitor de preço. */
 async function pollContractRealtime() {
   try {
     const resp = await fetch(API_BASE_URL + '/api/contract-active', { cache: 'no-store' });
     const c = await resp.json();
 
     if (!c || !c.has_active) {
+      if (c?.last_contract?.contract_id) {
+        state.activeContract = null;
+        const last = c.last_contract;
+        const params = new URLSearchParams({ n: '600' });
+        if (last.symbol) params.set('symbol', last.symbol);
+        if (last.entry_epoch && last.entry_epoch > 0) params.set('from_epoch', String(last.entry_epoch));
+        const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
+        const ticks = await rTicks.json();
+        updateRtContractChart(Array.isArray(ticks) ? ticks : [], last);
+        return;
+      }
       // Sem contrato ativo: mostra últimos 150 ticks do símbolo atual (modo monitor)
       state.activeContract = null;
       const activeSymbol = el('activeSymbol')?.textContent?.trim();
-
-      const _fetchTicks = async (withSymbol) => {
-        const params = new URLSearchParams({ n: '150' });
-        if (withSymbol && activeSymbol && activeSymbol !== '—') params.set('symbol', activeSymbol);
-        const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
-        return rTicks.json();
-      };
-
+      const params = new URLSearchParams({ n: '150' });
+      if (activeSymbol && activeSymbol !== '—') params.set('symbol', activeSymbol);
       try {
-        let ticks = await _fetchTicks(true);
-        // Fallback: se o símbolo filtrado não retornar ticks, busca sem filtro
-        if ((!Array.isArray(ticks) || !ticks.length) && activeSymbol && activeSymbol !== '—') {
-          ticks = await _fetchTicks(false);
+        const rTicks = await fetch(API_BASE_URL + '/api/ticks?' + params.toString(), { cache: 'no-store' });
+        let ticks = await rTicks.json();
+        if ((!Array.isArray(ticks) || !ticks.length) && params.has('symbol')) {
+          const fallbackTicks = await fetch(API_BASE_URL + '/api/ticks?n=150', { cache: 'no-store' });
+          ticks = await fallbackTicks.json();
         }
         if (Array.isArray(ticks) && ticks.length) {
           updateRtContractChart(ticks, null);
           // Exibe mensagem de monitor mas não limpa o gráfico
           const statusEl = el('rtContractStatus');
           const metaEl = el('rtContractMeta');
-          const tickSymbol = ticks[ticks.length - 1]?.symbol;
-          if (statusEl) { statusEl.textContent = `Monitor de preço${tickSymbol ? ' — ' + tickSymbol : ''} (sem contrato ativo)`; statusEl.style.color = '#8b949e'; }
-          if (metaEl) {
+          if (statusEl) { statusEl.textContent = 'Monitor de preço (sem contrato ativo)'; statusEl.style.color = '#8b949e'; }
+          if (metaEl && ticks.length) {
             const last = ticks[ticks.length - 1];
             metaEl.textContent = `Último tick: ${fmt(last.price, 5)} — ${new Date(last.epoch * 1000).toLocaleTimeString('pt-BR')}`;
           }
@@ -1082,7 +1244,6 @@ async function pollContractRealtime() {
     }
 
     state.activeContract = c;
-    _setRtContractStatus(c, null, null); // mostra direção/timer imediatamente, antes de carregar ticks
     const params = new URLSearchParams({ n: '600' });
     if (c.symbol) params.set('symbol', c.symbol);
     if (c.entry_epoch && c.entry_epoch > 0) params.set('from_epoch', String(c.entry_epoch));
@@ -1097,20 +1258,22 @@ async function pollContractRealtime() {
 
 // ─── Polling: Equity ─────────────────────────────────────────────────────────
 
+/** Busca /api/equity e atualiza a curva de saldo. */
 async function pollEquity() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/equity');
-    const data = await r.json();
+    const data = await _fetchJson('/api/equity');
     updateEquityChart(data);
-  } catch (_) {}
+  } catch (error) {
+    _recordPollError('equity', error);
+  }
 }
 
 // ─── Polling: Indicadores ────────────────────────────────────────────────────
 
+/** Busca /api/indicators, atualiza painel de indicadores e anexa RSI/MACD às séries (máx. 60 pontos) dos gráficos. */
 async function pollIndicators() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/indicators');
-    const d = await r.json();
+    const d = await _fetchJson('/api/indicators');
     if (!Object.keys(d).length) return;
 
     // Tabela de indicadores
@@ -1165,7 +1328,7 @@ async function pollIndicators() {
     el('aiScoreVal').textContent = fmt(score, 3);
 
     // Adiciona ao histórico de séries para RSI/MACD chart
-    const now = Date.now();
+    const now = Date.now() / 1000;
     state.rsiSeries.push({ x: now, y: d.rsi });
     state.macdSeries.push({ x: now, y: d.macd_hist });
     if (state.rsiSeries.length > 60) state.rsiSeries.shift();
@@ -1177,42 +1340,41 @@ async function pollIndicators() {
     state.charts.macd.data.datasets[0].data = [...state.macdSeries];
     state.charts.macd.update('none');
 
-  } catch (_) {}
+  } catch (error) {
+    _recordPollError('indicators', error, 'marketCondBadge');
+  }
 }
 
 // ─── Polling: Model info ──────────────────────────────────────────────────────
 
-async function pollModel() {
-  try {
-    const r = await fetch(API_BASE_URL + '/api/model');
-    const d = await r.json();
-
-    el('infoTicks').textContent   = d.ticks_count?.toLocaleString('pt-BR') ?? '—';
-    el('infoDataset').textContent = d.dataset_rows?.toLocaleString('pt-BR') ?? '—';
-    el('infoModel').textContent   = d.model_exists ? '✓ OK' : '✗ Ausente';
-    el('infoModel').style.color   = d.model_exists ? '#00ff88' : '#ff4757';
-    el('infoTft').textContent     = d.tft_exists   ? '✓ OK' : '✗ Ausente';
-    el('infoTft').style.color     = d.tft_exists   ? '#00ff88' : '#ff4757';
-
-    if (d.model_mtime) {
-      el('infoModelMtime').textContent = new Date(d.model_mtime * 1000).toLocaleString('pt-BR');
-    } else {
-      el('infoModelMtime').textContent = '—';
-    }
-  } catch (_) {}
-}
-
 // ─── Histórico de trades ──────────────────────────────────────────────────────
 
-async function loadHistory() {
-  const n = el('histCount')?.value || 60;
+/**
+ * Carrega os trades de /api/trades (`force` ignora cache do servidor) em state.allTrades e redesenha a tabela.
+ */
+async function loadHistory(force = false) {
+  const n = el('histCount')?.value || 50;
   try {
-    const r = await fetch(`${API_BASE_URL}/api/trades?n=${n}`);
-    state.allTrades = await r.json();
+    const payload = await _fetchJson(`/api/trades?n=${n}${force ? '&force=1' : ''}`, { cache: 'no-store' });
+    if (Array.isArray(payload)) {
+      state.allTrades = payload;
+      state.historySource = 'deriv_profit_table';
+      state.historyError = '';
+    } else {
+      state.allTrades = Array.isArray(payload.trades) ? payload.trades : [];
+      state.historySource = payload.source || 'deriv_profit_table';
+      state.historyError = payload.error || '';
+    }
     renderHistory();
-  } catch (_) {}
+  } catch (e) {
+    state.historyError = e?.message || 'Falha ao consultar contratos na Deriv.';
+    state.allTrades = [];
+    _recordPollError('history', e, 'histSummary');
+    renderHistory();
+  }
 }
 
+/** Renderiza a tabela de histórico aplicando o filtro atual e o resumo (contratos, win rate, lucro). */
 function renderHistory() {
   const filter = state.histFilter;
   let trades = state.allTrades;
@@ -1224,8 +1386,11 @@ function renderHistory() {
 
   const tbody = el('histBody');
   if (!trades.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="empty-msg">Nenhuma operação encontrada.</td></tr>';
-    el('histSummary').textContent = '';
+    const msg = state.historyError
+      ? `Não foi possível consultar o relatório de contratos da Deriv: ${escapeHtml(state.historyError)}`
+      : 'Nenhum contrato encontrado na Deriv.';
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-msg">${msg}</td></tr>`;
+    el('histSummary').textContent = state.historyError ? 'Fonte: Deriv profit_table' : '';
     return;
   }
 
@@ -1233,40 +1398,32 @@ function renderHistory() {
   const wins  = trades.filter(t => t.result === 'WIN').length;
   const wr    = trades.length ? (wins / trades.length * 100).toFixed(1) : 0;
 
-  tbody.innerHTML = trades.map(t => {
-    const payoutPct = t.stake > 0 ? (t.profit / t.stake * 100).toFixed(1) : null;
-    const payoutClass = payoutPct !== null ? (Number(payoutPct) >= 0 ? 'positive' : 'negative') : '';
-    const payoutTxt = payoutPct !== null ? (Number(payoutPct) >= 0 ? '+' : '') + payoutPct + '%' : '—';
-    return `
+  tbody.innerHTML = trades.map(t => `
     <tr>
       <td class="td-mono">${t.timestamp?.slice(0, 19) || '—'}</td>
+      <td class="td-mono">${escapeHtml(t.contract_id || '—')}</td>
+      <td class="td-mono">${escapeHtml(t.symbol || '—')}</td>
       <td><span class="badge badge-${t.direction?.toLowerCase()}">${t.direction || '—'}</span></td>
-      <td class="td-mono">${t.symbol || '—'}</td>
       <td class="td-mono">${fmtUsd(t.stake)}</td>
-      <td class="td-mono">${t.duration ?? '—'}t</td>
+      <td class="td-mono">${fmtUsd(t.sell_price)}</td>
+      <td class="td-mono">${t.duration ?? '—'}${escapeHtml(t.duration_unit || 'm')}</td>
       <td><span class="badge badge-${t.result?.toLowerCase()}">${t.result || '—'}</span></td>
       <td class="td-mono ${t.profit >= 0 ? 'positive' : 'negative'}">${(t.profit >= 0 ? '+' : '') + fmtUsd(t.profit)}</td>
-      <td class="td-mono ${payoutClass}">${payoutTxt}</td>
-      <td class="td-mono">${fmtUsd(t.balance_after)}</td>
-      <td class="td-mono">${fmt(t.rsi, 1)}</td>
-      <td class="td-mono">${fmt(t.adx, 1)}</td>
-      <td class="td-mono">${fmtPct(t.ai_confidence * 100)}</td>
-      <td>${t.market_condition || '—'}</td>
     </tr>
-  `;
-  }).join('');
+  `).join('');
 
   el('histSummary').textContent =
-    `${trades.length} operações | Win Rate: ${wr}% | Lucro total: ${(totalProfit >= 0 ? '+' : '') + fmtUsd(totalProfit)}`;
+    `Fonte: Deriv profit_table | ${trades.length} contratos | Win Rate: ${wr}% | Lucro total: ${(totalProfit >= 0 ? '+' : '') + fmtUsd(totalProfit)}`;
 
   // Recent dots no overview
   updateRecentDots('recentTradesDots');
 }
 
+/** Desenha os pontos WIN/LOSS dos 20 trades mais recentes no contêiner; em 'recentTradesDots' também atualiza as contagens. */
 function updateRecentDots(containerId) {
   const container = el(containerId);
   if (!container) return;
-  const recent = state.allTrades.slice(0, 60);
+  const recent = state.allTrades.slice(0, 20);
   container.innerHTML = recent.length
     ? recent.map(t => `<div class="tdot ${t.result === 'WIN' ? 'win' : 'loss'}" title="${t.result} — ${fmtUsd(t.profit)}"></div>`).join('')
     : '<span style="color:var(--text-dim);font-size:12px">Sem operações</span>';
@@ -1293,6 +1450,7 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
 
 // ─── Exportar CSV ─────────────────────────────────────────────────────────────
 
+/** Exporta os trades carregados como arquivo CSV baixado pelo navegador. */
 function exportCsv() {
   const trades = state.allTrades;
   if (!trades.length) { showToast('Sem dados para exportar.', 'err'); return; }
@@ -1314,17 +1472,71 @@ function exportCsv() {
 
 // ─── Controle do bot ──────────────────────────────────────────────────────────
 
+/** Abre o modal de configuração de início do bot. */
 function botStart() {
   el('startModal').style.display = 'flex';
 }
 
+/** Fecha o modal de início do bot. */
 function closeStartModal() {
   el('startModal').style.display = 'none';
 }
+/** Fecha o painel de inicialização e interrompe seu polling de logs. */
 function closeStartupPanel() {
   el('startupPanel').style.display = 'none';
   stopStartupPolling();
 }
+
+/** Lê os checkboxes de módulos de decisão e devolve o objeto `use_*` enviado ao /api/bot/start. */
+function getExecutionSignalSelection() {
+  const trained = el('useTrainedModel') ? el('useTrainedModel').checked : true;
+  const weighted = el('useWeightedSignal') ? el('useWeightedSignal').checked : true;
+  const priceAction = el('usePriceActionFilter') ? el('usePriceActionFilter').checked : false;
+  const candlePattern = el('useCandlePatternFilter') ? el('useCandlePatternFilter').checked : false;
+  return {
+    use_trained_model: trained,
+    use_weighted_signal: weighted,
+    use_price_action_filter: priceAction,
+    use_candle_pattern_filter: candlePattern,
+  };
+}
+
+/** Descreve os módulos ativos da seleção, separados por ' + ', ou 'Nenhum módulo ativo'. */
+function executionSignalLabel(selection = getExecutionSignalSelection()) {
+  const active = [];
+  if (selection.use_trained_model) {
+    active.push('Modelo de treino');
+  }
+  if (selection.use_weighted_signal) active.push('score ponderado');
+  if (selection.use_price_action_filter) active.push('Price Action');
+  if (selection.use_candle_pattern_filter) active.push('padrões de vela');
+  return active.length ? active.join(' + ') : 'Nenhum módulo ativo';
+}
+
+/** Indica se a seleção tem ao menos um módulo de decisão ativo. */
+function hasExecutionDecisionModule(selection = getExecutionSignalSelection()) {
+  return Boolean(
+    selection.use_trained_model ||
+    selection.use_weighted_signal ||
+    selection.use_price_action_filter ||
+    selection.use_candle_pattern_filter
+  );
+}
+
+/** Atualiza o texto de modo de execução e marca como inválido quando nenhum módulo está ativo. */
+function updateExecutionModeStatus() {
+  const status = el('executionModeStatus');
+  if (!status) return;
+  const selection = getExecutionSignalSelection();
+  status.textContent = executionSignalLabel(selection);
+  status.classList.toggle('invalid', !hasExecutionDecisionModule(selection));
+}
+
+['useTrainedModel', 'useWeightedSignal', 'usePriceActionFilter', 'useCandlePatternFilter'].forEach(id => {
+  document.addEventListener('change', event => {
+    if (event.target?.id === id) updateExecutionModeStatus();
+  });
+});
 
 // ─── Startup panel: fases do pipeline ─────────────────────────────────
 
@@ -1342,6 +1554,7 @@ const PHASE_ORDER = ['phase-scan', 'phase-collect', 'phase-build', 'phase-train'
 let _startupPollingId = null;
 let _currentActivePhase = null;
 
+/** Retorna o id da última fase do pipeline cujas palavras-chave aparecem nas linhas de log (ou null). */
 function _detectPhaseFromLines(lines) {
   let lastActive = null;
   for (const line of lines) {
@@ -1352,6 +1565,7 @@ function _detectPhaseFromLines(lines) {
   return lastActive;
 }
 
+/** Marca as fases anteriores como concluídas, a ativa em andamento e as demais pendentes. */
 function _updatePhaseUI(activePhaseId) {
   if (activePhaseId === _currentActivePhase) return;
   _currentActivePhase = activePhaseId;
@@ -1374,6 +1588,7 @@ function _updatePhaseUI(activePhaseId) {
   });
 }
 
+/** Busca logs do bot, mostra as 10 últimas linhas, atualiza a fase e fecha o painel quando o bot já está rodando. */
 async function pollStartupLogs() {
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/logs');
@@ -1404,6 +1619,7 @@ async function pollStartupLogs() {
   } catch (_) {}
 }
 
+/** Abre o painel de inicialização, reseta as fases e inicia o polling de logs a cada 1,2 s. */
 function startStartupPolling() {
   // Mostra overlay e reseta estado visual
   el('startupPanel').style.display = 'flex';
@@ -1425,20 +1641,32 @@ function startStartupPolling() {
   setTimeout(pollStartupLogs, 500);
 }
 
+/** Cancela o polling de logs do painel de inicialização. */
 function stopStartupPolling() {
   if (_startupPollingId) { clearInterval(_startupPollingId); _startupPollingId = null; }
 }
 
 // Quick Start: inicia no modo demo com valores padr\u00e3o, sem precisar da modal
+/**
+ * Monta cabeçalhos JSON com o token X-Auth-Token (dos campos da página ou do localStorage, que é atualizado).
+ * @param {Object} extra Cabeçalhos adicionais.
+ */
 function _authHeaders(extra = {}) {
-  const token = (el('authToken') ? el('authToken').value.trim() : '') ||
+  const token = (el('backtestAuthToken') ? el('backtestAuthToken').value.trim() : '') ||
+                (el('authToken') ? el('authToken').value.trim() : '') ||
                 localStorage.getItem('dashboardToken') || '';
   if (token) localStorage.setItem('dashboardToken', token);
   return { 'Content-Type': 'application/json', ...(token ? { 'X-Auth-Token': token } : {}), ...extra };
 }
 
+/** Inicia o bot em modo demo (saldo 1000) com os módulos selecionados, sem usar o modal. */
 async function quickStart() {
   closeStartModal();
+  const executionSelection = getExecutionSignalSelection();
+  if (!hasExecutionDecisionModule(executionSelection)) {
+    showToast('Ative pelo menos um módulo de decisão.', 'err');
+    return;
+  }
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/start', {
       method: 'POST',
@@ -1447,14 +1675,12 @@ async function quickStart() {
         mode: 'demo',
         balance: 1000,
         skip_collect: false,
-        min_ticks: 1000,
-        history_count: 1000,
-        force_retrain: true,
+        ...executionSelection,
       }),
     });
     const d = await r.json();
     if (d.ok) {
-      showToast(`Bot iniciado (PID ${d.pid}) \u2014 Demo $1000`, 'ok');
+      showToast(`Bot iniciado (PID ${d.pid}) \u2014 ${executionSignalLabel(executionSelection)}`, 'ok');
       startStartupPolling();
       pollState();
     } else {
@@ -1464,19 +1690,24 @@ async function quickStart() {
     showToast('Falha: ' + e.message, 'err');
   }
 }
+/** Inicia o bot com os parâmetros do modal (confirma antes no modo real) e abre o painel de inicialização. */
 async function confirmStart() {
   closeStartModal();
   const mode            = el('modeSelect').value;
   const balance         = parseFloat(el('balanceInput').value) || 1000;
   const skipCollect     = el('skipCollect').checked;
   const noScan          = el('noScan') ? el('noScan').checked : false;
-  const retrainInterval = el('retrainInterval') ? (parseInt(el('retrainInterval').value) || 10) : 10;
-  const minTicks        = el('minTicks') ? (parseInt(el('minTicks').value) || 1000) : 1000;
-  const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 1000) : 1000;
+  const minTicks        = el('minTicks') ? (parseInt(el('minTicks').value) || 500) : 500;
+  const historyCount    = el('historyCount') ? (parseInt(el('historyCount').value) || 2520) : 2520;
   const forceRetrain    = el('forceRetrain') ? el('forceRetrain').checked : false;
+  const executionSelection = getExecutionSignalSelection();
 
   if (mode === 'real') {
     if (!confirm('⚠ Modo REAL usa dinheiro real. Confirma?')) return;
+  }
+  if (!hasExecutionDecisionModule(executionSelection)) {
+    showToast('Ative pelo menos um módulo de decisão.', 'err');
+    return;
   }
 
   try {
@@ -1484,13 +1715,13 @@ async function confirmStart() {
       method: 'POST',
       headers: _authHeaders(),
       body: JSON.stringify({ mode, balance, skip_collect: skipCollect,
-        no_scan: noScan, retrain_interval: retrainInterval,
+        no_scan: noScan,
         min_ticks: minTicks, history_count: historyCount,
-        force_retrain: forceRetrain }),
+        force_retrain: forceRetrain, ...executionSelection }),
     });
     const d = await r.json();
     if (d.ok) {
-      showToast(`Bot iniciado (PID ${d.pid}) — modo ${mode}`, 'ok');
+      showToast(`Bot iniciado (PID ${d.pid}) — ${executionSignalLabel(executionSelection)}`, 'ok');
       startStartupPolling();
       pollState();
     } else {
@@ -1501,6 +1732,7 @@ async function confirmStart() {
   }
 }
 
+/** Após confirmação, solicita a parada do bot em /api/bot/stop. */
 async function botStop() {
   if (!confirm('Parar o bot?')) return;
   try {
@@ -1520,6 +1752,7 @@ async function botStop() {
 
 let _allLogLines = [];
 
+/** Busca os logs do bot, guarda em _allLogLines e atualiza terminal e contadores. */
 async function pollLogs() {
   try {
     const r = await fetch(API_BASE_URL + '/api/bot/logs');
@@ -1530,9 +1763,12 @@ async function pollLogs() {
     if (logLastFetch) logLastFetch.textContent = 'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
     const logLineCount = el('logLineCount');
     if (logLineCount) logLineCount.textContent = `${_allLogLines.length} linhas`;
-  } catch (_) {}
+  } catch (error) {
+    _recordPollError('logs', error, 'logLastFetch');
+  }
 }
 
+/** Renderiza no terminal as linhas de log (filtradas pelo campo de filtro) com classe por tipo e rolagem automática opcional. */
 function renderLogs() {
   const terminal = el('logTerminal');
   if (!terminal) return;
@@ -1552,8 +1788,9 @@ function renderLogs() {
   if (el('logAutoScroll')?.checked) terminal.scrollTop = terminal.scrollHeight;
 }
 
+/** Retorna a classe CSS de uma linha de log conforme padrões de texto ('' se nenhum). */
 function _logLineClass(line) {
-  if (/erro|error|falha|fail|exception|traceback/i.test(line)) return 'log-err';
+  if (/erro|error|falha|fail|exception|traceback|rejeitad[ao]|invalidcontractproposal|unknown contract proposal|rate.?limit/i.test(line)) return 'log-err';
   if (/warn|aviso/i.test(line))                                 return 'log-warn';
   if (/\[BOT\]|\[PIPELINE\]|\[EXECUTOR\]/i.test(line))         return 'log-bot';
   if (/\[TREINO\]|\[MODEL\]|train|model\.pkl|accuracy/i.test(line)) return 'log-train';
@@ -1563,6 +1800,7 @@ function _logLineClass(line) {
   return '';
 }
 
+/** Limpa as linhas de log exibidas (apenas no cliente). */
 function clearLogs() {
   _allLogLines = [];
   renderLogs();
@@ -1572,13 +1810,14 @@ function clearLogs() {
 
 // ─── Polling: Estatísticas avançadas ─────────────────────────────────────────
 
+/** Carrega /api/indicator-series e preenche as séries e gráficos de RSI e MACD. */
 async function _loadIndicatorSeries() {
   try {
     const r = await fetch(API_BASE_URL + '/api/indicator-series?n=60', { cache: 'no-store' });
     const series = await r.json();
     if (!Array.isArray(series) || !series.length) return;
-    state.rsiSeries  = series.map(s => ({ x: s.epoch * 1000, y: s.rsi }));
-    state.macdSeries = series.map(s => ({ x: s.epoch * 1000, y: s.macd_hist }));
+    state.rsiSeries  = series.map(s => ({ x: Number(s.epoch), y: s.rsi }));
+    state.macdSeries = series.map(s => ({ x: Number(s.epoch), y: s.macd_hist }));
     if (state.charts.rsi) {
       state.charts.rsi.data.datasets[0].data = [...state.rsiSeries];
       state.charts.rsi.update('none');
@@ -1592,6 +1831,7 @@ async function _loadIndicatorSeries() {
 
 let _profitDistChart = null;
 
+/** Cria o gráfico de barras da distribuição de lucro por operação. */
 function _initProfitDistChart() {
   const ctx = el('profitDistChart');
   if (!ctx) return;
@@ -1619,10 +1859,10 @@ function _initProfitDistChart() {
   });
 }
 
+/** Consulta /api/stats e atualiza profit factor, expectativa, médias, distribuição de lucro e estatísticas por direção. */
 async function pollStats() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/stats', { cache: 'no-store' });
-    const d = await r.json();
+    const d = await _fetchJson('/api/stats', { cache: 'no-store' });
     if (!d || d.error) return;
 
     const pf = d.profit_factor;
@@ -1665,15 +1905,17 @@ async function pollStats() {
           </div>`).join('');
       }
     }
-  } catch (_) {}
+  } catch (error) {
+    _recordPollError('stats', error, 'dirStatsWrap');
+  }
 }
 
 // ─── Polling: Métricas do modelo ─────────────────────────────────────────────
 
+/** Consulta /api/model-metrics e atualiza métricas do melhor modelo e o comparativo de ROC-AUC. */
 async function pollModelMetrics() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/model-metrics', { cache: 'no-store' });
-    const d = await r.json();
+    const d = await _fetchJson('/api/model-metrics', { cache: 'no-store' });
     if (!d || !d.best_model) {
       const noData = 'Modelo ainda não treinado';
       ['mmBestModel','mmAccuracy','mmAuc','mmF1','mmNTrain','mmNTest','mmTimestamp']
@@ -1710,16 +1952,19 @@ async function pollModelMetrics() {
         </div>`;
       }).join('');
     }
-  } catch (_) {}
+  } catch (error) {
+    _recordPollError('model-metrics', error, 'mmStatus');
+  }
 }
 
 // ─── Polling: CPU/RAM do sistema ─────────────────────────────────────────────
 
+/** Consulta /api/system e atualiza as barras de CPU, RAM, disco e consumo do bot. */
 async function pollSystem() {
   try {
-    const r = await fetch(API_BASE_URL + '/api/system');
-    const d = await r.json();
+    const d = await _fetchJson('/api/system');
 
+    /** Preenche barra e valor (cor por limiar); ignora se faltar elemento ou pct. */
     function _setBar(barId, valId, pct, suffix, isBot = false) {
       const bar = el(barId);
       const val = el(valId);
@@ -1741,15 +1986,262 @@ async function pollSystem() {
       botRamBar.style.background = '#58a6ff';
       botRamVal.textContent = fmt(d.bot_ram_mb, 1) + ' MB';
     }
-  } catch (_) {}
+  } catch (error) {
+    _recordPollError('system', error);
+  }
+}
+
+// ─── Backtest offline ───────────────────────────────────────────────────────
+
+/** Cria o gráfico de linha temporal do saldo simulado do backtest. */
+function initBacktestChart() {
+  const canvas = el('backtestEquityChart');
+  if (!canvas) return;
+  state.charts.backtestEquity = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'Saldo simulado',
+        data: [],
+        borderColor: '#58a6ff',
+        backgroundColor: 'rgba(88,166,255,0.10)',
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.15,
+        fill: true,
+      }],
+    },
+    options: {
+      ...baseChartOptions,
+      parsing: false,
+      scales: {
+        x: {
+          type: 'time',
+          grid: { display: false },
+          ticks: { maxTicksLimit: 6, maxRotation: 0 },
+        },
+        y: { ...baseChartOptions.scales.y },
+      },
+    },
+  });
+}
+
+/** Atualiza badge, detalhe e estado dos botões de iniciar/cancelar do backtest conforme `status`. */
+function _setBacktestStatus(status, detail = '') {
+  const badge = el('backtestStatus');
+  const allowed = ['idle', 'running', 'completed', 'failed', 'stopped', 'stopping'];
+  const normalized = allowed.includes(status) ? status : 'idle';
+  const labels = {
+    idle: 'Aguardando',
+    running: 'Executando',
+    completed: 'Concluído',
+    failed: 'Falhou',
+    stopped: 'Cancelado',
+    stopping: 'Cancelando',
+  };
+  if (badge) {
+    badge.className = `backtest-status ${normalized}`;
+    badge.textContent = labels[normalized];
+  }
+  if (el('backtestStatusDetail') && detail) {
+    el('backtestStatusDetail').textContent = detail;
+  }
+  const running = normalized === 'running' || normalized === 'stopping';
+  if (el('backtestStartBtn')) {
+    el('backtestStartBtn').disabled = running || state.botRunning;
+  }
+  if (el('backtestStopBtn')) {
+    el('backtestStopBtn').style.display = running ? '' : 'none';
+    el('backtestStopBtn').disabled = normalized === 'stopping';
+  }
+}
+
+/** Valida o formulário e inicia um backtest offline via /api/backtest/start (bloqueado com o bot rodando). */
+async function startBacktest() {
+  if (state.botRunning) {
+    showToast('Pare o bot antes de executar o backtest.', 'err');
+    return;
+  }
+  const numericIds = [
+    'backtestBalance', 'backtestPayout', 'backtestDuration',
+    'backtestTimeframe', 'backtestMaxTicks', 'backtestCostRate',
+    'backtestFixedCost',
+  ];
+  for (const id of numericIds) {
+    if (!el(id)?.checkValidity()) {
+      el(id).reportValidity();
+      return;
+    }
+  }
+  const withAi = !!el('backtestWithAi')?.checked;
+  const dynamicDuration = !!el('backtestDynamicDuration')?.checked;
+  if ((withAi || dynamicDuration) && !confirm(
+    'Os modelos só podem ser avaliados em dados fora da amostra. Confirma que estes ticks não participaram do treinamento?'
+  )) return;
+
+  const payload = {
+    symbol: el('backtestSymbol')?.value.trim() || '',
+    balance: Number(el('backtestBalance')?.value),
+    payout: Number(el('backtestPayout')?.value),
+    duration: Number(el('backtestDuration')?.value),
+    duration_unit: el('backtestDurationUnit')?.value || 'm',
+    timeframe: Number(el('backtestTimeframe')?.value),
+    max_ticks: Number(el('backtestMaxTicks')?.value),
+    cost_rate: Number(el('backtestCostRate')?.value),
+    fixed_cost: Number(el('backtestFixedCost')?.value),
+    with_ai: withAi,
+    dynamic_duration: dynamicDuration,
+    candle_patterns: !!el('backtestCandlePatterns')?.checked,
+  };
+
+  try {
+    _setBacktestStatus('running', 'Preparando execução offline...');
+    const response = await fetch(API_BASE_URL + '/api/backtest/start', {
+      method: 'POST',
+      headers: _authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      _setBacktestStatus('failed', data.msg || 'Não foi possível iniciar.');
+      showToast(data.msg || 'Falha ao iniciar backtest.', 'err');
+      return;
+    }
+    state.backtestRunId = data.run_id;
+    state.backtestResultRunId = null;
+    _setBacktestStatus('running', `Execução ${data.run_id} iniciada.`);
+    showToast('Backtest iniciado.', 'ok');
+    pollBacktestStatus();
+  } catch (error) {
+    _setBacktestStatus('failed', error.message);
+    showToast('Falha ao iniciar backtest: ' + error.message, 'err');
+  }
+}
+
+/** Após confirmação, solicita o cancelamento do backtest em /api/backtest/stop. */
+async function stopBacktest() {
+  if (!confirm('Cancelar o backtest em execução?')) return;
+  try {
+    _setBacktestStatus('stopping', 'Solicitando cancelamento...');
+    const response = await fetch(API_BASE_URL + '/api/backtest/stop', {
+      method: 'POST',
+      headers: _authHeaders(),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      showToast(data.msg || 'Não foi possível cancelar.', 'err');
+      return;
+    }
+    showToast('Cancelamento solicitado.', 'ok');
+  } catch (error) {
+    showToast('Falha ao cancelar: ' + error.message, 'err');
+  }
+}
+
+/** Consulta /api/backtest/status, atualiza status e logs e carrega o resultado quando concluído e ainda não exibido. */
+async function pollBacktestStatus() {
+  try {
+    const data = await _fetchJson('/api/backtest/status', { cache: 'no-store' });
+    state.backtestRunId = data.run_id || state.backtestRunId;
+    let detail = 'Nenhuma execução iniciada.';
+    if (data.run_id) detail = `Execução ${data.run_id}`;
+    if (data.error) detail += ` — ${data.error}`;
+    _setBacktestStatus(data.status || 'idle', detail);
+
+    const logs = el('backtestLogs');
+    if (logs) {
+      logs.textContent = Array.isArray(data.logs) ? data.logs.join('\n') : '';
+      logs.style.display = logs.textContent ? '' : 'none';
+    }
+    if (
+      data.report_available
+      && data.status === 'completed'
+      && state.backtestResultRunId !== data.run_id
+    ) {
+      await loadBacktestResult(data.run_id);
+    }
+  } catch (error) {
+    _recordPollError('backtest-status', error, 'backtestStatusDetail');
+  }
+}
+
+/** Busca o relatório em /api/backtest/result e o renderiza, registrando `runId` como já exibido. */
+async function loadBacktestResult(runId = state.backtestRunId) {
+  try {
+    const data = await _fetchJson('/api/backtest/result?n=200', { cache: 'no-store' });
+    if (!data.ok) return;
+    renderBacktestResult(data.report);
+    state.backtestResultRunId = runId;
+  } catch (error) {
+    _recordPollError('backtest-result', error, 'backtestStatusDetail');
+  }
+}
+
+/** Preenche cards de métricas, curva de saldo e tabela de operações simuladas a partir do relatório do backtest. */
+function renderBacktestResult(report) {
+  const metrics = report?.metrics || {};
+  const settings = report?.settings || {};
+  const trades = Array.isArray(report?.trades) ? report.trades : [];
+
+  el('backtestTrades').textContent = metrics.trades ?? 0;
+  el('backtestWinsLosses').textContent = `${metrics.wins ?? 0} wins / ${metrics.losses ?? 0} losses`;
+  el('backtestWinRate').textContent = fmtPct(metrics.win_rate_pct);
+  el('backtestReturn').textContent = (metrics.return_pct > 0 ? '+' : '') + fmtPct(metrics.return_pct);
+  el('backtestReturn').className = 'card-value ' + (metrics.return_pct > 0 ? 'positive' : metrics.return_pct < 0 ? 'negative' : '');
+  el('backtestNetProfit').textContent = (metrics.net_profit > 0 ? '+' : '') + fmtUsd(metrics.net_profit);
+  el('backtestDrawdown').textContent = fmtPct(metrics.max_drawdown_pct);
+  el('backtestDrawdownUsd').textContent = fmtUsd(metrics.max_drawdown_abs);
+  el('backtestFinalBalance').textContent = fmtUsd(metrics.final_balance);
+  el('backtestProfitFactor').textContent = metrics.profit_factor == null ? '—' : fmt(metrics.profit_factor, 3);
+  el('backtestExpectancy').textContent = fmtUsd(metrics.expectancy);
+  el('backtestTotalStaked').textContent = fmtUsd(metrics.total_staked);
+  el('backtestTotalCosts').textContent = fmtUsd(metrics.total_costs);
+  el('backtestMaxLosses').textContent = metrics.max_consecutive_losses ?? '—';
+  el('backtestResultSymbol').textContent = report.symbol || '—';
+  el('backtestMode').textContent = settings.use_ai ? 'Técnico + IA' : 'Somente técnico';
+
+  const chart = state.charts.backtestEquity;
+  if (chart) {
+    chart.data.datasets[0].data = (report.equity_curve || []).map(point => ({
+      x: Number(point.epoch) * 1000,
+      y: Number(point.balance),
+    }));
+    chart.update();
+  }
+
+  const tbody = el('backtestTradesBody');
+  if (!tbody) return;
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-msg">Nenhuma operação simulada.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map(trade => {
+    const direction = trade.direction === 'BUY' ? 'BUY' : 'SELL';
+    const outcome = ['WIN', 'LOSS', 'TIE'].includes(trade.outcome) ? trade.outcome : 'LOSS';
+    const expiry = new Date(Number(trade.expiry_epoch) * 1000).toLocaleString('pt-BR');
+    const profit = Number(trade.net_profit || 0);
+    return `<tr>
+      <td class="td-mono">${escapeHtml(expiry)}</td>
+      <td><span class="badge badge-${direction.toLowerCase()}">${direction}</span></td>
+      <td class="td-mono">${fmt(trade.entry_price, 5)}</td>
+      <td class="td-mono">${fmt(trade.exit_price, 5)}</td>
+      <td class="td-mono">${Number(trade.duration)}${escapeHtml(trade.duration_unit)}</td>
+      <td><span class="badge badge-${outcome.toLowerCase()}">${outcome}</span></td>
+      <td class="td-mono">${fmtUsd(trade.stake)}</td>
+      <td class="td-mono ${profit >= 0 ? 'positive' : 'negative'}">${profit > 0 ? '+' : ''}${fmtUsd(profit)}</td>
+      <td class="td-mono">${fmtUsd(trade.balance_after)}</td>
+    </tr>`;
+  }).join('');
 }
 
 // ─── Inicialização ────────────────────────────────────────────────────────────
 
+/** Inicializa o dashboard: restaura token, cria gráficos, faz a primeira carga e agenda os polls periódicos. */
 function init() {
   // Restore saved auth token into field if present
   const savedToken = localStorage.getItem('dashboardToken');
   if (savedToken && el('authToken')) el('authToken').value = savedToken;
+  if (savedToken && el('backtestAuthToken')) el('backtestAuthToken').value = savedToken;
 
   // Solicitar permissão para notificações push
   if ('Notification' in window && Notification.permission === 'default') {
@@ -1762,43 +2254,24 @@ function init() {
   initRsiChart();
   initMacdChart();
   _initProfitDistChart();
+  initBacktestChart();
   _loadIndicatorSeries();
+  updateExecutionModeStatus();
 
-  // Primeira carga (estado consolidado + outros)
-  pollState();
-  pollTicks();
-  pollContractRealtime();
-  pollEquity();
-  pollCandles();
-  loadHistory();
-  pollModelMetrics();
-  pollStats();
-  pollSystem();
-
-  // Polls contínuos — pollState() substitui pollBotStatus + pollSummary + pollModel
-  setInterval(pollState,    POLL_SUMMARY);
-  pollIndicators();
-  setInterval(pollIndicators, POLL_IND);
-  setInterval(pollTicks,    POLL_TICKS);
-  setInterval(pollContractRealtime, POLL_CONTRACT);
-  setInterval(pollEquity,   POLL_SUMMARY);
-  setInterval(pollCandles,  POLL_TICKS);
-  setInterval(loadHistory,  POLL_TRADES);
-  setInterval(pollCandlePatterns, POLL_IND);
-  setInterval(pollModelMetrics, POLL_MODEL);
-  setInterval(pollStats,    POLL_TRADES);
-  setInterval(pollSystem,   5_000);
-
-  pollLogs();
-  setInterval(pollLogs, POLL_LOGS);
+  _startPoller('state', pollState, POLL_SUMMARY);
+  _syncTabPollers();
 }
 
 
 // ─── Candle Patterns ───────────────────────────────────────────
 
+/** Busca /api/candle-patterns e lista os padrões de vela (ícone, força, contexto) nos painéis correspondentes. */
 async function pollCandlePatterns() {
   try {
-    const res = await fetch(API_BASE_URL + '/api/candle-patterns');
+    const params = new URLSearchParams();
+    const symbol = el('activeSymbol')?.textContent?.trim();
+    if (symbol) params.set('symbol', symbol);
+    const res = await fetch(API_BASE_URL + '/api/candle-patterns?' + params.toString(), { cache: 'no-store' });
     const data = await res.json();
 
     const wraps = [
@@ -1831,7 +2304,7 @@ async function pollCandlePatterns() {
       }).join('');
     }
   } catch (e) {
-    // silenciar erros de polling
+    _recordPollError('candle-patterns', e);
   }
 }
 

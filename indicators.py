@@ -442,6 +442,7 @@ def _find_fvg(
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
+    """Limita `value` ao intervalo [lo, hi]."""
     return max(lo, min(hi, value))
 
 

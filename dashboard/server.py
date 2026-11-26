@@ -1,9 +1,9 @@
-#!/home/stanis/.venv/bin/python3
+#!/usr/bin/env python3
 """
 dashboard/server.py — Backend Flask do Dashboard do Bot Deriv.
 
 Uso:
-    cd /home/stanis/Repositorios/Binary
+    cd /caminho/para/StanDeriv
     .venv/bin/python3 dashboard/server.py
     # ou: python3 dashboard/server.py (com venv ativo)
 
@@ -11,14 +11,17 @@ Acesso: http://localhost:5055
 """
 
 import collections
-import hmac
+import csv
+import datetime as dt
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from functools import wraps
 from pathlib import Path
 
@@ -27,22 +30,19 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 import pandas as pd
+import websocket
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+import config
+from model_contract import FEATURE_WINDOW, minimum_history_candles
+from runtime_status import update_status
+from operational_diagnostics import safe_detail
 
 try:
     import psutil
     _PSUTIL = True
 except ImportError:
     _PSUTIL = False
-
-try:
-    import indicators as ind
-    from config import CANDLE_SIZE, PA_SR_TOLERANCE, CANDLE_TIMEFRAME_SEC
-    from feature_engine import compute_feature_map
-    _BOT_MODULES = True
-except Exception:
-    _BOT_MODULES = False
 
 # ─── Autenticação ─────────────────────────────────────────────────────────────────
 
@@ -55,11 +55,12 @@ def _require_token(f):
     """Decorator: exige 'X-Auth-Token' correto para rotas de controle do bot."""
     @wraps(f)
     def wrapper(*args, **kwargs):
+        """Valida o token (ou a origem local) antes de chamar a rota."""
         # Permite requisições sem token apenas de localhost (sem token configurado)
         is_local = request.remote_addr in ("127.0.0.1", "::1")
         if _DASHBOARD_TOKEN:
             token = request.headers.get("X-Auth-Token", "")
-            if not hmac.compare_digest(token.encode("utf-8"), _DASHBOARD_TOKEN.encode("utf-8")):
+            if token != _DASHBOARD_TOKEN:
                 return jsonify({"ok": False, "msg": "Unauthorized"}), 401
         elif not is_local:
             # Sem token configurado: bloqueia qualquer origem não-local
@@ -69,19 +70,24 @@ def _require_token(f):
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
 
-TICKS_CSV      = _ROOT / "ticks.csv"
-OPERATIONS_CSV = _ROOT / "operacoes_log.csv"
-DATASET_CSV    = _ROOT / "dataset.csv"
+TICKS_CSV      = _ROOT / "ticks_v2.csv"
+OPERATIONS_CSV = _ROOT / "operacoes_v2.csv"
+DATASET_CSV    = _ROOT / "dataset_v2.csv"
 MODEL_PKL      = _ROOT / "model.pkl"
 TFT_PKL        = _ROOT / "transformer_model.pkl"
 DURATION_PKL   = _ROOT / "duration_model.pkl"
 PIPELINE_PY    = _ROOT / "pipeline.py"
+BACKTEST_PY    = _ROOT / "backtest.py"
 PID_FILE       = _ROOT / "dashboard" / "bot.pid"
 STATIC_DIR     = Path(__file__).resolve().parent
 RISK_STATE_JSON = _ROOT / "risk_state.json"
 STATE_JSON      = _ROOT / "state.json"
 MODEL_METRICS_JSON = _ROOT / "model_metrics.json"
 PIPELINE_LOG_TXT = _ROOT / "pipeline.log"
+BOT_STATUS_JSON = _ROOT / "bot_status.json"
+BACKTEST_ROOT = _ROOT / "backtest_reports" / "dashboard"
+BACKTEST_STATE_JSON = BACKTEST_ROOT / "state.json"
+MIN_HISTORY_CANDLES = minimum_history_candles()
 
 # ─── Flask App ────────────────────────────────────────────────────────────────
 
@@ -90,23 +96,32 @@ CORS(app, origins=["http://localhost:*", "http://127.0.0.1:*"])
 
 # Serializa NaN/Inf como null para produzir JSON válido no browser
 import math as _math
-import json as _json
-
-
-def _clean_floats(obj):
-    """Converte NaN/Inf para None recursivamente antes de serializar."""
-    if isinstance(obj, float):
-        return None if (_math.isnan(obj) or _math.isinf(obj)) else obj
-    if isinstance(obj, dict):
-        return {k: _clean_floats(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_clean_floats(v) for v in obj]
-    return obj
-
 
 class _SafeJSONProvider(app.json_provider_class):  # type: ignore[name-defined]
+    """Provedor JSON do Flask que serializa NaN/Inf como null."""
     def dumps(self, obj, **kw):
-        return _json.dumps(_clean_floats(obj), **kw)
+        """Serializa `obj` substituindo floats não finitos por null."""
+        import json as _json
+        class _Enc(_json.JSONEncoder):
+            """Encoder que limpa floats não finitos antes de codificar."""
+            def iterencode(self, o, _one_shot=False):
+                """Codifica o objeto após `_clean`."""
+                return super().iterencode(self._clean(o), _one_shot)
+            def _clean(self, o):
+                """Percorre dicts e listas trocando NaN/Inf por None."""
+                if isinstance(o, float):
+                    if _math.isnan(o) or _math.isinf(o):
+                        return None
+                    return o
+                if isinstance(o, dict):
+                    return {k: self._clean(v) for k, v in o.items()}
+                if isinstance(o, (list, tuple)):
+                    return [self._clean(v) for v in o]
+                return o
+            def default(self, o):
+                """Delega ao encoder padrão."""
+                return super().default(o)
+        return _json.dumps(obj, cls=_Enc, **kw)
 
 app.json_provider_class = _SafeJSONProvider
 app.json = _SafeJSONProvider(app)
@@ -116,7 +131,18 @@ app.json = _SafeJSONProvider(app)
 _bot_log_buffer: collections.deque = collections.deque(maxlen=200)
 _bot_process: subprocess.Popen | None = None
 _bot_log_lock = threading.Lock()
-_bot_start_lock = threading.Lock()
+_bot_status_lock = threading.RLock()
+_deriv_contract_cache: dict = {"ts": 0.0, "records": [], "error": ""}
+_DERIV_CONTRACT_CACHE_TTL = 15.0
+
+# Backtests rodam em subprocesso para não bloquear o servidor Flask nem
+# compartilhar estado dos modelos com o processo do bot.
+_backtest_process: subprocess.Popen | None = None
+_backtest_log_buffer: collections.deque = collections.deque(maxlen=200)
+_backtest_lock = threading.RLock()
+_backtest_state: dict = {}
+_csv_count_cache: dict = {}
+_csv_count_lock = threading.Lock()
 
 
 def _read_bot_output(proc: subprocess.Popen) -> None:
@@ -124,6 +150,7 @@ def _read_bot_output(proc: subprocess.Popen) -> None:
     stdout = proc.stdout
     if stdout is None:
         return
+    returncode = None
     try:
         with PIPELINE_LOG_TXT.open("a", encoding="utf-8") as log_file:
             for line in stdout:
@@ -137,6 +164,17 @@ def _read_bot_output(proc: subprocess.Popen) -> None:
         stdout.close()
     except Exception:
         pass
+    finally:
+        try:
+            returncode = proc.wait(timeout=0)
+        except subprocess.TimeoutExpired:
+            returncode = proc.poll()
+        except Exception:
+            returncode = None
+        if not isinstance(returncode, int):
+            returncode = None
+        if returncode is not None:
+            _mark_bot_stopped(returncode, requested=_get_bot_status().get("status") == "stopping")
 
 
 def _read_recent_pipeline_logs(max_lines: int = 500) -> list[str]:
@@ -159,14 +197,12 @@ def _read_csv_safe(path, **kwargs):
             return pd.DataFrame()
         # Tentativa padrão (arquivo com cabeçalho)
         df = pd.read_csv(path, **kwargs)
-        # Se a coluna 'price' existir, retornamos imediatamente
-        if "price" in df.columns:
+        if "price" in df.columns or path != TICKS_CSV:
             return df
 
-        # Se não houver 'price' é provável que o CSV não possua cabeçalho
-        # (caso comum quando o arquivo foi gerado sem a linha de header).
-        # Recarrega sem header e atribui nomes de coluna conforme o número
-        # de colunas detectadas.
+        # Se não houver 'price' e estivermos lendo ticks.csv, é provável que o CSV
+        # não tenha cabeçalho. Recarrega sem header e atribui nomes de coluna conforme
+        # o número de colunas detectadas.
         df_no_header = pd.read_csv(path, header=None, **kwargs)
         cols = df_no_header.shape[1]
         if cols >= 4:
@@ -185,6 +221,297 @@ def _read_csv_safe(path, **kwargs):
         return pd.DataFrame()
 
 
+def _count_csv_rows(path, *, minimum_epoch: int | None = None) -> int:
+    """Conta linhas de dados incrementalmente, processando apenas bytes novos após a primeira leitura."""
+    try:
+        file_path = Path(path)
+        stat = file_path.stat()
+        cache_key = (str(file_path.resolve()), minimum_epoch)
+        with _csv_count_lock:
+            cached = _csv_count_cache.get(cache_key)
+            reset = (
+                cached is None
+                or cached["inode"] != stat.st_ino
+                or stat.st_size < cached["offset"]
+                or (stat.st_size == cached["offset"] and cached["mtime_ns"] != stat.st_mtime_ns)
+            )
+            if reset:
+                with file_path.open("rb") as file:
+                    header = next(csv.reader([file.readline().decode("utf-8", errors="replace")]), [])
+                    offset = file.tell()
+                cached = {
+                    "inode": stat.st_ino,
+                    "offset": offset,
+                    "mtime_ns": stat.st_mtime_ns,
+                    "epoch_index": header.index("epoch") if "epoch" in header else None,
+                    "count": 0,
+                    "pending": b"",
+                }
+
+            if stat.st_size > cached["offset"]:
+                with file_path.open("rb") as file:
+                    file.seek(cached["offset"])
+                    appended = cached["pending"] + file.read()
+                    cached["offset"] = file.tell()
+                complete_lines = appended.split(b"\n")
+                cached["pending"] = complete_lines.pop() if complete_lines and not appended.endswith(b"\n") else b""
+                if appended.endswith(b"\n") and complete_lines:
+                    complete_lines.append(b"")
+                for raw_line in complete_lines:
+                    if not raw_line.strip():
+                        continue
+                    row = next(csv.reader([raw_line.decode("utf-8", errors="replace")]), [])
+                    epoch_index = cached["epoch_index"]
+                    if minimum_epoch is not None and epoch_index is not None:
+                        try:
+                            if int(float(row[epoch_index])) < minimum_epoch:
+                                continue
+                        except (IndexError, TypeError, ValueError):
+                            continue
+                    cached["count"] += 1
+                cached["mtime_ns"] = stat.st_mtime_ns
+
+            _csv_count_cache[cache_key] = cached
+            return int(cached["count"])
+    except (OSError, csv.Error):
+        return 0
+
+
+def _last_local_contract() -> dict | None:
+    """Última operação do CSV local formatada como contrato encerrado, ou None se vazio."""
+    df = _read_csv_safe(OPERATIONS_CSV)
+    if df.empty:
+        return None
+    row = df.iloc[-1].to_dict()
+
+    def _float(name: str) -> float:
+        """Campo da linha como float; 0.0 se ausente ou inválido."""
+        try:
+            value = float(row.get(name, 0) or 0)
+            return value if pd.notna(value) else 0.0
+        except Exception:
+            return 0.0
+
+    def _int(name: str) -> int:
+        """Campo da linha como inteiro positivo; 0 se ausente ou inválido."""
+        try:
+            value = int(float(row.get(name, 0) or 0))
+            return value if value > 0 else 0
+        except Exception:
+            return 0
+
+    return {
+        "has_active": False,
+        "closed": True,
+        "contract_id": str(row.get("contract_id", "") or ""),
+        "symbol": str(row.get("symbol", "") or ""),
+        "direction": str(row.get("direction", "") or ""),
+        "duration": int(_float("duration")),
+        "duration_unit": str(row.get("duration_unit", "m") or "m"),
+        "entry_epoch": _int("entry_epoch"),
+        "exit_epoch": _int("exit_epoch"),
+        "entry_price": _float("entry_price"),
+        "exit_price": _float("exit_price"),
+        "payout": _float("payout"),
+        "buy_price": _float("buy_price") or _float("stake"),
+        "profit": _float("profit"),
+        "result": str(row.get("result", "") or ""),
+        "timestamp": str(row.get("timestamp", "") or ""),
+    }
+
+
+def _deriv_credentials_available() -> bool:
+    """Indica se há token configurado que não seja de teste/offline."""
+    try:
+        from config import TOKEN
+        token = str(TOKEN or "").strip()
+    except Exception:
+        return False
+    if not token:
+        return False
+    lowered = token.lower()
+    return not (
+        lowered.startswith("test_")
+        or lowered.startswith("offline_")
+        or lowered in {"test_token", "test_token_placeholder", "offline_test_token"}
+    )
+
+
+def _request_deriv_profit_table(limit: int = 100) -> list[dict]:
+    """Busca o relatório oficial de contratos na Deriv sem persistir no repo."""
+    if not _deriv_credentials_available():
+        return []
+
+    from config import APP_ID, DEMO_MODE, DERIV_AUTH_MODE, TOKEN
+    from deriv_session import is_bearer_token, setup_bearer_options_session
+
+    token = str(TOKEN).strip()
+    app_id = str(APP_ID).strip() or "1089"
+    ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
+    needs_authorize = True
+
+    if is_bearer_token(token, DERIV_AUTH_MODE):
+        session = setup_bearer_options_session(
+            app_id=app_id,
+            token=token,
+            demo=bool(DEMO_MODE),
+            timeout_sec=15,
+        )
+        ws_url = str(session["ws_url"])
+        needs_authorize = False
+
+    ws = websocket.create_connection(ws_url, timeout=15)
+    try:
+        if needs_authorize:
+            ws.send(json.dumps({"authorize": token}))
+            auth = json.loads(ws.recv())
+            if auth.get("error"):
+                raise RuntimeError(str(auth["error"].get("message", "Falha ao autenticar na Deriv")))
+
+        ws.send(json.dumps({
+            "profit_table": 1,
+            "description": 1,
+            "limit": max(1, min(int(limit), 500)),
+            "sort": "DESC",
+        }))
+        response = json.loads(ws.recv())
+        if response.get("error"):
+            raise RuntimeError(str(response["error"].get("message", "Falha ao consultar profit_table")))
+        table = response.get("profit_table") or {}
+        transactions = table.get("transactions") or []
+        return [item for item in transactions if isinstance(item, dict)]
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def _contract_direction(transaction: dict) -> str:
+    """Mapeia o tipo/descrição do contrato para 'BUY' ou 'SELL' (ou o tipo bruto)."""
+    contract_type = str(transaction.get("contract_type", "")).upper()
+    if contract_type in {"CALL", "MULTUP", "ASIANU", "DIGITOVER"}:
+        return "BUY"
+    if contract_type in {"PUT", "MULTDOWN", "ASIAND", "DIGITUNDER"}:
+        return "SELL"
+    longcode = str(transaction.get("longcode") or transaction.get("description") or "").lower()
+    if "higher" in longcode or "rise" in longcode or "call" in longcode:
+        return "BUY"
+    if "lower" in longcode or "fall" in longcode or "put" in longcode:
+        return "SELL"
+    return contract_type or "—"
+
+
+def _normalize_deriv_contract(transaction: dict) -> dict:
+    """Converte uma transação da profit_table da Deriv no registro de contrato usado pelo dashboard."""
+    buy_price = float(transaction.get("buy_price", 0.0) or 0.0)
+    sell_price = float(transaction.get("sell_price", 0.0) or 0.0)
+    profit = float(transaction.get("profit", sell_price - buy_price) or 0.0)
+    purchase_time = int(float(transaction.get("purchase_time", transaction.get("date_start", 0)) or 0))
+    sell_time = int(float(transaction.get("sell_time", transaction.get("date_expiry", purchase_time)) or purchase_time))
+    duration_sec = max(0, sell_time - purchase_time)
+    duration_min = int(round(duration_sec / 60)) if duration_sec else 0
+    result = "WIN" if profit > 0 else "LOSS" if profit < 0 else "DRAW"
+    contract_id = str(transaction.get("contract_id") or transaction.get("transaction_id") or "")
+
+    return {
+        "timestamp": dt.datetime.fromtimestamp(purchase_time).isoformat() if purchase_time else "",
+        "symbol": str(transaction.get("underlying_symbol") or transaction.get("symbol") or ""),
+        "direction": _contract_direction(transaction),
+        "stake": buy_price,
+        "sell_price": sell_price,
+        "duration": duration_min,
+        "duration_unit": "m",
+        "result": result,
+        "profit": round(profit, 2),
+        "balance_after": None,
+        "ema9": 0.0,
+        "ema21": 0.0,
+        "rsi": 0.0,
+        "adx": 0.0,
+        "macd_hist": 0.0,
+        "ai_confidence": 0.0,
+        "ai_score": 0.0,
+        "market_condition": "",
+        "contract_id": contract_id,
+        "payout": float(transaction.get("payout", 0.0) or 0.0),
+    }
+
+
+def _deriv_contract_report(limit: int = 100, *, force: bool = False) -> list[dict]:
+    """Contratos normalizados da Deriv com cache de 15s (ignorado com `force`); [] em caso de erro, que fica no cache."""
+    global _deriv_contract_cache
+    now = time.time()
+    if (
+        not force
+        and now - float(_deriv_contract_cache.get("ts", 0.0) or 0.0) < _DERIV_CONTRACT_CACHE_TTL
+    ):
+        return list(_deriv_contract_cache.get("records", []))
+
+    try:
+        transactions = _request_deriv_profit_table(limit=limit)
+        records = [_normalize_deriv_contract(item) for item in transactions]
+        _deriv_contract_cache = {"ts": now, "records": records, "error": ""}
+        return records
+    except Exception as exc:
+        _deriv_contract_cache = {"ts": now, "records": [], "error": str(exc)}
+        return []
+
+
+def _contracts_frame(limit: int = 500) -> pd.DataFrame:
+    """Relatório de contratos como DataFrame."""
+    records, _source, _error = _contract_records_for_dashboard(limit=limit)
+    return pd.DataFrame(records)
+
+
+def _local_contract_records(limit: int = 500) -> list[dict]:
+    """Contratos locais normalizados a partir de operacoes_v2.csv."""
+    df = _read_csv_safe(OPERATIONS_CSV)
+    if df.empty:
+        return []
+    records = []
+    for row in df.tail(limit).to_dict("records"):
+        try:
+            profit = float(row.get("profit", 0.0) or 0.0)
+        except Exception:
+            profit = 0.0
+        records.append({
+            "timestamp": str(row.get("timestamp", "") or ""),
+            "symbol": str(row.get("symbol", "") or ""),
+            "direction": str(row.get("direction", "") or ""),
+            "stake": float(row.get("stake", row.get("buy_price", 0.0)) or 0.0),
+            "sell_price": float(row.get("sell_price", row.get("payout", 0.0)) or 0.0),
+            "duration": int(float(row.get("duration", 0) or 0)),
+            "duration_unit": str(row.get("duration_unit", "m") or "m"),
+            "result": str(row.get("result", "WIN" if profit > 0 else "LOSS" if profit < 0 else "DRAW") or ""),
+            "profit": round(profit, 2),
+            "balance_after": row.get("balance_after"),
+            "ema9": float(row.get("ema9", 0.0) or 0.0),
+            "ema21": float(row.get("ema21", 0.0) or 0.0),
+            "rsi": float(row.get("rsi", 0.0) or 0.0),
+            "adx": float(row.get("adx", 0.0) or 0.0),
+            "macd_hist": float(row.get("macd_hist", 0.0) or 0.0),
+            "ai_confidence": float(row.get("ai_confidence", 0.0) or 0.0),
+            "ai_score": float(row.get("ai_score", 0.0) or 0.0),
+            "market_condition": str(row.get("market_condition", "") or ""),
+            "contract_id": str(row.get("contract_id", "") or ""),
+            "payout": float(row.get("payout", 0.0) or 0.0),
+        })
+    return list(reversed(records))
+
+
+def _contract_records_for_dashboard(limit: int = 500, *, force: bool = False) -> tuple[list[dict], str, str]:
+    """Retorna contratos para UI, preferindo Deriv e usando CSV local como fallback identificado."""
+    records = _deriv_contract_report(limit=limit, force=force)
+    error = str(_deriv_contract_cache.get("error", ""))
+    if records or not error:
+        return records[:limit], "deriv_profit_table", error
+    local_records = _local_contract_records(limit=limit)
+    if local_records:
+        return local_records[:limit], "local_operations_fallback", error
+    return [], "deriv_profit_table", error
+
+
 def _bot_pid() -> int | None:
     """Retorna PID salvo em bot.pid ou None."""
     try:
@@ -193,7 +520,71 @@ def _bot_pid() -> int | None:
             return pid
     except (ValueError, OSError):
         pass
+    try:
+        status = _get_bot_status()
+        if (
+            bool(status.get("running"))
+            or str(status.get("status", "")) in {"starting", "running", "stopping"}
+        ):
+            pid = int(status.get("pid") or 0)
+            return pid if pid > 0 else None
+    except (TypeError, ValueError):
+        pass
     return None
+
+
+def _clear_stale_bot_pid(pid: int | None = None) -> None:
+    """Remove o arquivo de PID (se corresponder a `pid`) e marca o status do bot como obsoleto."""
+    try:
+        if PID_FILE.exists():
+            current = int(PID_FILE.read_text().strip())
+            if pid is None or current == int(pid):
+                PID_FILE.unlink()
+    except Exception:
+        pass
+    _mark_stale_bot_status(pid)
+
+
+def _mark_stale_bot_status(pid: int | None = None) -> None:
+    """Marca como 'crashed' um status que ainda indica execução sem processo correspondente."""
+    try:
+        state = _get_bot_status()
+        status_pid = int(state.get("pid") or 0)
+        if pid is not None and status_pid and status_pid != int(pid):
+            return
+        if (
+            not state.get("running")
+            and str(state.get("status", "")) not in {"starting", "running", "stopping"}
+        ):
+            return
+        now = _utc_now_iso()
+        state.update(
+            status="crashed",
+            running=False,
+            stopped_at=now,
+            finished_at=now,
+            returncode=state.get("returncode"),
+            last_error=state.get("last_error") or "processo ausente",
+        )
+        _persist_bot_status(state)
+    except Exception:
+        pass
+
+
+def _is_pipeline_process(proc) -> bool:
+    """Verifica se o processo psutil é um pipeline.py ativo executando neste repositório."""
+    try:
+        if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+        cmdline = " ".join(proc.cmdline()).replace("\\", "/")
+        cwd = ""
+        try:
+            cwd = str(proc.cwd())
+        except Exception:
+            pass
+        return "pipeline.py" in cmdline and (not cwd or Path(cwd).resolve() == _ROOT.resolve())
+    except Exception:
+        return False
 
 
 def _bot_running() -> tuple[bool, int | None]:
@@ -204,22 +595,290 @@ def _bot_running() -> tuple[bool, int | None]:
     if _PSUTIL:
         try:
             proc = psutil.Process(pid)
-            return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE, pid
+            if _is_pipeline_process(proc):
+                return True, pid
+            _clear_stale_bot_pid(pid)
+            return False, None
         except psutil.NoSuchProcess:
+            _clear_stale_bot_pid(pid)
             return False, None
     else:
-        # Fallback sem psutil: verifica via kill -0
+        # Fallback sem psutil: valida /proc quando disponível; não confia em PID
+        # reutilizado por outro processo.
+        cmdline_path = Path("/proc") / str(pid) / "cmdline"
+        try:
+            if cmdline_path.exists():
+                cmdline = cmdline_path.read_text(errors="replace").replace("\x00", " ")
+                if "pipeline.py" in cmdline:
+                    return True, pid
+                _clear_stale_bot_pid(pid)
+                return False, None
+        except Exception:
+            pass
         try:
             os.kill(pid, 0)
-            return True, pid
-        except (ProcessLookupError, PermissionError):
+            _clear_stale_bot_pid(pid)
             return False, None
+        except (ProcessLookupError, PermissionError):
+            _clear_stale_bot_pid(pid)
+            return False, None
+
+
+def _utc_now_iso() -> str:
+    """Instante atual em UTC no formato ISO 8601."""
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def _append_bot_log(message: str) -> None:
+    """Acrescenta a mensagem ao log em disco e ao buffer circular."""
+    try:
+        with PIPELINE_LOG_TXT.open("a", encoding="utf-8") as log_file:
+            log_file.write(message + "\n")
+    except Exception:
+        pass
+    with _bot_log_lock:
+        _bot_log_buffer.append(message)
+
+
+def _persist_bot_status(status: dict) -> None:
+    """Grava o status do bot em `bot_status.json` com substituição atômica sob lock."""
+    with _bot_status_lock:
+        temp_path = BOT_STATUS_JSON.with_name(
+            f".{BOT_STATUS_JSON.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            temp_path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+            os.replace(temp_path, BOT_STATUS_JSON)
+        finally:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
+
+
+def _get_bot_status() -> dict:
+    """Lê o status persistido do bot; dict vazio se inválido."""
+    with _bot_status_lock:
+        data = _read_json_safe(BOT_STATUS_JSON)
+    return data if isinstance(data, dict) else {}
+
+
+def _set_bot_status(**updates) -> dict:
+    """Mescla `updates` ao status persistido do bot e o retorna."""
+    with _bot_status_lock:
+        return update_status(BOT_STATUS_JSON, updates, owner='dashboard')
+
+
+def _mark_bot_stopped(returncode: int | None = None, *, requested: bool = False) -> dict:
+    """Registra o fim do processo ('stopped' ou 'crashed'), limpa PID e processo e registra no log."""
+    global _bot_process
+    now = _utc_now_iso()
+    if not isinstance(returncode, int):
+        returncode = None
+    status = "stopped" if requested or returncode == 0 else "crashed"
+    reason = "parada solicitada" if requested else (
+        f"processo encerrado com returncode {returncode}" if returncode is not None else "processo ausente"
+    )
+    state = _set_bot_status(
+        status=status,
+        running=False,
+        stopped_at=now,
+        finished_at=now,
+        returncode=returncode,
+        last_error="" if status == "stopped" else reason,
+    )
+    _clear_stale_bot_pid(state.get("pid"))
+    _bot_process = None
+    if status == "crashed":
+        _append_bot_log(f"[BOT] Processo encerrado inesperadamente: {reason}")
+    else:
+        _append_bot_log(f"[BOT] Processo encerrado: {reason}")
+    return state
+
+
+def _terminate_bot_process(pid: int, *, timeout: float = 3.0) -> None:
+    """Encerra o pipeline e seus filhos, escalando para kill se o SIGTERM não bastar."""
+    if _PSUTIL:
+        proc = psutil.Process(pid)
+        targets = proc.children(recursive=True) + [proc]
+        for target in targets:
+            try:
+                target.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        gone, alive = psutil.wait_procs(targets, timeout=timeout)
+        for target in alive:
+            try:
+                target.kill()
+            except psutil.NoSuchProcess:
+                pass
+        return
+
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        os.kill(pid, signal.SIGTERM)
+
+
+def _refresh_bot_status(running: bool | None = None, pid: int | None = None) -> dict:
+    """Reconcilia o status persistido com a existência real do processo, marcando queda quando necessário."""
+    if running is None:
+        running, pid = _bot_running()
+    state = _get_bot_status()
+    status = str(state.get("status", "idle"))
+    known_pid = state.get("pid")
+    try:
+        known_pid_int = int(known_pid or 0)
+    except (TypeError, ValueError):
+        known_pid_int = 0
+    if status == "stopping" and not running:
+        return _mark_bot_stopped(state.get("returncode"), requested=True)
+    should_mark_crashed = (
+        (status in {"starting", "running"} or bool(state.get("running")))
+        and not running
+        and known_pid_int
+        and (pid is None or known_pid_int != int(pid or 0))
+    )
+    if should_mark_crashed:
+        return _mark_bot_stopped(state.get("returncode"), requested=False)
+    if running:
+        if status == "stopping":
+            return _set_bot_status(status="stopping", running=True, pid=pid)
+        return _set_bot_status(status="running", running=True, pid=pid)
+    if state.get("running") and status != "stopping":
+        return _mark_bot_stopped(state.get("returncode"), requested=False)
+    return state
+
+
+def _persist_backtest_state(state: dict) -> None:
+    """Persiste o estado da execução com substituição atômica."""
+    BACKTEST_ROOT.mkdir(parents=True, exist_ok=True)
+    temp_path = BACKTEST_STATE_JSON.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    os.replace(temp_path, BACKTEST_STATE_JSON)
+
+
+def _get_backtest_state() -> dict:
+    """Estado do backtest em memória, carregado do disco se ainda vazio."""
+    global _backtest_state
+    with _backtest_lock:
+        if not _backtest_state and BACKTEST_STATE_JSON.exists():
+            try:
+                loaded = json.loads(BACKTEST_STATE_JSON.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    _backtest_state = loaded
+            except (OSError, json.JSONDecodeError):
+                pass
+        return dict(_backtest_state)
+
+
+def _set_backtest_state(**updates) -> dict:
+    """Mescla `updates` ao estado do backtest, persiste e retorna uma cópia."""
+    global _backtest_state
+    with _backtest_lock:
+        current = _get_backtest_state()
+        current.update(updates)
+        _backtest_state = current
+        _persist_backtest_state(current)
+        return dict(current)
+
+
+def _backtest_running() -> tuple[bool, int | None]:
+    """(em execução, PID) considerando apenas o subprocesso deste servidor."""
+    with _backtest_lock:
+        if _backtest_process is not None and _backtest_process.poll() is None:
+            return True, _backtest_process.pid
+        state = _get_backtest_state()
+    pid = state.get("pid")
+    # Após reinício do servidor, não confia apenas em um PID persistido: ele
+    # pode já ter sido reutilizado por outro processo. O status será marcado
+    # como interrompido, sem risco de terminar um processo alheio.
+    return False, int(pid) if isinstance(pid, int) else None
+
+
+def _read_backtest_output(proc: subprocess.Popen, run_id: str, run_dir: Path) -> None:
+    """Captura logs e finaliza o estado persistido do backtest."""
+    log_path = run_dir / "backtest.log"
+    try:
+        stdout = proc.stdout
+        with log_path.open("a", encoding="utf-8") as log_file:
+            if stdout is not None:
+                for line in stdout:
+                    decoded = line.rstrip()
+                    if not decoded:
+                        continue
+                    log_file.write(decoded + "\n")
+                    log_file.flush()
+                    with _backtest_lock:
+                        _backtest_log_buffer.append(decoded)
+                stdout.close()
+        returncode = proc.wait()
+    except Exception as exc:
+        returncode = proc.poll()
+        with _backtest_lock:
+            _backtest_log_buffer.append(f"Falha ao ler processo: {exc}")
+
+    report_path = run_dir / "backtest_report.json"
+    current = _get_backtest_state()
+    if current.get("run_id") != run_id:
+        return
+    requested_stop = current.get("status") == "stopping"
+    completed = returncode == 0 and report_path.exists() and not requested_stop
+    error = ""
+    if not completed and not requested_stop:
+        error = f"Backtest finalizado com código {returncode}"
+    try:
+        _set_backtest_state(
+            status="completed" if completed else ("stopped" if requested_stop else "failed"),
+            running=False,
+            returncode=returncode,
+            finished_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            report_available=report_path.exists(),
+            error=error,
+        )
+    except OSError:
+        pass
+
+
+def _validated_number(
+    data: dict,
+    key: str,
+    default: float,
+    minimum: float,
+    maximum: float,
+    integer: bool = False,
+):
+    """Lê `key` de `data` como número (int ou float) dentro de [minimum, maximum]; ValueError se inválido."""
+    try:
+        value = int(data.get(key, default)) if integer else float(data.get(key, default))
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} deve ser numérico") from None
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{key} deve estar entre {minimum} e {maximum}")
+    return value
+
+
+def _safe_report_path(state: dict) -> Path | None:
+    """Caminho do relatório do estado se estiver dentro da raiz de backtests; senão None."""
+    raw = state.get("report_path")
+    if not raw:
+        return None
+    try:
+        path = Path(raw).resolve()
+        root = BACKTEST_ROOT.resolve()
+        if not path.is_relative_to(root):
+            return None
+        return path
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 # ─── Rotas estáticas ─────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
+    """GET /: serve a página principal do dashboard."""
     return send_from_directory(str(STATIC_DIR), "index.html")
 
 
@@ -246,76 +905,22 @@ def app_js():
 
 @app.route("/api/summary")
 def api_summary():
-    df = _read_csv_safe(OPERATIONS_CSV)
-
-    if df.empty:
-        risk_state = _read_json_safe(RISK_STATE_JSON)
-        balance = float(risk_state.get("balance", 0.0) or 0.0)
-        return jsonify({
-            "balance": round(balance, 2),
-            "balance_initial": round(balance, 2),
-            "pnl_today": 0.0,
-            "pnl_pct": 0.0,
-            "win_rate": 0.0,
-            "win_rate_recent": 0.0,
-            "total_trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "consec_losses": 0,
-            "is_paused": False,
-            "drawdown_pct": 0.0,
-            "risk_state": risk_state,
-        })
-
-    # Última linha disponível
-    last = df.iloc[-1]
-
-    total = len(df)
-    wins  = int((df["result"] == "WIN").sum()) if "result" in df.columns else 0
-    losses = total - wins
-    win_rate = round(wins / total * 100, 1) if total > 0 else 0.0
-
-    balance       = float(last.get("balance_after", 0))
-    balance_init  = float(df.iloc[0].get("balance_before", balance))
-    pnl_today     = float(last.get("profit", 0)) if "profit" in df.columns else 0.0
-
-    # Soma os profits do dia atual
-    if "timestamp" in df.columns:
-        try:
-            df["_ts"] = pd.to_datetime(df["timestamp"], errors="coerce")
-            today = pd.Timestamp.now().normalize()
-            today_df = df[df["_ts"] >= today]
-            pnl_today = float(today_df["profit"].sum()) if "profit" in today_df.columns else 0.0
-        except Exception:
-            pass
-
-    pnl_pct      = round((pnl_today / balance_init * 100), 2) if balance_init != 0 else 0.0
-    consec_losses = int(last.get("consec_losses", 0))
-    drawdown_pct  = float(last.get("drawdown_pct", 0.0))
-    win_rate_rec  = float(last.get("win_rate_recent", 0.0))
-    risk_state    = _read_json_safe(RISK_STATE_JSON)
-
-    return jsonify({
-        "balance":          round(balance, 2),
-        "balance_initial":  round(balance_init, 2),
-        "pnl_today":        round(pnl_today, 2),
-        "pnl_pct":          pnl_pct,
-        "win_rate":         win_rate,
-        "win_rate_recent":  round(win_rate_rec, 1),
-        "total_trades":     total,
-        "wins":             wins,
-        "losses":           losses,
-        "consec_losses":    consec_losses,
-        "is_paused":        consec_losses >= 3,
-        "drawdown_pct":     round(drawdown_pct, 2),
-        "risk_state":       risk_state,
-    })
+    """GET /api/summary: resumo de desempenho a partir dos contratos da Deriv e do estado de risco."""
+    risk_state = _read_json_safe(RISK_STATE_JSON)
+    records, source, source_error = _contract_records_for_dashboard(limit=500)
+    summary = _summary_from_contract_report(records, risk_state)
+    summary["risk_state"] = risk_state
+    summary["source"] = source
+    if source_error:
+        summary["source_error"] = source_error
+    return jsonify(summary)
 
 
 # ─── API: Ticks ───────────────────────────────────────────────────────────────
 
 @app.route("/api/ticks")
 def api_ticks():
+    """GET /api/ticks: últimos `n` ticks (máx. 2000), filtráveis por `symbol` e `from_epoch`."""
     n = min(int(request.args.get("n", 300)), 2000)
     symbol = str(request.args.get("symbol", "")).strip()
     from_epoch_raw = request.args.get("from_epoch")
@@ -325,7 +930,7 @@ def api_ticks():
             from_epoch = int(from_epoch_raw)
         except (TypeError, ValueError):
             from_epoch = None
-    df = _read_csv_safe(TICKS_CSV)
+    df = _tail_csv(TICKS_CSV, n, symbol=symbol, from_epoch=from_epoch)
 
     if df.empty:
         return jsonify([])
@@ -334,18 +939,8 @@ def api_ticks():
     if "price" not in df.columns:
         df.columns = ["epoch", "price"] if len(df.columns) == 2 else list(df.columns)
 
-    if symbol and "symbol" in df.columns:
-        df = df[df["symbol"].astype(str) == symbol]
-
-    if from_epoch is not None and "epoch" in df.columns:
-        try:
-            df = df[df["epoch"].astype(int) >= from_epoch]
-        except Exception:
-            pass
-
-    tail = df.tail(n)
     result = []
-    for _, row in tail.iterrows():
+    for _, row in df.iterrows():
         result.append({
             "epoch": int(row.get("epoch", 0)),
             "price": float(row.get("price", 0)),
@@ -358,62 +953,30 @@ def api_ticks():
 
 @app.route("/api/trades")
 def api_trades():
+    """GET /api/trades: últimos `n` contratos da Deriv (máx. 500) e o erro de consulta, se houver."""
     n = min(int(request.args.get("n", 50)), 500)
-    df = _read_csv_safe(OPERATIONS_CSV)
-
-    if df.empty:
-        return jsonify([])
-
-    tail = df.tail(n).iloc[::-1]  # mais recente primeiro
-    records = []
-    for _, row in tail.iterrows():
-        records.append({
-            "timestamp":     str(row.get("timestamp", "")),
-            "symbol":        str(row.get("symbol", "")),
-            "direction":     str(row.get("direction", "")),
-            "stake":         float(row.get("stake", 0)),
-            "duration":      int(row.get("duration", 0)),
-            "result":        str(row.get("result", "")),
-            "profit":        float(row.get("profit", 0)),
-            "balance_after": float(row.get("balance_after", 0)),
-            "ema9":          float(row.get("ema9", 0)),
-            "ema21":         float(row.get("ema21", 0)),
-            "rsi":           float(row.get("rsi", 0)),
-            "adx":           float(row.get("adx", 0)),
-            "macd_hist":     float(row.get("macd_hist", 0)),
-            "ai_confidence": float(row.get("ai_confidence", 0)),
-            "ai_score":      float(row.get("ai_score", 0)),
-            "market_condition": str(row.get("market_condition", "")),
-        })
-    return jsonify(records)
+    force = str(request.args.get("force", "")).lower() in {"1", "true", "yes"}
+    records, source, error = _contract_records_for_dashboard(limit=n, force=force)
+    return jsonify({
+        "source": source,
+        "error": error,
+        "trades": records,
+    })
 
 
 # ─── API: Indicadores (última operação) ───────────────────────────────────────
 
 @app.route("/api/indicators")
 def api_indicators():
-    df = _read_csv_safe(OPERATIONS_CSV)
-
-    if df.empty:
-        return jsonify({})
-
-    last = df.iloc[-1]
-    return jsonify({
-        "ema9":          float(last.get("ema9", 0)),
-        "ema21":         float(last.get("ema21", 0)),
-        "rsi":           float(last.get("rsi", 0)),
-        "adx":           float(last.get("adx", 0)),
-        "macd_hist":     float(last.get("macd_hist", 0)),
-        "ai_confidence": float(last.get("ai_confidence", 0)),
-        "ai_score":      float(last.get("ai_score", 0)),
-        "market_condition": str(last.get("market_condition", "unknown")),
-    })
+    """GET /api/indicators: indicadores ao vivo calculados de ticks, com fallback para última operação."""
+    return jsonify(_current_indicators())
 
 
 # ─── API: Informações dos modelos ─────────────────────────────────────────────
 
 @app.route("/api/model")
 def api_model():
+    """GET /api/model: existência dos arquivos de modelo e contagens de ticks e linhas do dataset."""
     ticks_count  = 0
     dataset_rows = 0
 
@@ -443,7 +1006,16 @@ def api_model():
 
 @app.route("/api/bot/status")
 def api_bot_status():
+    """GET /api/bot/status: situação do processo do bot, uptime e últimas decisões."""
     running, pid = _bot_running()
+    status = _refresh_bot_status(running, pid)
+    risk_state = _read_json_safe(RISK_STATE_JSON)
+    state = _read_json_safe(STATE_JSON)
+    diagnostics = _operational_diagnostics(
+        bot_status=status,
+        risk_state=risk_state,
+        state=state,
+    )
 
     uptime_sec = None
     mode = "unknown"
@@ -455,26 +1027,27 @@ def api_bot_status():
         except Exception:
             pass
 
-    # Detecta se o mercado forex está aberto agora (dom 22h–sex 22h UTC)
-    from datetime import datetime as _dt
-    _now = _dt.utcnow()
-    _wd = _now.weekday()   # seg=0 … sex=4, sáb=5, dom=6
-    _hm = _now.hour * 60 + _now.minute
-    if _wd == 5:
-        _market_open = False
-    elif _wd == 6:
-        _market_open = _hm >= 22 * 60
-    elif _wd == 4:
-        _market_open = _hm < 22 * 60
-    else:
-        _market_open = True
-
     return jsonify({
-        "running":     running,
-        "pid":         pid,
-        "uptime_sec":  uptime_sec,
-        "mode":        "demo",  # lido em tempo real do config.py se disponível
-        "market_open": _market_open,
+        "running":    running,
+        "pid":        pid,
+        "uptime_sec": uptime_sec,
+        "mode":       status.get("mode", "unknown"),
+        "status":     status.get("status", "running" if running else "idle"),
+        "started_at": status.get("started_at"),
+        "stopped_at": status.get("stopped_at"),
+        "last_tick_at": status.get("last_tick_at"),
+        "last_loop_at": status.get("last_loop_at"),
+        "last_error": status.get("last_error", ""),
+        "returncode": status.get("returncode"),
+        "last_decision": status.get("last_decision", {}),
+        "decision_counts": status.get("decision_counts", {}),
+        "no_entry_for_sec": status.get("no_entry_for_sec", 0),
+        "candle_count": status.get("candle_count", 0),
+        "min_candles": status.get("min_candles", config.MIN_CANDLES),
+        "warmup_remaining_candles": status.get("warmup_remaining_candles", 0),
+        "model_feature_window": status.get("model_feature_window", FEATURE_WINDOW),
+        "shadow": status.get("shadow", {}),
+        "diagnostics": diagnostics,
     })
 
 
@@ -483,14 +1056,16 @@ def api_bot_status():
 @app.route("/api/bot/start", methods=["POST"])
 @_require_token
 def api_bot_start():
-    with _bot_start_lock:
-        return _api_bot_start_impl()
-
-
-def _api_bot_start_impl():
+    """POST /api/bot/start (token): valida parâmetros e inicia `pipeline.py` em subprocesso; retorna PID e opções."""
     running, pid = _bot_running()
     if running:
         return jsonify({"ok": False, "msg": f"Bot já está rodando (PID {pid})."}), 409
+    backtest_running, backtest_pid = _backtest_running()
+    if backtest_running:
+        return jsonify({
+            "ok": False,
+            "msg": f"Backtest em execução (PID {backtest_pid}). Aguarde ou cancele antes de iniciar o bot.",
+        }), 409
 
     data = request.get_json(silent=True) or {}
     mode = data.get("mode", "demo")
@@ -498,19 +1073,34 @@ def _api_bot_start_impl():
         return jsonify({"ok": False, "msg": "mode deve ser 'demo' ou 'real'"}), 400
     try:
         balance = float(data.get("balance", 1000.0))
-        if balance <= 0:
+        if not _math.isfinite(balance) or balance <= 0:
             raise ValueError()
     except (TypeError, ValueError):
         return jsonify({"ok": False, "msg": "balance deve ser um número positivo"}), 400
     skip_collect = bool(data.get("skip_collect", False))
     no_scan = bool(data.get("no_scan", False))
-    min_ticks = int(data.get("min_ticks", 1000))
-    history_count = int(data.get("history_count", 1000))
-    force_retrain = bool(data.get("force_retrain", True))
+    min_ticks = int(data.get("min_ticks", 200))
+    history_count = int(data.get("history_count", MIN_HISTORY_CANDLES))
+    force_retrain = bool(data.get("force_retrain", False))
+    use_trained_model = bool(data.get("use_trained_model", True))
+    use_weighted_signal = bool(data.get("use_weighted_signal", True))
+    use_price_action_filter = bool(data.get("use_price_action_filter", False))
+    use_candle_pattern_filter = bool(data.get("use_candle_pattern_filter", False))
+    if not any((
+        use_trained_model,
+        use_weighted_signal,
+        use_price_action_filter,
+        use_candle_pattern_filter,
+    )):
+        return jsonify({
+            "ok": False,
+            "msg": "Ative pelo menos um módulo de decisão.",
+        }), 400
+    execution_signal_mode = "trained_model"
 
     cmd = [sys.executable, "-u", str(PIPELINE_PY), "--demo" if mode == "demo" else "--real"]
     cmd += ["--balance", str(balance)]
-    min_ticks_target = max(1000, min_ticks)
+    min_ticks_target = max(50, min_ticks)
     cmd += ["--min-ticks", str(min_ticks_target)]
     cmd += ["--history-count", str(max(0, history_count))]
     if skip_collect:
@@ -520,33 +1110,12 @@ def _api_bot_start_impl():
     if force_retrain:
         cmd += ["--force-retrain"]
 
-    # Reseta risk_state.json para que a nova sessão comece do zero
-    # (sem herdar consec_losses, pause ou daily_pnl de execuções anteriores)
-    try:
-        import datetime as _dt
-        _fresh_state = {
-            "is_paused": False,
-            "pause_remaining_sec": 0,
-            "daily_pnl": 0.0,
-            "daily_pnl_pct": 0.0,
-            "consec_losses": 0,
-            "drift_detected": False,
-            "win_rate_recent": 0.0,
-            "date": _dt.date.today().isoformat(),
-            "balance": balance,
-            "pause_until_epoch": 0.0,
-            "recent_results": [],
-        }
-        RISK_STATE_JSON.write_text(json.dumps(_fresh_state))
-    except Exception:
-        pass
-
+    # Reiniciar processo não redefine o risco diário nem apaga contratos pendentes.
     # Registra timestamp de início da sessão em state.json
     try:
         import datetime as _dt2
         _cur_state = _read_json_safe(STATE_JSON)
         _cur_state["session_start"] = _dt2.datetime.now().isoformat()
-        _cur_state["active_contract"] = None
         _cur_state["min_ticks_target"] = int(min_ticks_target)
         STATE_JSON.write_text(json.dumps(_cur_state))
     except Exception:
@@ -556,6 +1125,16 @@ def _api_bot_start_impl():
         global _bot_process
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        env["STANDERIV_USE_AI_MODEL"] = "1" if use_trained_model else "0"
+        env["STANDERIV_EXECUTION_SIGNAL_MODE"] = execution_signal_mode
+        env["STANDERIV_USE_WEIGHTED_SIGNAL"] = "1" if use_weighted_signal else "0"
+        env["STANDERIV_PRICE_ACTION_FILTER"] = "1" if use_price_action_filter else "0"
+        env["STANDERIV_CANDLE_PATTERN_FILTER"] = "1" if use_candle_pattern_filter else "0"
+        session_id = uuid.uuid4().hex
+        env['STANDERIV_SESSION_ID'] = session_id
+        _set_bot_status(session_id=session_id, status='starting', running=True,
+                        pid=None, symbol=None, mode=mode,
+                        min_candles=config.MIN_CANDLES)
         proc = subprocess.Popen(
             cmd,
             cwd=str(_ROOT),
@@ -573,10 +1152,41 @@ def _api_bot_start_impl():
             PIPELINE_LOG_TXT.write_text("", encoding="utf-8")
         except Exception:
             pass
+        _set_bot_status(
+            status="starting",
+            running=True,
+            pid=proc.pid,
+            mode=mode,
+            started_at=_utc_now_iso(),
+            stopped_at=None,
+            finished_at=None,
+            returncode=None,
+            last_error="",
+            command=cmd,
+            execution_signal_mode=execution_signal_mode,
+            use_trained_model=use_trained_model,
+            use_weighted_signal=use_weighted_signal,
+            use_price_action_filter=use_price_action_filter,
+            use_candle_pattern_filter=use_candle_pattern_filter,
+            min_candles=config.MIN_CANDLES,
+            model_feature_window=FEATURE_WINDOW,
+        )
         threading.Thread(target=_read_bot_output, args=(proc,), daemon=True).start()
         PID_FILE.write_text(str(proc.pid))
-        return jsonify({"ok": True, "pid": proc.pid, "mode": mode})
+        return jsonify({
+            "ok": True,
+            "pid": proc.pid,
+            "mode": mode,
+            "execution_signal_mode": execution_signal_mode,
+            "use_trained_model": use_trained_model,
+            "use_weighted_signal": use_weighted_signal,
+            "use_price_action_filter": use_price_action_filter,
+            "use_candle_pattern_filter": use_candle_pattern_filter,
+        })
     except Exception as e:
+        if 'session_id' in locals() and 'proc' not in locals():
+            _set_bot_status(status='crashed', running=False, pid=None,
+                            finished_at=_utc_now_iso(), last_error=safe_detail(e))
         return jsonify({"ok": False, "msg": str(e)}), 500
 
 
@@ -585,78 +1195,36 @@ def _api_bot_start_impl():
 @app.route("/api/bot/stop", methods=["POST"])
 @_require_token
 def api_bot_stop():
+    """POST /api/bot/stop (token): envia SIGTERM ao pipeline e seus filhos e marca o status como 'stopping'."""
     running, pid = _bot_running()
     if not running or pid is None:
         return jsonify({"ok": False, "msg": "Bot não está rodando."}), 409
 
     try:
-        if _PSUTIL:
-            proc = psutil.Process(pid)
-            children = proc.children(recursive=True)
-            for child in children:
-                child.terminate()
-            proc.terminate()
-        else:
-            os.kill(pid, signal.SIGTERM)
+        _set_bot_status(
+            status="stopping",
+            running=True,
+            pid=pid,
+            stopped_at=_utc_now_iso(),
+            last_error="",
+        )
+        _terminate_bot_process(pid)
 
-        # Remove PID file
-        if PID_FILE.exists():
-            PID_FILE.unlink()
-
-        try:
-            _state = _read_json_safe(STATE_JSON)
-            _state["active_contract"] = None
-            STATE_JSON.write_text(json.dumps(_state))
-        except Exception:
-            pass
-
+        # O encerramento do processo não liquida o contrato na corretora.
         return jsonify({"ok": True, "pid": pid})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
 
 
-def _reset_operations_and_state() -> tuple[bool, str]:
-    """Reseta os arquivos de operações e estados usados pelo dashboard.
-
-    Retorna (True, "") em sucesso ou (False, mensagem) em erro.
-    """
-    try:
-        # Trunca/limpa o CSV de operações
-        try:
-            if OPERATIONS_CSV.exists():
-                OPERATIONS_CSV.write_text("", encoding="utf-8")
-        except Exception:
-            pass
-
-        # Reseta risk_state.json com valores iniciais seguros
-        try:
-            import datetime as _dt
-            _fresh_state = {
-                "is_paused": False,
-                "pause_remaining_sec": 0,
-                "daily_pnl": 0.0,
-                "daily_pnl_pct": 0.0,
-                "consec_losses": 0,
-                "drift_detected": False,
-                "win_rate_recent": 0.0,
-                "date": _dt.date.today().isoformat(),
-                "balance": 0.0,
-                "pause_until_epoch": 0.0,
-                "recent_results": [],
-            }
-            RISK_STATE_JSON.write_text(json.dumps(_fresh_state))
-        except Exception:
-            pass
-
-        # Reseta state.json para um dicionário vazio
-        try:
-            STATE_JSON.write_text(json.dumps({}))
-        except Exception:
-            pass
-
-        return True, ""
-    except Exception as e:
-        return False, str(e)
+def _reset_operations_and_state():
+    """Reseta apenas a visualização; ledger, PnL diário e contrato são preservados."""
+    if _bot_running()[0] or _read_json_safe(STATE_JSON).get('active_contract'):
+        return False, 'Contrato pendente ou bot ativo; não é possível limpar a sessão'
+    from model_contract import write_json_atomic
+    state=_read_json_safe(STATE_JSON)
+    state['session_start']=dt.datetime.now().isoformat()
+    write_json_atomic(STATE_JSON,state)
+    return True, ''
 
 
 @app.route("/api/bot/data/clear", methods=["POST"])
@@ -669,8 +1237,8 @@ def api_bot_data_clear():
     try:
         ok, msg = _reset_operations_and_state()
         if not ok:
-            return jsonify({"ok": False, "msg": msg}), 500
-        return jsonify({"ok": True, "msg": "Dados limpos: operacoes_log.csv, risk_state.json, state.json"})
+            return jsonify({"ok": False, "msg": msg}), 409
+        return jsonify({"ok": True, "msg": "Visualização reiniciada; histórico e risco diário preservados"})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
 
@@ -679,6 +1247,7 @@ def api_bot_data_clear():
 
 @app.route("/api/bot/logs")
 def api_bot_logs():
+    """GET /api/bot/logs: linhas recentes do log do pipeline (buffer ou arquivo)."""
     with _bot_log_lock:
         lines = list(_bot_log_buffer)
     if not lines:
@@ -686,29 +1255,306 @@ def api_bot_logs():
     return jsonify({"lines": lines})
 
 
+# ─── API: Backtesting offline ────────────────────────────────────────────────
+
+@app.route("/api/backtest/status")
+def api_backtest_status():
+    """GET /api/backtest/status: estado da execução do backtest, parâmetros e últimos logs."""
+    running, pid = _backtest_running()
+    state = _get_backtest_state()
+    with _backtest_lock:
+        process_known = _backtest_process is not None
+    if (
+        state.get("status") in {"running", "stopping"}
+        and not running
+        and not process_known
+    ):
+        state = _set_backtest_state(
+            status="failed",
+            running=False,
+            finished_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            error="Processo interrompido antes de concluir",
+        )
+    with _backtest_lock:
+        logs = list(_backtest_log_buffer)[-50:]
+    return jsonify({
+        "status": state.get("status", "idle"),
+        "running": running,
+        "pid": pid,
+        "run_id": state.get("run_id"),
+        "started_at": state.get("started_at"),
+        "finished_at": state.get("finished_at"),
+        "params": state.get("params", {}),
+        "report_available": bool(state.get("report_available", False)),
+        "error": state.get("error", ""),
+        "logs": logs,
+    })
+
+
+@app.route("/api/backtest/start", methods=["POST"])
+@_require_token
+def api_backtest_start():
+    """POST /api/backtest/start (token): valida parâmetros e inicia `backtest.py` em subprocesso (HTTP 202 com run_id e PID)."""
+    global _backtest_process
+
+    bot_is_running, _ = _bot_running()
+    if bot_is_running:
+        return jsonify({
+            "ok": False,
+            "msg": "Pare o bot antes de executar o backtest.",
+        }), 409
+    running, pid = _backtest_running()
+    if running:
+        return jsonify({
+            "ok": False,
+            "msg": f"Backtest já está em execução (PID {pid}).",
+        }), 409
+    if not BACKTEST_PY.exists() or not TICKS_CSV.exists():
+        return jsonify({
+            "ok": False,
+            "msg": f"backtest.py ou {TICKS_CSV.name} não encontrado.",
+        }), 404
+
+    data = request.get_json(silent=True) or {}
+    try:
+        symbol = str(data.get("symbol", "")).strip()
+        if symbol and not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", symbol):
+            raise ValueError("symbol contém caracteres inválidos")
+        balance = _validated_number(data, "balance", 1000.0, 0.35, 1_000_000_000)
+        payout = _validated_number(data, "payout", 0.85, 0.0, 10.0)
+        cost_rate = _validated_number(data, "cost_rate", 0.0, 0.0, 1.0)
+        fixed_cost = _validated_number(data, "fixed_cost", 0.0, 0.0, 1_000_000)
+        duration = _validated_number(data, "duration", 15, 1, 1440, integer=True)
+        timeframe = _validated_number(data, "timeframe", 60, 1, 86400, integer=True)
+        max_ticks = _validated_number(
+            data,
+            "max_ticks",
+            100_000,
+            500,
+            2_000_000,
+            integer=True,
+        )
+        duration_unit = str(data.get("duration_unit", "m"))
+        if duration_unit not in {"m", "s", "t"}:
+            raise ValueError("duration_unit deve ser 'm', 's' ou 't'")
+        for key in ("with_ai", "dynamic_duration", "candle_patterns"):
+            if key in data and not isinstance(data[key], bool):
+                raise ValueError(f"{key} deve ser booleano")
+    except ValueError as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 400
+
+    params = {
+        "symbol": symbol,
+        "balance": balance,
+        "payout": payout,
+        "cost_rate": cost_rate,
+        "fixed_cost": fixed_cost,
+        "duration": duration,
+        "duration_unit": duration_unit,
+        "timeframe": timeframe,
+        "max_ticks": max_ticks,
+        "with_ai": bool(data.get("with_ai", False)),
+        "dynamic_duration": bool(data.get("dynamic_duration", False)),
+        "candle_patterns": bool(data.get("candle_patterns", True)),
+    }
+    run_id = (
+        dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + uuid.uuid4().hex[:8]
+    )
+    run_dir = BACKTEST_ROOT / run_id
+    report_path = run_dir / "backtest_report.json"
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 500
+
+    cmd = [
+        sys.executable,
+        "-u",
+        str(BACKTEST_PY),
+        "--input",
+        str(TICKS_CSV),
+        "--output-dir",
+        str(run_dir),
+        "--balance",
+        str(balance),
+        "--payout",
+        str(payout),
+        "--cost-rate",
+        str(cost_rate),
+        "--fixed-cost",
+        str(fixed_cost),
+        "--duration",
+        str(duration),
+        "--duration-unit",
+        duration_unit,
+        "--timeframe",
+        str(timeframe),
+        "--max-ticks",
+        str(max_ticks),
+    ]
+    if symbol:
+        cmd += ["--symbol", symbol]
+    if params["with_ai"]:
+        cmd.append("--with-ai")
+    if params["dynamic_duration"]:
+        cmd.append("--dynamic-duration")
+    if not params["candle_patterns"]:
+        cmd.append("--no-candle-patterns")
+
+    proc = None
+    try:
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env.pop("DASHBOARD_TOKEN", None)
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+            env=env,
+        )
+        _backtest_process = proc
+        with _backtest_lock:
+            _backtest_log_buffer.clear()
+        _set_backtest_state(
+            run_id=run_id,
+            status="running",
+            running=True,
+            pid=proc.pid,
+            started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            finished_at=None,
+            params=params,
+            report_path=str(report_path),
+            report_available=False,
+            returncode=None,
+            error="",
+        )
+        threading.Thread(
+            target=_read_backtest_output,
+            args=(proc, run_id, run_dir),
+            daemon=True,
+            name=f"Backtest-{run_id}",
+        ).start()
+        return jsonify({"ok": True, "run_id": run_id, "pid": proc.pid}), 202
+    except Exception as exc:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        try:
+            _set_backtest_state(
+                run_id=run_id,
+                status="failed",
+                running=False,
+                finished_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                params=params,
+                report_path=str(report_path),
+                report_available=False,
+                error=str(exc),
+            )
+        except OSError:
+            pass
+        return jsonify({"ok": False, "msg": str(exc)}), 500
+
+
+@app.route("/api/backtest/stop", methods=["POST"])
+@_require_token
+def api_backtest_stop():
+    """POST /api/backtest/stop (token): termina o subprocesso do backtest em execução."""
+    running, pid = _backtest_running()
+    if not running or pid is None:
+        return jsonify({"ok": False, "msg": "Backtest não está em execução."}), 409
+    try:
+        _set_backtest_state(status="stopping", running=True)
+        if _PSUTIL:
+            proc = psutil.Process(pid)
+            for child in proc.children(recursive=True):
+                child.terminate()
+            proc.terminate()
+        else:
+            os.kill(pid, signal.SIGTERM)
+        return jsonify({"ok": True, "pid": pid})
+    except Exception as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 500
+
+
+@app.route("/api/backtest/result")
+def api_backtest_result():
+    """GET /api/backtest/result: relatório do último backtest com as últimas `n` operações e curva de capital amostrada."""
+    state = _get_backtest_state()
+    report_path = _safe_report_path(state)
+    if report_path is None or not report_path.exists():
+        return jsonify({"ok": False, "msg": "Nenhum relatório disponível."}), 404
+    try:
+        try:
+            n = min(max(int(request.args.get("n", 200)), 1), 1000)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "msg": "n deve ser inteiro"}), 400
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if not isinstance(report, dict):
+            raise ValueError("formato de relatório inválido")
+        trades = report.pop("trades", [])
+        if not isinstance(trades, list):
+            trades = []
+        initial_balance = float(report.get("metrics", {}).get("initial_balance", 0.0))
+        equity_curve = []
+        if trades:
+            equity_curve.append({
+                "epoch": int(trades[0].get("entry_epoch", 0)),
+                "balance": initial_balance,
+            })
+            equity_curve.extend({
+                "epoch": int(trade.get("expiry_epoch", 0)),
+                "balance": float(trade.get("balance_after", 0.0)),
+            } for trade in trades)
+        if len(equity_curve) > 500:
+            step = _math.ceil(len(equity_curve) / 500)
+            sampled = equity_curve[::step]
+            if sampled[-1] != equity_curve[-1]:
+                sampled.append(equity_curve[-1])
+            equity_curve = sampled
+        report["trades"] = list(reversed(trades[-n:]))
+        report["equity_curve"] = equity_curve
+        return jsonify({"ok": True, "report": report})
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "msg": str(exc)}), 500
+
+
 # ─── API: Equity curve ────────────────────────────────────────────────────────
 
 @app.route("/api/equity")
 def api_equity():
-    df = _read_csv_safe(OPERATIONS_CSV)
-    if df.empty:
-        state = _read_json_safe(RISK_STATE_JSON)
-        balance = state.get("balance")
-        if balance is None:
-            return jsonify([])
-        session_state = _read_json_safe(STATE_JSON)
-        return jsonify([{
-            "timestamp": str(session_state.get("session_start", "")),
-            "balance_after": float(balance),
-            "result": "START",
-        }])
-
+    """GET /api/equity: curva de saldo reconstruída a partir dos contratos e do saldo atual."""
+    records = list(reversed(_deriv_contract_report(limit=500)))
+    session_start_value = _read_json_safe(STATE_JSON).get("session_start", "")
+    if session_start_value:
+        session_start = pd.to_datetime(session_start_value, errors="coerce")
+        if pd.notna(session_start):
+            timestamps = pd.to_datetime(
+                [record.get("timestamp", "") for record in records],
+                errors="coerce",
+            )
+            records = [
+                record
+                for record, timestamp in zip(records, timestamps)
+                if pd.notna(timestamp) and timestamp >= session_start
+            ]
+    if not records:
+        return jsonify([])
+    risk_state = _read_json_safe(RISK_STATE_JSON)
+    current_balance = float(risk_state.get("balance", 0.0) or 0.0)
+    total_profit = sum(float(record.get("profit", 0.0) or 0.0) for record in records)
+    running_balance = current_balance - total_profit if current_balance else 0.0
     result = []
-    for _, row in df.iterrows():
+    for record in records:
+        running_balance += float(record.get("profit", 0.0) or 0.0)
         result.append({
-            "timestamp":     str(row.get("timestamp", "")),
-            "balance_after": float(row.get("balance_after", 0)),
-            "result":        str(row.get("result", "")),
+            "timestamp": str(record.get("timestamp", "")),
+            "balance_after": round(running_balance, 2),
+            "result": str(record.get("result", "")),
         })
     return jsonify(result)
 
@@ -718,84 +1564,108 @@ def api_equity():
 @app.route("/api/candle-patterns")
 def api_candle_patterns():
     """Retorna padrões de vela detectados a partir dos ticks mais recentes."""
-    if not _BOT_MODULES:
-        return jsonify([])
-    try:
-        df = _read_csv_safe(TICKS_CSV)
-        if df.empty:
-            return jsonify([])
+    symbol = str(request.args.get("symbol", "")).strip()
+    now = time.monotonic()
+    with _candle_patterns_lock:
+        cached = _candle_patterns_cache.get(symbol)
+        if cached and now - cached["ts"] < _CANDLE_CACHE_TTL:
+            return jsonify(cached["data"])
+        try:
+            import indicators as ind
+            from config import CANDLE_SIZE, PA_SR_TOLERANCE
 
-        if "price" in df.columns:
-            prices = df["price"].astype(float).tolist()
-        elif df.shape[1] >= 4:
-            prices = df.iloc[:, 3].astype(float).tolist()
-        else:
-            prices = df.iloc[:, -1].astype(float).tolist()
+            df = _tail_csv(TICKS_CSV, 500, symbol=symbol)
+            if df.empty:
+                result = []
+            else:
+                if "price" in df.columns:
+                    prices = df["price"].astype(float).tolist()
+                elif df.shape[1] >= 4:
+                    prices = df.iloc[:, 3].astype(float).tolist()
+                else:
+                    prices = df.iloc[:, -1].astype(float).tolist()
 
-        # Usar últimos 500 ticks
-        prices = prices[-500:]
-        candles = ind.ticks_to_candles(prices, CANDLE_SIZE)
+                candles = ind.ticks_to_candles(prices[-500:], CANDLE_SIZE)
+                result = []
+                if len(candles) >= 4:
+                    patterns = ind.detect_candle_patterns(candles)
+                    pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
+                    for pattern in patterns:
+                        context_parts = []
+                        if pa is not None:
+                            if pa["pa_demand_zone"] > 0.3:
+                                context_parts.append("Demand Zone")
+                            if pa["pa_supply_zone"] > 0.3:
+                                context_parts.append("Supply Zone")
+                            if pa["pa_sr_distance"] < 0.3:
+                                position = pa["pa_sr_position"]
+                                context_parts.append(
+                                    "Suporte" if position < -0.3
+                                    else "Resistência" if position > 0.3
+                                    else "S/R"
+                                )
+                        result.append({
+                            "name": pattern["name"],
+                            "direction": pattern["direction"],
+                            "strength": pattern["strength"],
+                            "price": round(prices[-1], 4),
+                            "context": " + ".join(context_parts) if context_parts else "",
+                        })
 
-        if len(candles) < 4:
-            return jsonify([])
-
-        patterns = ind.detect_candle_patterns(candles)
-        pa = ind.price_action_features(candles, PA_SR_TOLERANCE)
-
-        result = []
-        for p in patterns:
-            context_parts = []
-            if pa is not None:
-                if pa["pa_demand_zone"] > 0.3:
-                    context_parts.append("Demand Zone")
-                if pa["pa_supply_zone"] > 0.3:
-                    context_parts.append("Supply Zone")
-                if pa["pa_sr_distance"] < 0.3:
-                    pos = pa["pa_sr_position"]
-                    context_parts.append("Suporte" if pos < -0.3 else "Resistência" if pos > 0.3 else "S/R")
-
-            result.append({
-                "name": p["name"],
-                "direction": p["direction"],
-                "strength": p["strength"],
-                "price": round(prices[-1], 4),
-                "context": " + ".join(context_parts) if context_parts else "",
-            })
-
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            _candle_patterns_cache[symbol] = {"ts": time.monotonic(), "data": result}
+            return jsonify(result)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
 
 
 # ─── Fase 3: helpers de leitura eficiente ────────────────────────────────────
 
-def _tail_csv(path, n: int) -> pd.DataFrame:
-    """Lê apenas as últimas `n` linhas de um CSV sem carregar o arquivo inteiro."""
+def _tail_csv(path, n: int, *, symbol: str = "", from_epoch: int | None = None) -> pd.DataFrame:
+    """Lê a cauda necessária de um CSV, ampliando a leitura para completar filtros."""
     try:
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             return pd.DataFrame()
-        with open(path, "rb") as f:
-            # Lê cabeçalho
-            header = f.readline().decode("utf-8", errors="replace").rstrip()
-            cols = header.split(",")
-            # Busca final do arquivo e lê últimas n linhas
-            f.seek(0, 2)
-            file_size = f.tell()
-            chunk = min(file_size, n * 80)  # estimativa de ~80 bytes por linha
-            f.seek(max(0, file_size - chunk))
-            raw = f.read().decode("utf-8", errors="replace")
-        lines = [l for l in raw.splitlines() if l.strip()]
-        # Remove cabeçalho se apareceu no meio
-        data_lines = [l for l in lines if not l.startswith(cols[0])]
-        tail_lines = data_lines[-n:]
-        import io
-        csv_text = header + "\n" + "\n".join(tail_lines)
-        return pd.read_csv(io.StringIO(csv_text))
+        target = max(1, int(n))
+        with open(path, "rb") as file:
+            header = file.readline().decode("utf-8", errors="replace").rstrip("\r\n")
+            header_end = file.tell()
+            file.seek(0, 2)
+            file_size = file.tell()
+            available = max(0, file_size - header_end)
+            chunk_size = min(available, max(4096, target * 80))
+
+            while True:
+                start = max(header_end, file_size - chunk_size)
+                file.seek(start)
+                raw = file.read(file_size - start).decode("utf-8", errors="replace")
+                lines = raw.splitlines()
+                if start > header_end and lines:
+                    lines = lines[1:]
+                data_lines = [line for line in lines if line.strip()]
+
+                import io
+                csv_text = header + "\n" + "\n".join(data_lines)
+                frame = pd.read_csv(io.StringIO(csv_text))
+                if symbol and "symbol" in frame.columns:
+                    frame = frame[frame["symbol"].astype(str) == symbol]
+                reached_epoch = (
+                    from_epoch is not None
+                    and "epoch" in frame.columns
+                    and not frame.empty
+                    and int(pd.to_numeric(frame["epoch"], errors="coerce").min()) <= from_epoch
+                )
+                if from_epoch is not None and "epoch" in frame.columns:
+                    frame = frame[pd.to_numeric(frame["epoch"], errors="coerce") >= from_epoch]
+
+                if len(frame) >= target or reached_epoch or start <= header_end:
+                    return frame.tail(target).reset_index(drop=True)
+                chunk_size = min(available, chunk_size * 2)
     except Exception:
         return _read_csv_safe(path)
 
 
 def _read_json_safe(path) -> dict:
+    """Lê um arquivo JSON; dict vazio se ausente ou inválido."""
     try:
         if os.path.exists(path):
             with open(path) as f:
@@ -805,8 +1675,211 @@ def _read_json_safe(path) -> dict:
     return {}
 
 
-_candle_patterns_cache: dict = {"ts": 0.0, "data": []}
+_candle_patterns_cache: dict = {}
+_candle_patterns_lock = threading.Lock()
 _CANDLE_CACHE_TTL = 5.0  # segundos
+
+
+def _summary_from_risk_state(risk_state: dict) -> dict:
+    """Monta resumo operacional quando ainda não há operações na sessão filtrada."""
+    recent_results = risk_state.get("recent_results", [])
+    if not isinstance(recent_results, list):
+        recent_results = []
+    total = len(recent_results)
+    wins = sum(1 for result in recent_results if int(result or 0) == 1)
+    daily_start = float(risk_state.get("daily_start_balance", risk_state.get("initial_balance", 0.0)) or 0.0)
+    balance = float(risk_state.get("balance", daily_start) or 0.0)
+    daily_pnl = float(risk_state.get("daily_pnl", 0.0) or 0.0)
+    daily_pnl_pct = float(risk_state.get("daily_pnl_pct", 0.0) or 0.0)
+    consec_losses = int(risk_state.get("consec_losses", 0) or 0)
+    pause_remaining = int(risk_state.get("pause_remaining_sec", 0) or 0)
+
+    return {
+        "balance": round(balance, 2),
+        "balance_initial": round(daily_start, 2),
+        "pnl_today": round(daily_pnl, 2),
+        "pnl_pct": round(daily_pnl_pct, 2),
+        "win_rate": round(wins / total * 100, 1) if total else 0.0,
+        "win_rate_recent": round(float(risk_state.get("win_rate_recent", 0.0) or 0.0), 1),
+        "total_trades": total,
+        "wins": wins,
+        "losses": total - wins,
+        "consec_losses": consec_losses,
+        "is_paused": bool(risk_state.get("is_paused", False)) or pause_remaining > 0 or consec_losses >= 3,
+        "drawdown_pct": round(float(risk_state.get("drawdown_pct", 0.0) or 0.0), 2),
+    }
+
+
+def _summary_from_contract_report(records: list[dict], risk_state: dict) -> dict:
+    """Resumo de saldo, PnL e taxa de acerto a partir dos contratos (do dia, se houver); sem contratos usa o estado de risco."""
+    balance = float(risk_state.get("balance", 0.0) or 0.0)
+    daily_start = float(risk_state.get("daily_start_balance", risk_state.get("initial_balance", balance)) or 0.0)
+    today = dt.datetime.now().date()
+    today_records = []
+    for record in records:
+        try:
+            if dt.datetime.fromisoformat(str(record.get("timestamp", ""))).date() == today:
+                today_records.append(record)
+        except Exception:
+            pass
+    scoped = today_records or records
+    total = len(scoped)
+    wins = sum(1 for record in scoped if record.get("result") == "WIN")
+    pnl_today = sum(float(record.get("profit", 0.0) or 0.0) for record in today_records)
+    if not records:
+        return _summary_from_risk_state(risk_state)
+    return {
+        "balance": round(balance, 2),
+        "balance_initial": round(daily_start, 2),
+        "pnl_today": round(pnl_today, 2),
+        "pnl_pct": round((pnl_today / daily_start * 100), 2) if daily_start else 0.0,
+        "win_rate": round(wins / total * 100, 1) if total else 0.0,
+        "win_rate_recent": round(wins / total * 100, 1) if total else 0.0,
+        "total_trades": total,
+        "wins": wins,
+        "losses": sum(1 for record in scoped if record.get("result") == "LOSS"),
+        "consec_losses": int(risk_state.get("consec_losses", 0) or 0),
+        "is_paused": bool(risk_state.get("is_paused", False)) or int(risk_state.get("pause_remaining_sec", 0) or 0) > 0,
+        "drawdown_pct": round(float(risk_state.get("drawdown_pct", 0.0) or 0.0), 2),
+    }
+
+
+def _last_trade_indicators(records: list[dict] | None = None) -> dict:
+    """Indicadores da última operação conhecida, usados como fallback e campos de IA."""
+    if records:
+        last = records[0]
+        return {
+            "ema9": float(last.get("ema9", 0) or 0),
+            "ema21": float(last.get("ema21", 0) or 0),
+            "rsi": float(last.get("rsi", 0) or 0),
+            "adx": float(last.get("adx", 0) or 0),
+            "macd_hist": float(last.get("macd_hist", 0) or 0),
+            "ai_confidence": float(last.get("ai_confidence", 0) or 0),
+            "ai_score": float(last.get("ai_score", 0) or 0),
+            "market_condition": str(last.get("market_condition", "unknown") or "unknown"),
+            "source": "contracts",
+        }
+
+    df = _read_csv_safe(OPERATIONS_CSV)
+    if df.empty:
+        return {}
+    last = df.iloc[-1]
+    return {
+        "ema9": float(last.get("ema9", 0) or 0),
+        "ema21": float(last.get("ema21", 0) or 0),
+        "rsi": float(last.get("rsi", 0) or 0),
+        "adx": float(last.get("adx", 0) or 0),
+        "macd_hist": float(last.get("macd_hist", 0) or 0),
+        "ai_confidence": float(last.get("ai_confidence", 0) or 0),
+        "ai_score": float(last.get("ai_score", 0) or 0),
+        "market_condition": str(last.get("market_condition", "unknown") or "unknown"),
+        "source": "local_operation",
+    }
+
+
+def _current_indicators(records: list[dict] | None = None) -> dict:
+    """Indicadores atuais: calcula de ticks recentes e preserva IA/score da última operação."""
+    fallback = _last_trade_indicators(records)
+    try:
+        from feature_engine import compute_feature_map
+        df_ticks = _tail_csv(TICKS_CSV, 500)
+        if df_ticks.empty:
+            return fallback
+        if "price" not in df_ticks.columns and df_ticks.shape[1] >= 2:
+            df_ticks.columns = ["epoch", "price"] if df_ticks.shape[1] == 2 else list(df_ticks.columns)
+        prices = df_ticks["price"].astype(float).tolist() if "price" in df_ticks.columns else []
+        if len(prices) < 50:
+            return fallback
+        fm = compute_feature_map(prices)
+        if fm is None:
+            return fallback
+        return {
+            "ema9": round(fm["ema9"], 5),
+            "ema21": round(fm["ema21"], 5),
+            "rsi": round(fm["rsi"], 2),
+            "adx": round(fm["adx"], 2),
+            "macd_hist": round(fm["macd_hist"], 6),
+            "ai_confidence": fallback.get("ai_confidence", 0),
+            "ai_score": fallback.get("ai_score", 0),
+            "market_condition": fallback.get("market_condition", "unknown"),
+            "source": "ticks_live",
+        }
+    except Exception as exc:
+        fallback["error"] = str(exc)
+        return fallback
+
+
+def _model_publication_status(state: dict) -> dict:
+    """Retorna status do bundle publicado sem promover candidatos nem alterar artefatos."""
+    symbol = state.get("symbol", "") if isinstance(state, dict) else ""
+    metrics_history = _read_json_safe(MODEL_METRICS_JSON)
+    status = {
+        "ready": False,
+        "symbol": symbol,
+        "metrics_missing": not MODEL_METRICS_JSON.exists(),
+        "candidate_metrics_count": len(metrics_history) if isinstance(metrics_history, list) else 0,
+        "blocked_reason": "Modelo sem validação compatível com o ativo e vencimento",
+    }
+    try:
+        from model_contract import fingerprint, usable
+        manifest = _read_json_safe(Path(str(MODEL_PKL) + ".metadata.json"))
+        valid = (
+            MODEL_PKL.exists()
+            and isinstance(manifest, dict)
+            and manifest.get("approved")
+            and usable(manifest, symbol)
+            and manifest.get("artifact_sha256") == fingerprint(MODEL_PKL)
+        )
+        status["ready"] = bool(valid)
+        status["manifest_symbol"] = manifest.get("symbol", "") if isinstance(manifest, dict) else ""
+        status["blocked_reason"] = "" if valid else status["blocked_reason"]
+    except Exception:
+        status["blocked_reason"] = "Modelo não validado"
+    return status
+
+
+def _operational_diagnostics(
+    *, bot_status: dict, risk_state: dict, state: dict, model_status: dict | None = None
+) -> dict:
+    """Explica bloqueios externos sem alterar a regra dos módulos de decisão."""
+    risk_paused = (
+        bool(risk_state.get("is_paused", False))
+        or int(risk_state.get("pause_remaining_sec", 0) or 0) > 0
+        or int(risk_state.get("consec_losses", 0) or 0) >= 3
+    )
+    warmup_remaining = int(bot_status.get("warmup_remaining_candles", 0) or 0)
+    last_decision = bot_status.get("last_decision", {})
+    decision_reason = str(last_decision.get("reason", "") if isinstance(last_decision, dict) else "")
+    shadow = bot_status.get("shadow", {})
+    if not isinstance(shadow, dict):
+        shadow = {}
+    model_status = model_status or _model_publication_status(state)
+
+    blockers = []
+    if risk_paused:
+        blockers.append("risk_paused")
+    if warmup_remaining > 0:
+        blockers.append("warmup")
+    if model_status.get("metrics_missing"):
+        blockers.append("model_metrics_missing")
+    if not model_status.get("ready"):
+        blockers.append("model_not_ready")
+    if shadow.get("reason") == "missing_observed_payout":
+        blockers.append("shadow_missing_observed_payout")
+    if decision_reason:
+        blockers.append(f"last_decision:{decision_reason}")
+
+    weighted_signal_isolated = True
+    return {
+        "primary_blocker": blockers[0] if blockers else "",
+        "blockers": blockers,
+        "weighted_score_logic_changed": False,
+        "weighted_score_shadow_independent": weighted_signal_isolated,
+        "risk_paused": risk_paused,
+        "warmup_remaining_candles": warmup_remaining,
+        "model": model_status,
+        "shadow": shadow,
+    }
 
 
 # ─── API: Estado consolidado (/api/state) ─────────────────────────────────────
@@ -815,10 +1888,13 @@ _CANDLE_CACHE_TTL = 5.0  # segundos
 def api_state():
     """Endpoint único que retorna todos os dados do dashboard em um só JSON."""
     running, pid = _bot_running()
+    bot_status = _refresh_bot_status(running, pid)
 
-    # — Resumo de operações (filtrado pela sessão atual) —
-    df_ops_all = _read_csv_safe(OPERATIONS_CSV)
+    # — Resumo de operações vindo do relatório oficial de contratos da Deriv —
+    contract_records, contract_source, contract_error = _contract_records_for_dashboard(limit=500)
+    df_ops_all = pd.DataFrame(contract_records)
     active_state_pre = _read_json_safe(STATE_JSON)
+    risk_state = _read_json_safe(RISK_STATE_JSON)
     session_start_str = active_state_pre.get("session_start", "")
 
     df_ops = df_ops_all.copy()
@@ -829,74 +1905,9 @@ def api_state():
             df_ops = df_ops[df_ops["_ts"] >= _ss].reset_index(drop=True)
         except Exception:
             pass
-    risk_state_pre = _read_json_safe(RISK_STATE_JSON)
-    balance_pre = float(risk_state_pre.get("balance", 0.0) or 0.0)
-    summary = {
-        "balance": round(balance_pre, 2), "balance_initial": round(balance_pre, 2),
-        "pnl_today": 0.0, "pnl_pct": 0.0,
-        "win_rate": 0.0, "win_rate_recent": 0.0, "total_trades": 0,
-        "wins": 0, "losses": 0, "consec_losses": 0, "is_paused": False, "drawdown_pct": 0.0,
-    }
-    last_trade_indicators = {}
-    if not df_ops.empty:
-        last = df_ops.iloc[-1]
-        total = len(df_ops)
-        wins  = int((df_ops["result"] == "WIN").sum()) if "result" in df_ops.columns else 0
-        balance      = float(last.get("balance_after", 0))
-        balance_init = float(df_ops.iloc[0].get("balance_before", balance))
-        pnl_today    = 0.0
-        if "timestamp" in df_ops.columns:
-            try:
-                df_ops["_ts"] = pd.to_datetime(df_ops["timestamp"], errors="coerce")
-                today = pd.Timestamp.now().normalize()
-                today_df = df_ops[df_ops["_ts"] >= today]
-                pnl_today = float(today_df["profit"].sum()) if "profit" in today_df.columns else 0.0
-            except Exception:
-                pass
-        summary = {
-            "balance":         round(balance, 2),
-            "balance_initial": round(balance_init, 2),
-            "pnl_today":       round(pnl_today, 2),
-            "pnl_pct":         round((pnl_today / balance_init * 100), 2) if balance_init != 0 else 0.0,
-            "win_rate":        round(wins / total * 100, 1) if total > 0 else 0.0,
-            "win_rate_recent": float(last.get("win_rate_recent", 0.0)),
-            "total_trades":    total,
-            "wins":            wins,
-            "losses":          total - wins,
-            "consec_losses":   int(last.get("consec_losses", 0)),
-            "is_paused":       int(last.get("consec_losses", 0)) >= 3,
-            "drawdown_pct":    round(float(last.get("drawdown_pct", 0.0)), 2),
-        }
-        last_trade_indicators = {
-            "ema9": float(last.get("ema9", 0)), "ema21": float(last.get("ema21", 0)),
-            "rsi": float(last.get("rsi", 0)), "adx": float(last.get("adx", 0)),
-            "macd_hist": float(last.get("macd_hist", 0)),
-            "ai_confidence": float(last.get("ai_confidence", 0)),
-            "ai_score": float(last.get("ai_score", 0)),
-            "market_condition": str(last.get("market_condition", "unknown")),
-        }
-
-    # — Indicadores ao vivo (últimos 500 ticks) —
-    live_indicators = last_trade_indicators.copy()
-    try:
-        df_ticks = _tail_csv(TICKS_CSV, 500)
-        if not df_ticks.empty:
-            if "price" not in df_ticks.columns and df_ticks.shape[1] >= 2:
-                df_ticks.columns = ["epoch", "price"] if df_ticks.shape[1] == 2 else list(df_ticks.columns)
-            prices = df_ticks["price"].astype(float).tolist() if "price" in df_ticks.columns else []
-            if len(prices) >= 50:
-                fm = compute_feature_map(prices)
-                if fm is not None:
-                    live_indicators = {
-                        "ema9": round(fm["ema9"], 5), "ema21": round(fm["ema21"], 5),
-                        "rsi": round(fm["rsi"], 2), "adx": round(fm["adx"], 2),
-                        "macd_hist": round(fm["macd_hist"], 6),
-                        "ai_confidence": last_trade_indicators.get("ai_confidence", 0),
-                        "ai_score": last_trade_indicators.get("ai_score", 0),
-                        "market_condition": last_trade_indicators.get("market_condition", "unknown"),
-                    }
-    except Exception:
-        pass
+    summary = _summary_from_contract_report(df_ops.to_dict("records"), risk_state)
+    # — Indicadores ao vivo (últimos 500 ticks), com fallback para última operação —
+    live_indicators = _current_indicators(df_ops.to_dict("records"))
 
     # — Modelo —
     model_info = {
@@ -906,55 +1917,46 @@ def api_state():
         "model_mtime": int(MODEL_PKL.stat().st_mtime) if MODEL_PKL.exists() else None,
         "ticks_count": 0,
         "dataset_rows": 0,
-        "min_ticks_target": 1000,
+        "min_ticks_target": 500,
     }
-    try:
-        df_t = _read_csv_safe(TICKS_CSV)
-        if not df_t.empty:
-            if session_start_str and "epoch" in df_t.columns:
-                try:
-                    _ss_epoch = int(pd.Timestamp(session_start_str).timestamp())
-                    model_info["ticks_count"] = int((df_t["epoch"].astype(int) >= _ss_epoch).sum())
-                except Exception:
-                    model_info["ticks_count"] = len(df_t)
-            else:
-                model_info["ticks_count"] = len(df_t)
-        df_d = _read_csv_safe(DATASET_CSV)
-        if not df_d.empty:
-            model_info["dataset_rows"] = len(df_d)
-    except Exception:
-        pass
+    minimum_epoch = None
+    if session_start_str:
+        try:
+            minimum_epoch = int(pd.Timestamp(session_start_str).timestamp())
+        except (TypeError, ValueError, OverflowError):
+            pass
+    model_info["ticks_count"] = _count_csv_rows(TICKS_CSV, minimum_epoch=minimum_epoch)
+    model_info["dataset_rows"] = _count_csv_rows(DATASET_CSV)
 
     try:
-        model_info["min_ticks_target"] = int(active_state_pre.get("min_ticks_target", 1000) or 1000)
+        model_info["min_ticks_target"] = int(active_state_pre.get("min_ticks_target", 500) or 500)
     except Exception:
-        model_info["min_ticks_target"] = 1000
+        model_info["min_ticks_target"] = 500
 
-    # — Métricas do último treino (model_metrics.json) —
+    # Métrica ativa precisa pertencer ao bundle publicado; candidatos ficam separados.
+    model_status = _model_publication_status(active_state_pre)
     try:
-        _mm_data = _read_json_safe(MODEL_METRICS_JSON)
-        if isinstance(_mm_data, list) and _mm_data:
-            _mm = _mm_data[-1]
-            model_info["last_metrics"] = {
-                "best_model": _mm.get("best_model"),
-                "accuracy":   _mm.get("accuracy"),
-                "auc":        _mm.get("auc"),
-                "f1":         _mm.get("f1"),
-                "n_train":    _mm.get("n_train"),
-                "n_test":     _mm.get("n_test"),
-                "timestamp":  _mm.get("timestamp"),
-            }
-        else:
-            model_info["last_metrics"] = {}
+        manifest=_read_json_safe(Path(str(MODEL_PKL)+'.metadata.json'))
+        model_info['ready']=bool(model_status.get('ready'))
+        model_info['last_metrics']=manifest.get('metrics',{}) if model_status.get('ready') and isinstance(manifest, dict) else {}
+        model_info['blocked_reason']=model_status.get('blocked_reason', '')
+        model_info['metrics_missing']=bool(model_status.get('metrics_missing'))
+        model_info['candidate_metrics_count']=int(model_status.get('candidate_metrics_count', 0) or 0)
+        candidates=_read_json_safe(MODEL_METRICS_JSON)
+        model_info['last_candidate_metrics']=candidates[-1] if isinstance(candidates,list) and candidates else {}
     except Exception:
-        model_info["last_metrics"] = {}
+        model_info.update(ready=False,last_metrics={},blocked_reason='Modelo não validado')
 
-    # — Risk state e state.json —
-    risk_state = risk_state_pre
     active_state = active_state_pre  # já lido acima para session_start
     active_contract = active_state.get("active_contract")
     if not isinstance(active_contract, dict):
         active_contract = {"has_active": False}
+    diagnostics = _operational_diagnostics(
+        bot_status=bot_status,
+        risk_state=risk_state,
+        state=active_state,
+        model_status=model_status,
+    )
 
     # — Bot status —
     uptime_sec = None
@@ -965,10 +1967,36 @@ def api_state():
             pass
 
     return jsonify({
-        "bot": {"running": running, "pid": pid, "uptime_sec": uptime_sec},
+        "bot": {
+            "running": running,
+            "pid": pid,
+            "uptime_sec": uptime_sec,
+            "status": bot_status.get("status", "running" if running else "idle"),
+            "started_at": bot_status.get("started_at"),
+            "stopped_at": bot_status.get("stopped_at"),
+            "last_tick_at": bot_status.get("last_tick_at"),
+            "last_loop_at": bot_status.get("last_loop_at"),
+            "last_error": bot_status.get("last_error", ""),
+            "returncode": bot_status.get("returncode"),
+            "last_decision": bot_status.get("last_decision", {}),
+            "decision_counts": bot_status.get("decision_counts", {}),
+            "use_trained_model": bool(bot_status.get("use_trained_model", True)),
+            "use_weighted_signal": bool(bot_status.get("use_weighted_signal", True)),
+            "use_price_action_filter": bool(bot_status.get("use_price_action_filter", False)),
+            "use_candle_pattern_filter": bool(bot_status.get("use_candle_pattern_filter", False)),
+            "no_entry_for_sec": bot_status.get("no_entry_for_sec", 0),
+            "candle_count": bot_status.get("candle_count", 0),
+            "min_candles": bot_status.get("min_candles", config.MIN_CANDLES),
+            "warmup_remaining_candles": bot_status.get("warmup_remaining_candles", 0),
+            "model_feature_window": bot_status.get("model_feature_window", FEATURE_WINDOW),
+            "shadow": bot_status.get("shadow", {}),
+        },
         "summary": summary,
+        "contracts_source": contract_source,
+        "contracts_source_error": contract_error,
         "indicators": live_indicators,
         "model": model_info,
+        "diagnostics": diagnostics,
         "risk_state": risk_state,
         "active_symbol": active_state.get("symbol", ""),
         "active_contract": active_contract,
@@ -979,20 +2007,28 @@ def api_state():
 
 @app.route("/api/contract-active")
 def api_contract_active():
+    """GET /api/contract-active: contrato ativo salvo em `state.json` ou, sem ele, o último contrato local."""
     state = _read_json_safe(STATE_JSON)
     ac = state.get("active_contract")
     if not isinstance(ac, dict) or not ac.get("has_active"):
-        return jsonify({"has_active": False})
+        return jsonify({"has_active": False, "last_contract": _last_local_contract()})
+
+    buy_timestamp = float(ac.get("buy_timestamp", 0.0) or 0.0)
+    entry_epoch = int(ac.get("entry_epoch", 0) or 0)
+    if entry_epoch <= 0 and buy_timestamp > 0:
+        entry_epoch = int(buy_timestamp)
 
     payload = {
         "has_active": True,
+        "phase": str(ac.get("phase", "")),
         "contract_id": str(ac.get("contract_id", "")),
         "symbol": str(ac.get("symbol", state.get("symbol", ""))),
         "direction": str(ac.get("direction", "")),
         "duration": int(ac.get("duration", 0) or 0),
-        "buy_timestamp": float(ac.get("buy_timestamp", 0.0) or 0.0),
-        "entry_epoch": int(ac.get("entry_epoch", 0) or 0),
+        "buy_timestamp": buy_timestamp,
+        "entry_epoch": entry_epoch,
         "entry_price": float(ac.get("entry_price", 0.0) or 0.0),
+        "last_contract": _last_local_contract(),
     }
     return jsonify(payload)
 
@@ -1002,10 +2038,12 @@ def api_contract_active():
 @app.route("/api/indicator-series")
 def api_indicator_series():
     """Calcula indicadores para os últimos N candles de tempo."""
-    if not _BOT_MODULES:
-        return jsonify([])
     n_candles = min(int(request.args.get("n", 60)), 300)
     try:
+        from feature_engine import compute_feature_map
+        from config import CANDLE_SIZE, CANDLE_TIMEFRAME_SEC
+        import indicators as ind
+
         window_size = 50  # mínimo de candles para indicadores
         ticks_needed = (n_candles + window_size + 5) * max(CANDLE_TIMEFRAME_SEC, CANDLE_SIZE)
         df = _tail_csv(TICKS_CSV, ticks_needed)
@@ -1061,6 +2099,7 @@ def api_indicator_series():
 
 @app.route("/api/model-history")
 def api_model_history():
+    """GET /api/model-history: histórico de métricas de treino (lista), sem cache."""
     data = _read_json_safe(MODEL_METRICS_JSON)
     resp = jsonify(data) if isinstance(data, list) else jsonify([])
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -1072,14 +2111,20 @@ def api_model_history():
 
 @app.route("/api/model-metrics")
 def api_model_metrics():
-    data = _read_json_safe(MODEL_METRICS_JSON)
-    if not isinstance(data, list) or not data:
+    """GET /api/model-metrics: métricas do modelo publicado, apenas se o artefato for válido e compatível; sem cache."""
+    # Apenas métricas do artefato aprovado; histórico de candidatos tem rota própria.
+    entry = {}
+    try:
+        from model_contract import fingerprint, usable
+        manifest = _read_json_safe(Path(str(MODEL_PKL) + '.metadata.json'))
+        state = _read_json_safe(STATE_JSON)
+        symbol = state.get('symbol', '') if isinstance(state, dict) else ''
+        if (MODEL_PKL.exists() and isinstance(manifest, dict)
+                and usable(manifest, symbol)
+                and manifest.get('artifact_sha256') == fingerprint(MODEL_PKL)):
+            entry = manifest.get('metrics', {})
+    except Exception:
         entry = {}
-    else:
-        # Prefere a última entrada com stage "final" (que contém models_comparison).
-        # Fallback para a última entrada disponível.
-        final_entries = [e for e in data if e.get("stage") == "final"]
-        entry = final_entries[-1] if final_entries else data[-1]
     resp = jsonify(entry)
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
@@ -1090,6 +2135,7 @@ def api_model_metrics():
 
 @app.route("/api/system")
 def api_system():
+    """GET /api/system: uso de CPU, RAM e disco do sistema e do processo do bot (None sem psutil)."""
     result: dict = {
         "cpu_pct":     None,
         "ram_pct":     None,
@@ -1127,7 +2173,8 @@ def api_system():
 
 @app.route("/api/stats")
 def api_stats():
-    df = _read_csv_safe(OPERATIONS_CSV)
+    """GET /api/stats: estatísticas dos contratos (médias, profit factor, expectativa, histograma e por direção)."""
+    df = _contracts_frame(limit=500)
     if df.empty:
         return jsonify({})
 
@@ -1197,8 +2244,7 @@ def api_stats():
 
 @app.route("/api/candles")
 def api_candles():
-    if not _BOT_MODULES:
-        return jsonify([])
+    """GET /api/candles: últimas `n` velas OHLC (máx. 500) a partir do CSV de ticks, filtráveis por símbolo e epoch."""
     n = min(int(request.args.get("n", 100)), 500)
     symbol = str(request.args.get("symbol", "")).strip()
     from_epoch_raw = request.args.get("from_epoch")
@@ -1209,6 +2255,9 @@ def api_candles():
         except (TypeError, ValueError):
             from_epoch = None
     try:
+        from config import CANDLE_SIZE, CANDLE_TIMEFRAME_SEC
+        import indicators as ind
+
         # Para candles por tempo precisamos de (n + margem) * max_ticks_por_candle
         # Estimativa: 1 tick/s × CANDLE_TIMEFRAME_SEC por vela
         ticks_needed = (n + 5) * max(CANDLE_TIMEFRAME_SEC, CANDLE_SIZE)

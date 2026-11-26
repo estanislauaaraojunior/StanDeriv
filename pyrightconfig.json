@@ -1,0 +1,18 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "include": ["*.py", "dashboard", "tests"],
+  "exclude": [
+    ".venv",
+    "**/__pycache__",
+    "Histórico Ativos",
+    ".training_inputs",
+    ".training_candidates",
+    "training_reports",
+    "recovered_data",
+    "backtest_reports",
+    "docs"
+  ]
+}

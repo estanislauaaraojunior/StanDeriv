@@ -10,9 +10,35 @@ serviceAccountKey.json
 ticks.csv
 dataset.csv
 operacoes_log.csv
+backtest_reports/
+backtest_results.csv
 
 # ── Python ──────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Dados versionados e recuperações locais (preservar fora de commits)
+ticks_v2.csv
+operacoes_v2.csv
+recovered_data/
+*.metadata.json
+*.candidate
+*.new
+executor.lock
+bot_status.json
+bot_status.json.lock
+.bot_status.json.*.tmp
+risk_accounts.json
+dataset_v2.csv
+dataset_v2.csv.tmp
+
+payout_quotes.csv
+training_reports/
+.training_candidates/
+.training_inputs/
+shadow_state.json
+shadow_state.json.states/
+shadow_state.json.canary/
+model_metrics.json

@@ -13,7 +13,6 @@ Uso:
 """
 
 import argparse
-import logging
 import signal
 import sys
 
@@ -21,11 +20,10 @@ from config import DEMO_MODE
 from executor import DerivBot
 from risk_manager import RiskManager
 
-logger = logging.getLogger(__name__)
-
 
 def _handle_interrupt(sig, frame) -> None:
-    logger.info("Encerrado pelo usuário.")
+    """Trata Ctrl+C encerrando o bot."""
+    print("\n\n[BOT] Encerrado pelo usuário. Até logo.")
     sys.exit(0)
 
 
@@ -42,6 +40,7 @@ def _confirm_real_mode() -> bool:
 
 
 def main() -> None:
+    """Interpreta a CLI, adquire o lock de execução, prepara a sessão e o risco, e executa o `DerivBot`."""
     parser = argparse.ArgumentParser(
         description=(
             "Deriv Trading Bot — estratégia multi-indicador profissional.\n"
@@ -72,12 +71,9 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    from model_contract import acquire_execution_lock
+    from pathlib import Path
+    execution_lock=acquire_execution_lock(Path(__file__).resolve().parent/"executor.lock")
 
     # Determina modo: flag CLI tem prioridade sobre config.DEMO_MODE
     if args.real:
@@ -94,8 +90,17 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, _handle_interrupt)
 
-    risk_manager = RiskManager(initial_balance=args.balance)
-    bot = DerivBot(risk_manager=risk_manager, demo=is_demo)
+    import config, deriv_session
+    session=None
+    if deriv_session.is_bearer_token(config.TOKEN,config.DERIV_AUTH_MODE):
+        session=deriv_session.setup_bearer_options_session(app_id=config.APP_ID,token=config.TOKEN,demo=is_demo)
+    balance=float(session['account']['balance']) if session else args.balance
+    risk_manager = RiskManager(initial_balance=balance)
+    bot = DerivBot(risk_manager=risk_manager, demo=is_demo,
+                   auth_mode='bearer' if session else 'legacy',
+                   account_id=session['account_id'] if session else '',
+                   initial_ws_url=session['ws_url'] if session else '')
+    bot._execution_lock=execution_lock
     bot.run()
 
 

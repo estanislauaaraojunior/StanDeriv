@@ -1,0 +1,118 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: ◈
+      - generic [ref=e5]: Deriv Bot
+    - list [ref=e6]:
+      - listitem [ref=e7] [cursor=pointer]:
+        - generic [ref=e8]: ⬡
+        - generic [ref=e9]: Overview
+      - listitem [ref=e10] [cursor=pointer]:
+        - generic [ref=e11]: ⬢
+        - generic [ref=e12]: Análise Técnica
+      - listitem [ref=e13] [cursor=pointer]:
+        - generic [ref=e14]: ◈
+        - generic [ref=e15]: IA & Risco
+      - listitem [ref=e16] [cursor=pointer]:
+        - generic [ref=e17]: ☰
+        - generic [ref=e18]: Histórico
+      - listitem [ref=e19] [cursor=pointer]:
+        - generic [ref=e20]: ◉
+        - generic [ref=e21]: Estatísticas
+      - listitem [ref=e22] [cursor=pointer]:
+        - generic [ref=e23]: ◫
+        - generic [ref=e24]: Backtest
+      - listitem [ref=e25] [cursor=pointer]:
+        - generic [ref=e26]: ▤
+        - generic [ref=e27]: Pipeline Logs
+    - generic [ref=e28]: Rodando (PID 169485)
+  - main [ref=e31]:
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - text: Pipeline Logs
+        - generic [ref=e100]: R_25
+      - generic [ref=e34]:
+        - generic [ref=e35]: "Atualizado: 16:57:18"
+        - button "■ Parar" [ref=e101] [cursor=pointer]
+        - button "↻ Reiniciar Sessão" [ref=e37] [cursor=pointer]
+    - generic [ref=e102]:
+      - generic [ref=e103]:
+        - generic [ref=e104]:
+          - generic [ref=e105]: CPU Sistema
+          - generic [ref=e107]: 40.0%
+        - generic [ref=e108]:
+          - generic [ref=e109]: RAM Sistema
+          - generic [ref=e111]: 36.3% (8497 MB)
+        - generic [ref=e112]:
+          - generic [ref=e113]: Disco
+          - generic [ref=e115]: 88.0%
+        - generic [ref=e116]:
+          - generic [ref=e117]: Bot CPU
+          - generic [ref=e119]: 0.0%
+        - generic [ref=e120]:
+          - generic [ref=e121]: Bot RAM
+          - generic [ref=e124]: 267.8 MB
+      - generic [ref=e125]:
+        - generic [ref=e126]: ▤ Pipeline — Saída em Tempo Real
+        - generic [ref=e127]:
+          - textbox "Filtrar linhas..." [ref=e128]
+          - generic [ref=e129] [cursor=pointer]:
+            - checkbox "Auto-scroll" [checked] [ref=e130]
+            - text: Auto-scroll
+          - button "Limpar" [ref=e131] [cursor=pointer]
+      - generic [ref=e132]:
+        - generic [ref=e133]: 51 linhas
+        - generic [ref=e134]: ● Rodando
+        - generic [ref=e135]: "Atualizado: 16:57:19"
+      - generic [ref=e136]:
+        - generic [ref=e137]: "[AUTH] Token PAT detectado (fluxo novo da Deriv)."
+        - generic [ref=e138]: "[AUTH] Token Bearer validado | Conta Options: DOT91528180 (demo) | Saldo: 7310.88 USD"
+        - generic [ref=e139]: "[PIPELINE] Módulos de decisão ativos: score ponderado"
+        - generic [ref=e140]: "[TENDÊNCIA] Símbolo alterado: R_100 → R_25"
+        - generic [ref=e141]: "[PIPELINE] IA desligada; preservando dados e artefatos de treinamento."
+        - generic [ref=e142]: ============================================================
+        - generic [ref=e143]: Deriv Pipeline — Orquestrador Automático
+        - generic [ref=e144]: "Modo : DEMO"
+        - generic [ref=e145]: "Símbolo : R_25 — Volatility 25 Index"
+        - generic [ref=e146]: "Base do ativo : incremental por lacunas"
+        - generic [ref=e147]: "Candles p/ treino : 579 contratos rotuláveis (500 ticks reais mínimos)"
+        - generic [ref=e148]: "Re-treino : adaptativo (IA decide automaticamente)"
+        - generic [ref=e149]: › WinRate < 42% | Conf < 55% | +120 contratos rotulados | backstop 60min
+        - generic [ref=e150]: Pressione Ctrl+C para encerrar tudo
+        - generic [ref=e151]: ============================================================
+        - generic [ref=e152]: "[HISTÓRICO] Atualizando base incremental de R_25 — Volatility 25 Index (15 min)..."
+        - generic [ref=e153]: "[HISTÓRICO] Base do ativo atualizada: 0 candle(s) novos, 336 na janela local, 0 página(s) consultada(s)."
+        - generic [ref=e154]: "[PIPELINE] Aviso: histórico não obtido — coletor ao vivo cobrirá os dados."
+        - generic [ref=e155]: "[PIPELINE] Fase 1: Coletor iniciado em background (sem duplicatas)."
+        - generic [ref=e156]: "[PIPELINE] Modelo treinado desativado; treino inicial ignorado."
+        - generic [ref=e157]: "[PIPELINE] IA desligada; retreino e promoção de modelo não bloqueiam a execução."
+        - generic [ref=e158]: "[PIPELINE] Fase 6: Iniciando bot de trading..."
+        - generic [ref=e159]: "[COLETOR] Primeiro tick não recebido em 30s; reconectando com nova sessão."
+        - generic [ref=e160]: "[COLETOR] Conectado | R_25 — Volatility 25 Index"
+        - generic [ref=e161]: "[COLETOR] Conexão encerrada (código: None) — sem tick inicial; reconectando..."
+        - generic [ref=e162]: "[BOT] Histórico local inválido; CSV v2 ignorado no preload"
+        - generic [ref=e163]: =======================================================
+        - generic [ref=e164]: "Deriv Trading Bot — Modo: DEMO"
+        - generic [ref=e165]: "Símbolo : R_25"
+        - generic [ref=e166]: "Duração : 15 m"
+        - generic [ref=e167]: "Saldo : 7359.88 USD"
+        - generic [ref=e168]: "Stake : 73.60 USD (1% do saldo)"
+        - generic [ref=e169]: =======================================================
+        - generic [ref=e170]: "[BOT] Conectado à Deriv WebSocket API"
+        - generic [ref=e171]: "[BOT] Re-subscrevendo ao contrato ativo: 16432364259"
+        - generic [ref=e172]: "[BOT] Baixando 100 candles históricos de R_25 (900s)..."
+        - generic [ref=e173]: "[COLETOR] Conectado | R_25 — Volatility 25 Index"
+        - generic [ref=e174]: "[COLETOR] Backfill pesado de ticks desativado; coletando somente ticks ao vivo."
+        - generic [ref=e175]: "[COLETOR] Ticks: 1 | 2650.859 @ 2026-10-10T16:51:16"
+        - generic [ref=e176]: "[BOT] Erro WebSocket: Connection to remote host was lost."
+        - generic [ref=e177]: "[SAÚDE] Nenhum tick recebido por 30s — WebSocket pode estar morto ou mercado fechado; forçando reconexão"
+        - generic [ref=e178]: "[BOT] Conexão encerrada (código: None) — tentando reconectar..."
+        - generic [ref=e179]: "[BOT] Conectado à Deriv WebSocket API"
+        - generic [ref=e180]: "[BOT] Re-subscrevendo ao contrato ativo: 16432364259"
+        - generic [ref=e181]: "[BOT] Baixando 100 candles históricos de R_25 (900s)..."
+        - generic [ref=e182]: "[BOT] Erro WebSocket: Connection to remote host was lost."
+        - generic [ref=e183]: "[SAÚDE] Nenhum tick recebido por 30s — WebSocket pode estar morto ou mercado fechado; forçando reconexão"
+        - generic [ref=e184]: "[BOT] Conexão encerrada (código: None) — tentando reconectar..."
+        - generic [ref=e185]: "[BOT] Conectado à Deriv WebSocket API"
+        - generic [ref=e186]: "[BOT] Re-subscrevendo ao contrato ativo: 16432364259"
+        - generic [ref=e187]: "[BOT] Baixando 100 candles históricos de R_25 (900s)..."

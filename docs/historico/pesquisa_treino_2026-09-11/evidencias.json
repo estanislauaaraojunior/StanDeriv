@@ -1,0 +1,2306 @@
+{
+  "captured_at_utc": "2026-09-11T12:52:52.860584+00:00",
+  "git_head": "8ae6cf16d68e1affbb25bc0886625612cb7e1f3e",
+  "reports": [
+    {
+      "source": "training_reports/702d4c76541d4541aeae6d24c72373e7e10885410a54d5f7a8135702ce3af1cc-evaluation.json",
+      "source_sha256": "8ff44e1f6951e479d62cd0dfd6adf308b4c994fc743413a08718a9330a4ea942",
+      "timestamp": "2026-09-10T21:50:57.376579+00:00",
+      "symbol": "frxUSDCAD",
+      "best_model": "RandomForest",
+      "n_train": 2936,
+      "n_test": 1221,
+      "auc": 0.48943620081763317,
+      "accuracy": 0.4348894348894349,
+      "f1": 0.20205479452054795,
+      "trades": 22,
+      "wins": 8,
+      "win_rate": 0.36363636363636365,
+      "win_rate_lower95": 0.19732972772607896,
+      "eligible": false,
+      "rejection_reasons": [
+        "amostra insuficiente: 22/30 contratos no teste",
+        "limite inferior de acerto 19.7% não supera equilíbrio 54.1%",
+        "AUC 0.4894 não supera 0.5"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788985860,
+      "evaluation_end": 1789074061,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "702d4c76541d4541aeae6d24c72373e7e10885410a54d5f7a8135702ce3af1cc",
+      "calibration": {
+        "multiclass_brier": 0.644014959028249,
+        "log_loss": 0.9204283080546897,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 4,
+            "mean_probability": 0.5969200947320783,
+            "observed_win_rate": 0.0
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 752,
+            "mean_probability": 0.6730789623361715,
+            "observed_win_rate": 0.43351063829787234
+          },
+          {
+            "from": 0.7,
+            "to": 0.8,
+            "count": 465,
+            "mean_probability": 0.72308922202623,
+            "observed_win_rate": 0.44086021505376344
+          }
+        ],
+        "target_counts": {
+          "0": 531,
+          "1": 664,
+          "2": 26
+        },
+        "prediction_counts": {
+          "0": 1221
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 76,
+          "wins": 38,
+          "win_rate": 0.5,
+          "expectancy": -0.07499999999999997,
+          "blockers": {
+            "active_contract": 1039,
+            "cadence": 16,
+            "risk_pause": 90
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 41,
+          "wins": 20,
+          "win_rate": 0.4878048780487805,
+          "expectancy": -0.09756097560975609,
+          "blockers": {
+            "active_contract": 568,
+            "no_technical_signal": 524,
+            "cadence": 8,
+            "risk_pause": 80
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 22,
+          "wins": 8,
+          "win_rate": 0.36363636363636365,
+          "expectancy": -0.3272727272727272,
+          "blockers": {
+            "active_contract": 308,
+            "no_technical_signal": 457,
+            "direction_disagreement": 150,
+            "cadence": 9,
+            "risk_pause": 275
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 22,
+          "wins": 8,
+          "win_rate": 0.36363636363636365,
+          "expectancy": -0.3818181818181818,
+          "blockers": {
+            "active_contract": 308,
+            "no_technical_signal": 457,
+            "direction_disagreement": 150,
+            "cadence": 9,
+            "risk_pause": 275
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "amostra insuficiente: 22/30 contratos no teste",
+            "limite inferior de acerto 19.7% não supera equilíbrio 58.8%",
+            "AUC 0.4894 não supera 0.5"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": null,
+        "wins": null,
+        "win_rate": null,
+        "expectancy": null,
+        "blockers": null,
+        "payout_source": null,
+        "eligible": null,
+        "rejection_reasons": null,
+        "quotes_sha256": null
+      }
+    },
+    {
+      "source": "training_reports/6b9c48946c0853106f52d3406f5e9fb51fbb6f11ec9077a10c41798d31c62ee6-evaluation.json",
+      "source_sha256": "9885e177f2fb8f85335d1f9b1985b10b290c31244729b86095c689c3623655a3",
+      "timestamp": "2026-09-10T22:12:26.832716+00:00",
+      "symbol": "frxUSDCHF",
+      "best_model": "RandomForest",
+      "n_train": 923,
+      "n_test": 416,
+      "auc": 0.4739965095986038,
+      "accuracy": 0.5408653846153846,
+      "f1": 0.23400936037441497,
+      "trades": 10,
+      "wins": 2,
+      "win_rate": 0.2,
+      "win_rate_lower95": 0.05668094798069332,
+      "eligible": false,
+      "rejection_reasons": [
+        "amostra insuficiente: 10/30 contratos no teste",
+        "limite inferior de acerto 5.7% não supera equilíbrio 54.1%",
+        "AUC 0.4740 não supera 0.5"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1789048260,
+      "evaluation_end": 1789074061,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "6b9c48946c0853106f52d3406f5e9fb51fbb6f11ec9077a10c41798d31c62ee6",
+      "calibration": {
+        "multiclass_brier": 0.5621262239449092,
+        "log_loss": 0.8407709180105181,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1,
+            "mean_probability": 0.5854113639450578,
+            "observed_win_rate": 1.0
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 307,
+            "mean_probability": 0.6762873815372958,
+            "observed_win_rate": 0.5342019543973942
+          },
+          {
+            "from": 0.7,
+            "to": 0.8,
+            "count": 108,
+            "mean_probability": 0.7094924758479263,
+            "observed_win_rate": 0.5555555555555556
+          }
+        ],
+        "target_counts": {
+          "0": 180,
+          "1": 225,
+          "2": 11
+        },
+        "prediction_counts": {
+          "1": 416
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 27,
+          "wins": 18,
+          "win_rate": 0.6666666666666666,
+          "expectancy": 0.23333333333333328,
+          "blockers": {
+            "active_contract": 377,
+            "cadence": 2,
+            "risk_pause": 10
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 12,
+          "wins": 5,
+          "win_rate": 0.4166666666666667,
+          "expectancy": -0.2291666666666667,
+          "blockers": {
+            "active_contract": 161,
+            "no_technical_signal": 169,
+            "cadence": 4,
+            "risk_pause": 70
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 10,
+          "wins": 2,
+          "win_rate": 0.2,
+          "expectancy": -0.6300000000000001,
+          "blockers": {
+            "active_contract": 127,
+            "no_technical_signal": 195,
+            "direction_disagreement": 10,
+            "cadence": 4,
+            "risk_pause": 70
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 10,
+          "wins": 2,
+          "win_rate": 0.2,
+          "expectancy": -0.6599999999999999,
+          "blockers": {
+            "active_contract": 127,
+            "no_technical_signal": 195,
+            "direction_disagreement": 10,
+            "cadence": 4,
+            "risk_pause": 70
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "amostra insuficiente: 10/30 contratos no teste",
+            "limite inferior de acerto 5.7% não supera equilíbrio 58.8%",
+            "AUC 0.4740 não supera 0.5"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": null,
+        "wins": null,
+        "win_rate": null,
+        "expectancy": null,
+        "blockers": null,
+        "payout_source": null,
+        "eligible": null,
+        "rejection_reasons": null,
+        "quotes_sha256": null
+      }
+    },
+    {
+      "source": "training_reports/af15c1c579dffa1ecdeef8713a18e6d7b82962eec2db46b5771cb72510fa3d26-evaluation.json",
+      "source_sha256": "fdbcbb45ff9beacfaa5a46f9e78decb49ff27a1f76a4400b511a347b3675126e",
+      "timestamp": "2026-09-10T22:18:00.031688+00:00",
+      "symbol": "frxUSDCHF",
+      "best_model": "XGBoost",
+      "n_train": 2877,
+      "n_test": 1197,
+      "auc": 0.5268529371985032,
+      "accuracy": 0.4979114452798663,
+      "f1": 0.31203134724261483,
+      "trades": 8,
+      "wins": 1,
+      "win_rate": 0.125,
+      "win_rate_lower95": 0.02241690886329618,
+      "eligible": false,
+      "rejection_reasons": [
+        "amostra insuficiente: 8/30 contratos no teste",
+        "limite inferior de acerto 2.2% não supera equilíbrio 54.1%"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1789001400,
+      "evaluation_end": 1789074061,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "af15c1c579dffa1ecdeef8713a18e6d7b82962eec2db46b5771cb72510fa3d26",
+      "calibration": {
+        "multiclass_brier": 0.523613340184117,
+        "log_loss": 0.7656781920071101,
+        "reliability_bins": [
+          {
+            "from": 0.4,
+            "to": 0.5,
+            "count": 132,
+            "mean_probability": 0.49503315714272583,
+            "observed_win_rate": 0.5606060606060606
+          },
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1065,
+            "mean_probability": 0.5410998207862389,
+            "observed_win_rate": 0.49014084507042255
+          }
+        ],
+        "target_counts": {
+          "1": 656,
+          "0": 526,
+          "2": 15
+        },
+        "prediction_counts": {
+          "0": 965,
+          "1": 232
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 38,
+          "wins": 19,
+          "win_rate": 0.5,
+          "expectancy": -0.07499999999999998,
+          "blockers": {
+            "low_confidence": 546,
+            "insufficient_expected_return": 2,
+            "active_contract": 519,
+            "cadence": 12,
+            "risk_pause": 80
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 39,
+          "wins": 19,
+          "win_rate": 0.48717948717948717,
+          "expectancy": -0.09871794871794874,
+          "blockers": {
+            "no_technical_signal": 529,
+            "active_contract": 539,
+            "cadence": 10,
+            "risk_pause": 80
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 8,
+          "wins": 1,
+          "win_rate": 0.125,
+          "expectancy": -0.76875,
+          "blockers": {
+            "no_technical_signal": 684,
+            "low_confidence": 120,
+            "direction_disagreement": 197,
+            "active_contract": 111,
+            "cadence": 4,
+            "low_combined_score": 3,
+            "risk_pause": 70
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 805,
+            "low_confidence": 123,
+            "direction_disagreement": 228,
+            "insufficient_expected_return": 32,
+            "low_combined_score": 9
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "amostra insuficiente: 0/30 contratos no teste",
+            "limite inferior de acerto 0.0% não supera equilíbrio 58.8%"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": null,
+        "wins": null,
+        "win_rate": null,
+        "expectancy": null,
+        "blockers": null,
+        "payout_source": null,
+        "eligible": null,
+        "rejection_reasons": null,
+        "quotes_sha256": null
+      }
+    },
+    {
+      "source": "training_reports/d057949f2a7486ec0ecc22a782de2db04cd5889c22d003225e6e4b552838b6ab-evaluation.json",
+      "source_sha256": "0e422d0f8d979f3310f1e59dff3465f5840b2e57ad19414b4f7f76a4e4325f60",
+      "timestamp": "2026-09-10T22:35:10.020038+00:00",
+      "symbol": "R_10",
+      "best_model": "RandomForest",
+      "n_train": 894,
+      "n_test": 404,
+      "auc": 0.550432489711427,
+      "accuracy": 0.4628712871287129,
+      "f1": 0.3164128595600677,
+      "trades": 9,
+      "wins": 6,
+      "win_rate": 0.6666666666666666,
+      "win_rate_lower95": 0.35419734749908977,
+      "eligible": false,
+      "rejection_reasons": [
+        "amostra insuficiente: 9/30 contratos no teste",
+        "limite inferior de acerto 35.4% não supera equilíbrio 54.1%"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1789054560,
+      "evaluation_end": 1789079640,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "d057949f2a7486ec0ecc22a782de2db04cd5889c22d003225e6e4b552838b6ab",
+      "calibration": {
+        "multiclass_brier": 0.5107603105067116,
+        "log_loss": 0.7039418510425589,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 404,
+            "mean_probability": 0.5493465429493134,
+            "observed_win_rate": 0.4628712871287129
+          }
+        ],
+        "target_counts": {
+          "1": 187,
+          "0": 217
+        },
+        "prediction_counts": {
+          "1": 404
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 17,
+          "wins": 9,
+          "win_rate": 0.5294117647058824,
+          "expectancy": -0.020588235294117678,
+          "blockers": {
+            "active_contract": 225,
+            "low_confidence": 137,
+            "cadence": 4,
+            "insufficient_expected_return": 1,
+            "risk_pause": 20
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 15,
+          "wins": 8,
+          "win_rate": 0.5333333333333333,
+          "expectancy": -0.013333333333333345,
+          "blockers": {
+            "active_contract": 210,
+            "no_technical_signal": 120,
+            "cadence": 4,
+            "risk_pause": 55
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 9,
+          "wins": 6,
+          "win_rate": 0.6666666666666666,
+          "expectancy": 0.23333333333333328,
+          "blockers": {
+            "active_contract": 113,
+            "low_combined_score": 4,
+            "direction_disagreement": 58,
+            "no_technical_signal": 210,
+            "cadence": 1,
+            "low_confidence": 9
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "insufficient_expected_return": 72,
+            "direction_disagreement": 64,
+            "no_technical_signal": 243,
+            "low_combined_score": 9,
+            "low_confidence": 16
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "amostra insuficiente: 0/30 contratos no teste",
+            "limite inferior de acerto 0.0% não supera equilíbrio 58.8%"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "missing_observed_payout": 97,
+          "direction_disagreement": 64,
+          "no_technical_signal": 243
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "amostra insuficiente: 0/30 contratos no teste",
+          "limite inferior de acerto 0.0% não supera equilíbrio 54.1%"
+        ],
+        "quotes_sha256": "e89260a0bc36072d651c5eb76cdfb0c807857876e4af283d8e22aba794ee031f"
+      }
+    },
+    {
+      "source": "training_reports/51c49d0609bc9b75e0ad8648f697f50a77a135298874bc120b341815e5725c1f-evaluation.json",
+      "source_sha256": "fbfa3002c9e981d59eefcda7170ad1bd16a9a69c00942cecca3138054e1aec61",
+      "timestamp": "2026-09-10T22:38:23.090804+00:00",
+      "symbol": "R_100",
+      "best_model": "RandomForest",
+      "n_train": 944,
+      "n_test": 424,
+      "auc": 0.6670894243819951,
+      "accuracy": 0.6320754716981132,
+      "f1": 0.4178619889406705,
+      "trades": 8,
+      "wins": 4,
+      "win_rate": 0.5,
+      "win_rate_lower95": 0.2152125268244419,
+      "eligible": false,
+      "rejection_reasons": [
+        "amostra insuficiente: 8/30 contratos no teste",
+        "limite inferior de acerto 21.5% não supera equilíbrio 54.1%"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1789053600,
+      "evaluation_end": 1789079880,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "51c49d0609bc9b75e0ad8648f697f50a77a135298874bc120b341815e5725c1f",
+      "calibration": {
+        "multiclass_brier": 0.46670870898612354,
+        "log_loss": 0.7371513318062881,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 168,
+            "mean_probability": 0.5564981693036278,
+            "observed_win_rate": 0.6071428571428571
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 169,
+            "mean_probability": 0.644087015536766,
+            "observed_win_rate": 0.6390532544378699
+          },
+          {
+            "from": 0.7,
+            "to": 0.8,
+            "count": 87,
+            "mean_probability": 0.7463541982092999,
+            "observed_win_rate": 0.6666666666666666
+          }
+        ],
+        "target_counts": {
+          "0": 212,
+          "1": 211,
+          "2": 1
+        },
+        "prediction_counts": {
+          "0": 266,
+          "1": 158
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 28,
+          "wins": 19,
+          "win_rate": 0.6785714285714286,
+          "expectancy": 0.25535714285714267,
+          "blockers": {
+            "active_contract": 386,
+            "low_confidence": 9,
+            "cadence": 1
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 12,
+          "wins": 2,
+          "win_rate": 0.16666666666666666,
+          "expectancy": -0.6916666666666668,
+          "blockers": {
+            "active_contract": 168,
+            "no_technical_signal": 177,
+            "cadence": 7,
+            "risk_pause": 60
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 8,
+          "wins": 4,
+          "win_rate": 0.5,
+          "expectancy": -0.07500000000000001,
+          "blockers": {
+            "direction_disagreement": 65,
+            "active_contract": 112,
+            "no_technical_signal": 237,
+            "low_confidence": 2
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 8,
+          "wins": 5,
+          "win_rate": 0.625,
+          "expectancy": 0.06249999999999997,
+          "blockers": {
+            "direction_disagreement": 68,
+            "active_contract": 112,
+            "no_technical_signal": 230,
+            "insufficient_expected_return": 2,
+            "low_confidence": 4
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "amostra insuficiente: 8/30 contratos no teste",
+            "limite inferior de acerto 30.6% não supera equilíbrio 58.8%"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "direction_disagreement": 82,
+          "missing_observed_payout": 63,
+          "no_technical_signal": 279
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "amostra insuficiente: 0/30 contratos no teste",
+          "limite inferior de acerto 0.0% não supera equilíbrio 54.1%"
+        ],
+        "quotes_sha256": "ad065e4a736fa3f845c6787e9c4cbfba927e62df047b56deca3fc05843e20bb1"
+      }
+    },
+    {
+      "source": "training_reports/6c5e91c8a423e627de2058df9b42716533c3141e546d31ea15bb6de1549b727b-evaluation.json",
+      "source_sha256": "26003dbf50644d553ccfb5d8f23c946564d41cbbaad131f62a7ce6cd3bf73b7c",
+      "timestamp": "2026-09-10T22:44:01.046171+00:00",
+      "symbol": "R_100",
+      "best_model": "XGBoost",
+      "n_train": 4690,
+      "n_test": 1923,
+      "auc": 0.49779252320235934,
+      "accuracy": 0.47425897035881437,
+      "f1": 0.2144620811287478,
+      "trades": 51,
+      "wins": 27,
+      "win_rate": 0.5294117647058824,
+      "win_rate_lower95": 0.39523071344726596,
+      "eligible": false,
+      "rejection_reasons": [
+        "limite inferior de acerto 39.5% não supera equilíbrio 54.1%",
+        "AUC 0.4978 não supera 0.5"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788963960,
+      "evaluation_end": 1789080180,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "6c5e91c8a423e627de2058df9b42716533c3141e546d31ea15bb6de1549b727b",
+      "calibration": {
+        "multiclass_brier": 0.5167075926162166,
+        "log_loss": 0.7192401239207619,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1923,
+            "mean_probability": 0.5651297268617048,
+            "observed_win_rate": 0.47425897035881437
+          }
+        ],
+        "target_counts": {
+          "1": 1008,
+          "0": 912,
+          "2": 3
+        },
+        "prediction_counts": {
+          "0": 1923
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 102,
+          "wins": 50,
+          "win_rate": 0.49019607843137253,
+          "expectancy": -0.09313725490196094,
+          "blockers": {
+            "active_contract": 1426,
+            "cadence": 25,
+            "risk_pause": 370
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 68,
+          "wins": 31,
+          "win_rate": 0.45588235294117646,
+          "expectancy": -0.15661764705882358,
+          "blockers": {
+            "no_technical_signal": 577,
+            "active_contract": 939,
+            "cadence": 19,
+            "risk_pause": 320
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 51,
+          "wins": 27,
+          "win_rate": 0.5294117647058824,
+          "expectancy": -0.020588235294117643,
+          "blockers": {
+            "no_technical_signal": 800,
+            "direction_disagreement": 317,
+            "active_contract": 714,
+            "cadence": 8,
+            "low_combined_score": 3,
+            "risk_pause": 30
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 1081,
+            "direction_disagreement": 448,
+            "insufficient_expected_return": 381,
+            "low_combined_score": 13
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "amostra insuficiente: 0/30 contratos no teste",
+            "limite inferior de acerto 0.0% não supera equilíbrio 58.8%",
+            "AUC 0.4978 não supera 0.5"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "no_technical_signal": 1081,
+          "direction_disagreement": 448,
+          "missing_observed_payout": 394
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "amostra insuficiente: 0/30 contratos no teste",
+          "limite inferior de acerto 0.0% não supera equilíbrio 54.1%",
+          "AUC 0.4978 não supera 0.5"
+        ],
+        "quotes_sha256": "71b1c853a8eb5cf3cd57f727bef3dc9e3f780b8fcce5bee6e1c04d3d708725c7"
+      }
+    },
+    {
+      "source": "training_reports/3d105db0c8248a98b850a86fd4a10886fb15a2a0b8052bce8015f4e948a896c1-evaluation.json",
+      "source_sha256": "1820cea9f160982007cb7340238509997368728d39cd4f3201d64e04145fbf94",
+      "timestamp": "2026-09-10T23:07:16.926613+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "XGBoost",
+      "n_train": 978,
+      "n_test": 438,
+      "auc": 0.5611081738394841,
+      "accuracy": 0.5593607305936074,
+      "f1": 0.35871156661786235,
+      "trades": 12,
+      "wins": 6,
+      "win_rate": 0.5,
+      "win_rate_lower95": 0.2537781703934222,
+      "eligible": false,
+      "rejection_reasons": [
+        "taxa de acerto 50.0% abaixo do mínimo 60.0%"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1789054500,
+      "evaluation_end": 1789081620,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "3d105db0c8248a98b850a86fd4a10886fb15a2a0b8052bce8015f4e948a896c1",
+      "calibration": {
+        "multiclass_brier": 0.4986996526252641,
+        "log_loss": 0.6919113076441991,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 130,
+            "mean_probability": 0.5782770950060624,
+            "observed_win_rate": 0.5384615384615384
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 308,
+            "mean_probability": 0.6429635470176672,
+            "observed_win_rate": 0.5681818181818182
+          }
+        ],
+        "target_counts": {
+          "1": 245,
+          "0": 193
+        },
+        "prediction_counts": {
+          "1": 438
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 29,
+          "wins": 17,
+          "win_rate": 0.5862068965517241,
+          "expectancy": 0.08448275862068957,
+          "blockers": {
+            "active_contract": 405,
+            "cadence": 4
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 16,
+          "wins": 7,
+          "win_rate": 0.4375,
+          "expectancy": -0.190625,
+          "blockers": {
+            "active_contract": 224,
+            "no_technical_signal": 164,
+            "cadence": 4,
+            "risk_pause": 30
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 12,
+          "wins": 6,
+          "win_rate": 0.5,
+          "expectancy": -0.075,
+          "blockers": {
+            "active_contract": 167,
+            "no_technical_signal": 212,
+            "direction_disagreement": 33,
+            "cadence": 3,
+            "risk_pause": 10,
+            "low_combined_score": 1
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 9,
+          "wins": 4,
+          "win_rate": 0.4444444444444444,
+          "expectancy": -0.24444444444444446,
+          "blockers": {
+            "active_contract": 125,
+            "no_technical_signal": 233,
+            "insufficient_expected_return": 22,
+            "direction_disagreement": 35,
+            "cadence": 2,
+            "risk_pause": 10,
+            "low_combined_score": 2
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "taxa de acerto 44.4% abaixo do mínimo 60.0%"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "missing_observed_payout": 111,
+          "no_technical_signal": 265,
+          "direction_disagreement": 62
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "nenhum contrato no teste"
+        ],
+        "quotes_sha256": "c1bf5fb22693f65d6c05614dea55227b03c625860533a3ef4fd7efd178db14ab"
+      }
+    },
+    {
+      "source": "training_reports/e4f50100dff3a35f243741a152a7968d763bdb1df13cea6c6b1f4b5168eec273-evaluation.json",
+      "source_sha256": "79b55f1f01ad1a643e5ea412ed5963879a7fef9c6461f9ffd2df23362fbb6384",
+      "timestamp": "2026-09-10T23:12:53.168401+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "RandomForest",
+      "n_train": 4690,
+      "n_test": 1923,
+      "auc": 0.5319046766751211,
+      "accuracy": 0.5278211128445138,
+      "f1": 0.5259442107160776,
+      "trades": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "win_rate_lower95": 0.0,
+      "eligible": false,
+      "rejection_reasons": [
+        "nenhum contrato no teste"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788965700,
+      "evaluation_end": 1789081920,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "e4f50100dff3a35f243741a152a7968d763bdb1df13cea6c6b1f4b5168eec273",
+      "calibration": {
+        "multiclass_brier": 0.4994565738820828,
+        "log_loss": 0.6926041131809376,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1923,
+            "mean_probability": 0.5080876849459801,
+            "observed_win_rate": 0.5278211128445138
+          }
+        ],
+        "target_counts": {
+          "1": 1052,
+          "0": 871
+        },
+        "prediction_counts": {
+          "0": 931,
+          "1": 992
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "low_confidence": 1923
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 65,
+          "wins": 34,
+          "win_rate": 0.5230769230769231,
+          "expectancy": -0.03230769230769234,
+          "blockers": {
+            "no_technical_signal": 658,
+            "active_contract": 910,
+            "cadence": 16,
+            "risk_pause": 274
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 1113,
+            "low_confidence": 357,
+            "direction_disagreement": 453
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 1113,
+            "low_confidence": 357,
+            "direction_disagreement": 453
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "nenhum contrato no teste"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "no_technical_signal": 1113,
+          "missing_observed_payout": 357,
+          "direction_disagreement": 453
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "nenhum contrato no teste"
+        ],
+        "quotes_sha256": "5c19fd3dfd56248e0b7f079268c377a9b30e01535adb602316433fea29ba4bb4"
+      }
+    },
+    {
+      "source": "training_reports/62191c1286f44ac729fac026fbf6d0e9f8467634a195b77f30617f649a34c0ac-evaluation.json",
+      "source_sha256": "e902bdea676d3cb39d3b6ef608890219f9d942619acb40fd725851617d12b100",
+      "timestamp": "2026-09-11T01:12:41.299295+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "RandomForest",
+      "n_train": 4750,
+      "n_test": 1947,
+      "auc": 0.4864838916151056,
+      "accuracy": 0.45968156137647664,
+      "f1": 0.3502604992754745,
+      "trades": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "win_rate_lower95": 0.0,
+      "eligible": false,
+      "rejection_reasons": [
+        "nenhum contrato no teste",
+        "AUC 0.4865 não supera 0.5"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788971460,
+      "evaluation_end": 1789089120,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "62191c1286f44ac729fac026fbf6d0e9f8467634a195b77f30617f649a34c0ac",
+      "calibration": {
+        "multiclass_brier": 0.5055956055891667,
+        "log_loss": 0.6987494058359708,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1947,
+            "mean_probability": 0.520489356989749,
+            "observed_win_rate": 0.45968156137647664
+          }
+        ],
+        "target_counts": {
+          "0": 872,
+          "1": 1075
+        },
+        "prediction_counts": {
+          "0": 1874,
+          "1": 73
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "low_confidence": 1947
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 63,
+          "wins": 32,
+          "win_rate": 0.5079365079365079,
+          "expectancy": -0.06031746031746029,
+          "blockers": {
+            "active_contract": 879,
+            "no_technical_signal": 607,
+            "cadence": 18,
+            "risk_pause": 380
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "direction_disagreement": 526,
+            "no_technical_signal": 1059,
+            "low_confidence": 362
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "direction_disagreement": 526,
+            "no_technical_signal": 1059,
+            "low_confidence": 362
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "nenhum contrato no teste",
+            "AUC 0.4865 não supera 0.5"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "direction_disagreement": 526,
+          "no_technical_signal": 1059,
+          "missing_observed_payout": 323,
+          "low_confidence": 39
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "nenhum contrato no teste",
+          "AUC 0.4865 não supera 0.5"
+        ],
+        "quotes_sha256": "9066d73d539f216f4fb480336cc69d0a068418e21b30b20c052e8c46948fd180"
+      }
+    },
+    {
+      "source": "training_reports/9e4547b2219c4012e0a2d50fe21f5fd7217a1e769a3c31974ec0b3f1448f606a-evaluation.json",
+      "source_sha256": "4e750322a03ed3d9a42b201db08c0a4c62dba00830af2f947505f5aa0f2b61e8",
+      "timestamp": "2026-09-11T03:12:36.933114+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "RandomForest",
+      "n_train": 4810,
+      "n_test": 1971,
+      "auc": 0.5089205037607573,
+      "accuracy": 0.4642313546423135,
+      "f1": 0.4272240935209035,
+      "trades": 19,
+      "wins": 6,
+      "win_rate": 0.3157894736842105,
+      "win_rate_lower95": 0.15364171004428598,
+      "eligible": false,
+      "rejection_reasons": [
+        "taxa de acerto 31.6% abaixo do mínimo 60.0%"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788977220,
+      "evaluation_end": 1789096320,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "9e4547b2219c4012e0a2d50fe21f5fd7217a1e769a3c31974ec0b3f1448f606a",
+      "calibration": {
+        "multiclass_brier": 0.5056235588578933,
+        "log_loss": 0.6987962040023751,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1971,
+            "mean_probability": 0.5291194970204011,
+            "observed_win_rate": 0.4642313546423135
+          }
+        ],
+        "target_counts": {
+          "0": 894,
+          "1": 1077
+        },
+        "prediction_counts": {
+          "0": 1578,
+          "1": 393
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 51,
+          "wins": 22,
+          "win_rate": 0.43137254901960786,
+          "expectancy": -0.20196078431372555,
+          "blockers": {
+            "active_contract": 714,
+            "low_confidence": 1050,
+            "insufficient_expected_return": 10,
+            "cadence": 16,
+            "risk_pause": 130
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 65,
+          "wins": 33,
+          "win_rate": 0.5076923076923077,
+          "expectancy": -0.0607692307692308,
+          "blockers": {
+            "no_technical_signal": 598,
+            "active_contract": 910,
+            "cadence": 18,
+            "risk_pause": 380
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 19,
+          "wins": 6,
+          "win_rate": 0.3157894736842105,
+          "expectancy": -0.41578947368421054,
+          "blockers": {
+            "no_technical_signal": 851,
+            "direction_disagreement": 307,
+            "low_confidence": 303,
+            "insufficient_expected_return": 3,
+            "active_contract": 266,
+            "cadence": 7,
+            "risk_pause": 213,
+            "low_combined_score": 2
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 1062,
+            "direction_disagreement": 432,
+            "low_confidence": 406,
+            "insufficient_expected_return": 66,
+            "low_combined_score": 5
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "nenhum contrato no teste"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 3,
+        "wins": 1,
+        "win_rate": 0.3333333333333333,
+        "expectancy": -0.37333333333333335,
+        "blockers": {
+          "no_technical_signal": 1055,
+          "direction_disagreement": 413,
+          "missing_observed_payout": 411,
+          "low_confidence": 47,
+          "active_contract": 42
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "taxa de acerto 33.3% abaixo do mínimo 60.0%"
+        ],
+        "quotes_sha256": "84f626f7d10ff1a3eabb6cab416c8d7e976a2692a684338d6d79665bb646c7f0"
+      }
+    },
+    {
+      "source": "training_reports/51c84d516e5ed6121a004ef7af8d4bc8244f84ff4bcd85add93e1d5ecb4f960e-evaluation.json",
+      "source_sha256": "bb72be25a4a4a4953f25f0d2821b7c9b5be418ef78ae4dd6629692cbc4dae8ce",
+      "timestamp": "2026-09-11T05:12:38.434844+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "RandomForest",
+      "n_train": 4870,
+      "n_test": 1995,
+      "auc": 0.510075401175514,
+      "accuracy": 0.5042606516290726,
+      "f1": 0.4866013986013986,
+      "trades": 37,
+      "wins": 14,
+      "win_rate": 0.3783783783783784,
+      "win_rate_lower95": 0.2406378746389103,
+      "eligible": false,
+      "rejection_reasons": [
+        "taxa de acerto 37.8% abaixo do mínimo 60.0%"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788982980,
+      "evaluation_end": 1789103520,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "51c84d516e5ed6121a004ef7af8d4bc8244f84ff4bcd85add93e1d5ecb4f960e",
+      "calibration": {
+        "multiclass_brier": 0.5041073968831269,
+        "log_loss": 0.6973912539686501,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1803,
+            "mean_probability": 0.5426056927799778,
+            "observed_win_rate": 0.4980587909040488
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 191,
+            "mean_probability": 0.6260756891912698,
+            "observed_win_rate": 0.5654450261780105
+          },
+          {
+            "from": 0.7,
+            "to": 0.8,
+            "count": 1,
+            "mean_probability": 0.7022941691543485,
+            "observed_win_rate": 0.0
+          }
+        ],
+        "target_counts": {
+          "1": 1076,
+          "0": 919
+        },
+        "prediction_counts": {
+          "1": 1289,
+          "0": 706
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 87,
+          "wins": 40,
+          "win_rate": 0.45977011494252873,
+          "expectancy": -0.14942528735632193,
+          "blockers": {
+            "low_confidence": 392,
+            "active_contract": 1210,
+            "cadence": 21,
+            "risk_pause": 280,
+            "insufficient_expected_return": 5
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 67,
+          "wins": 33,
+          "win_rate": 0.4925373134328358,
+          "expectancy": -0.08880597014925382,
+          "blockers": {
+            "active_contract": 937,
+            "no_technical_signal": 582,
+            "cadence": 19,
+            "risk_pause": 390
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 37,
+          "wins": 14,
+          "win_rate": 0.3783783783783784,
+          "expectancy": -0.30000000000000004,
+          "blockers": {
+            "direction_disagreement": 211,
+            "low_confidence": 122,
+            "no_technical_signal": 661,
+            "active_contract": 517,
+            "cadence": 13,
+            "risk_pause": 430,
+            "insufficient_expected_return": 2,
+            "low_combined_score": 2
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 13,
+          "wins": 5,
+          "win_rate": 0.38461538461538464,
+          "expectancy": -0.34615384615384615,
+          "blockers": {
+            "direction_disagreement": 367,
+            "low_confidence": 247,
+            "no_technical_signal": 998,
+            "insufficient_expected_return": 147,
+            "active_contract": 182,
+            "low_combined_score": 7,
+            "cadence": 4,
+            "risk_pause": 30
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "taxa de acerto 38.5% abaixo do mínimo 60.0%"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 11,
+        "wins": 4,
+        "win_rate": 0.36363636363636365,
+        "expectancy": -0.3163636363636364,
+        "blockers": {
+          "direction_disagreement": 378,
+          "missing_observed_payout": 395,
+          "no_technical_signal": 1031,
+          "low_combined_score": 2,
+          "low_confidence": 23,
+          "active_contract": 153,
+          "cadence": 2
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "taxa de acerto 36.4% abaixo do mínimo 60.0%"
+        ],
+        "quotes_sha256": "7f95cd6862fc80498370bf6e2d842f2ffc03bfd7530833e1eb092de5069b7c68"
+      }
+    },
+    {
+      "source": "training_reports/0afd3946d117746051a49f42dcf7f1faa626af63e812f8b1674be4dbc43869ed-evaluation.json",
+      "source_sha256": "1335537e782d2be59a12a00c3153e9eb7dc845feb0e56ac2fbe20be27657afcf",
+      "timestamp": "2026-09-11T07:12:47.537755+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "RandomForest",
+      "n_train": 4930,
+      "n_test": 2019,
+      "auc": 0.5211423931230694,
+      "accuracy": 0.5116394254581476,
+      "f1": 0.5053870571492176,
+      "trades": 33,
+      "wins": 14,
+      "win_rate": 0.42424242424242425,
+      "win_rate_lower95": 0.272353589950299,
+      "eligible": false,
+      "rejection_reasons": [
+        "taxa de acerto 42.4% abaixo do mínimo 60.0%"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788988740,
+      "evaluation_end": 1789110720,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "0afd3946d117746051a49f42dcf7f1faa626af63e812f8b1674be4dbc43869ed",
+      "calibration": {
+        "multiclass_brier": 0.5029042678572484,
+        "log_loss": 0.6961994256316432,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1786,
+            "mean_probability": 0.5399239842702204,
+            "observed_win_rate": 0.5089585666293394
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 233,
+            "mean_probability": 0.6249237965982563,
+            "observed_win_rate": 0.5321888412017167
+          }
+        ],
+        "target_counts": {
+          "1": 1053,
+          "0": 966
+        },
+        "prediction_counts": {
+          "1": 1193,
+          "0": 826
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 80,
+          "wins": 40,
+          "win_rate": 0.5,
+          "expectancy": -0.07500000000000002,
+          "blockers": {
+            "active_contract": 1114,
+            "low_confidence": 555,
+            "cadence": 19,
+            "insufficient_expected_return": 11,
+            "risk_pause": 240
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 67,
+          "wins": 32,
+          "win_rate": 0.47761194029850745,
+          "expectancy": -0.11641791044776123,
+          "blockers": {
+            "active_contract": 933,
+            "no_technical_signal": 609,
+            "cadence": 20,
+            "risk_pause": 390
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 33,
+          "wins": 14,
+          "win_rate": 0.42424242424242425,
+          "expectancy": -0.21515151515151526,
+          "blockers": {
+            "active_contract": 457,
+            "low_confidence": 209,
+            "no_technical_signal": 881,
+            "direction_disagreement": 315,
+            "cadence": 10,
+            "risk_pause": 110,
+            "low_combined_score": 2,
+            "insufficient_expected_return": 2
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 12,
+          "wins": 5,
+          "win_rate": 0.4166666666666667,
+          "expectancy": -0.2916666666666666,
+          "blockers": {
+            "insufficient_expected_return": 82,
+            "no_technical_signal": 1025,
+            "low_confidence": 294,
+            "low_combined_score": 7,
+            "direction_disagreement": 404,
+            "active_contract": 161,
+            "cadence": 4,
+            "risk_pause": 30
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "taxa de acerto 41.7% abaixo do mínimo 60.0%"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 14,
+        "wins": 8,
+        "win_rate": 0.5714285714285714,
+        "expectancy": 0.07428571428571426,
+        "blockers": {
+          "missing_observed_payout": 323,
+          "no_technical_signal": 1047,
+          "direction_disagreement": 398,
+          "low_combined_score": 2,
+          "low_confidence": 43,
+          "active_contract": 191,
+          "cadence": 1
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "taxa de acerto 57.1% abaixo do mínimo 60.0%"
+        ],
+        "quotes_sha256": "af4b14cc7b3a7b7d64209ac41a715deb32c089fbec7f6051d895af25bff36d5a"
+      }
+    },
+    {
+      "source": "training_reports/742945e84f12494fa0d2dd019d36718252d2882240204a2a6c81961efca4de17-evaluation.json",
+      "source_sha256": "21bda8fc27907ca3d9541e73ea453c780b15c5bbd2508fbd870b1c1a51707dda",
+      "timestamp": "2026-09-11T09:13:00.175989+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "RandomForest",
+      "n_train": 4990,
+      "n_test": 2043,
+      "auc": 0.4958738777485081,
+      "accuracy": 0.5261869799314733,
+      "f1": 0.4733694783822072,
+      "trades": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "win_rate_lower95": 0.0,
+      "eligible": false,
+      "rejection_reasons": [
+        "nenhum contrato no teste",
+        "AUC 0.4959 não supera 0.5"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788994500,
+      "evaluation_end": 1789117920,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "742945e84f12494fa0d2dd019d36718252d2882240204a2a6c81961efca4de17",
+      "calibration": {
+        "multiclass_brier": 0.4994800029900246,
+        "log_loss": 0.6926268817392571,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 2043,
+            "mean_probability": 0.5141002104938812,
+            "observed_win_rate": 0.5261869799314733
+          }
+        ],
+        "target_counts": {
+          "1": 1064,
+          "0": 979
+        },
+        "prediction_counts": {
+          "1": 1626,
+          "0": 417
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 5,
+          "wins": 4,
+          "win_rate": 0.8,
+          "expectancy": 0.48,
+          "blockers": {
+            "low_confidence": 1968,
+            "active_contract": 70
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 66,
+          "wins": 29,
+          "win_rate": 0.4393939393939394,
+          "expectancy": -0.18712121212121216,
+          "blockers": {
+            "no_technical_signal": 634,
+            "active_contract": 921,
+            "cadence": 22,
+            "risk_pause": 400
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 1128,
+            "low_confidence": 484,
+            "direction_disagreement": 431
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 1128,
+            "low_confidence": 484,
+            "direction_disagreement": 431
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "nenhum contrato no teste",
+            "AUC 0.4959 não supera 0.5"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "no_technical_signal": 1128,
+          "missing_observed_payout": 337,
+          "direction_disagreement": 431,
+          "low_confidence": 147
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "nenhum contrato no teste",
+          "AUC 0.4959 não supera 0.5"
+        ],
+        "quotes_sha256": "6ffa8d43c6ed21a7f49f8e96859092717dd545f5eed44f3cf6b7bd1519e693f5"
+      }
+    },
+    {
+      "source": "training_reports/6122c93e890b2421dc952643da9e76e548010a5853805d9679525cdb5215d7c8-evaluation.json",
+      "source_sha256": "72188fce884ed240703f7360a1d63dfe62a02ee318c104304811a211d2800910",
+      "timestamp": "2026-09-11T10:55:22.810590+00:00",
+      "symbol": "1HZ25V",
+      "best_model": "RandomForest",
+      "n_train": 5041,
+      "n_test": 2063,
+      "auc": 0.5186793936793936,
+      "accuracy": 0.5332040717401842,
+      "f1": 0.5162692815365477,
+      "trades": 29,
+      "wins": 18,
+      "win_rate": 0.6206896551724138,
+      "win_rate_lower95": 0.4400222620928496,
+      "eligible": true,
+      "rejection_reasons": [],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1788999420,
+      "evaluation_end": 1789124040,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "6122c93e890b2421dc952643da9e76e548010a5853805d9679525cdb5215d7c8",
+      "calibration": {
+        "multiclass_brier": 0.4987106411708376,
+        "log_loss": 0.691860726664694,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 2055,
+            "mean_probability": 0.5433639047044205,
+            "observed_win_rate": 0.5343065693430656
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 8,
+            "mean_probability": 0.6042063811744771,
+            "observed_win_rate": 0.25
+          }
+        ],
+        "target_counts": {
+          "1": 1064,
+          "0": 999
+        },
+        "prediction_counts": {
+          "1": 1385,
+          "0": 678
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 75,
+          "wins": 37,
+          "win_rate": 0.49333333333333335,
+          "expectancy": -0.0873333333333334,
+          "blockers": {
+            "low_confidence": 825,
+            "active_contract": 1050,
+            "insufficient_expected_return": 16,
+            "cadence": 17,
+            "risk_pause": 80
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 68,
+          "wins": 30,
+          "win_rate": 0.4411764705882353,
+          "expectancy": -0.18382352941176472,
+          "blockers": {
+            "no_technical_signal": 599,
+            "active_contract": 952,
+            "cadence": 24,
+            "risk_pause": 420
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 29,
+          "wins": 18,
+          "win_rate": 0.6206896551724138,
+          "expectancy": 0.14827586206896548,
+          "blockers": {
+            "no_technical_signal": 979,
+            "direction_disagreement": 367,
+            "low_confidence": 198,
+            "active_contract": 406,
+            "insufficient_expected_return": 4,
+            "low_combined_score": 6,
+            "cadence": 4,
+            "risk_pause": 70
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "no_technical_signal": 1108,
+            "direction_disagreement": 458,
+            "low_confidence": 313,
+            "insufficient_expected_return": 173,
+            "low_combined_score": 11
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "nenhum contrato no teste"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 17,
+        "wins": 10,
+        "win_rate": 0.5882352941176471,
+        "expectancy": 0.10588235294117646,
+        "blockers": {
+          "no_technical_signal": 1056,
+          "direction_disagreement": 376,
+          "missing_observed_payout": 313,
+          "active_contract": 238,
+          "low_confidence": 57,
+          "low_combined_score": 5,
+          "cadence": 1
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "taxa de acerto 58.8% abaixo do mínimo 60.0%"
+        ],
+        "quotes_sha256": "78d79046bed126c3efd289ecc1f2171cee3f3d8c506eb96785780a1af00b19ed"
+      }
+    },
+    {
+      "source": "training_reports/42d5f5ab49c57440a5c09729b89d599358f7aa023bf5dad7f883fe5663863fc2-evaluation.json",
+      "source_sha256": "17d72e42023bd2b577f06c423f2c98bc7e4f80363f49debccd73691557248472",
+      "timestamp": "2026-09-11T11:05:53.658850+00:00",
+      "symbol": "frxUSDCAD",
+      "best_model": "XGBoost",
+      "n_train": 955,
+      "n_test": 404,
+      "auc": 0.4392053973013493,
+      "accuracy": 0.5693069306930693,
+      "f1": 0.24185068349106206,
+      "trades": 5,
+      "wins": 2,
+      "win_rate": 0.4,
+      "win_rate_lower95": 0.11761823115925325,
+      "eligible": false,
+      "rejection_reasons": [
+        "taxa de acerto 40.0% abaixo do mínimo 60.0%",
+        "AUC 0.4392 não supera 0.5"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1789099620,
+      "evaluation_end": 1789124700,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "42d5f5ab49c57440a5c09729b89d599358f7aa023bf5dad7f883fe5663863fc2",
+      "calibration": {
+        "multiclass_brier": 0.5238642700299181,
+        "log_loss": 0.7723434760702169,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 271,
+            "mean_probability": 0.5384540819593902,
+            "observed_win_rate": 0.6309963099630996
+          },
+          {
+            "from": 0.6,
+            "to": 0.7,
+            "count": 132,
+            "mean_probability": 0.6495221184961724,
+            "observed_win_rate": 0.44696969696969696
+          },
+          {
+            "from": 0.7,
+            "to": 0.8,
+            "count": 1,
+            "mean_probability": 0.7030665874481201,
+            "observed_win_rate": 0.0
+          }
+        ],
+        "target_counts": {
+          "0": 168,
+          "1": 230,
+          "2": 6
+        },
+        "prediction_counts": {
+          "1": 404
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 20,
+          "wins": 12,
+          "win_rate": 0.6,
+          "expectancy": 0.11000000000000001,
+          "blockers": {
+            "active_contract": 280,
+            "low_confidence": 92,
+            "cadence": 2,
+            "risk_pause": 10
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 11,
+          "wins": 7,
+          "win_rate": 0.6363636363636364,
+          "expectancy": 0.17727272727272725,
+          "blockers": {
+            "active_contract": 152,
+            "no_technical_signal": 240,
+            "cadence": 1
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 5,
+          "wins": 2,
+          "win_rate": 0.4,
+          "expectancy": -0.25999999999999995,
+          "blockers": {
+            "direction_disagreement": 25,
+            "no_technical_signal": 288,
+            "low_confidence": 14,
+            "active_contract": 70,
+            "cadence": 1,
+            "low_combined_score": 1
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 5,
+          "wins": 1,
+          "win_rate": 0.2,
+          "expectancy": -0.6599999999999999,
+          "blockers": {
+            "direction_disagreement": 25,
+            "no_technical_signal": 282,
+            "low_confidence": 14,
+            "active_contract": 70,
+            "cadence": 2,
+            "insufficient_expected_return": 4,
+            "low_combined_score": 2
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "taxa de acerto 20.0% abaixo do mínimo 60.0%",
+            "AUC 0.4392 não supera 0.5"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "direction_disagreement": 27,
+          "no_technical_signal": 337,
+          "missing_observed_payout": 40
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "nenhum contrato no teste",
+          "AUC 0.4392 não supera 0.5"
+        ],
+        "quotes_sha256": "b0a90e9ae7259ece0df8b7ad1843076d527cc6425fc67941c6f635c2126a8d1c"
+      }
+    },
+    {
+      "source": "training_reports/3ff7b7b189faa2995e9a95c1c237ea7457afdb579732ce88da7dc43e5ac8fd67-evaluation.json",
+      "source_sha256": "babb160a8ed3f6b8796175313fb83ad6b207421761d7299c7cf7eee0ca816cab",
+      "timestamp": "2026-09-11T11:11:26.368708+00:00",
+      "symbol": "frxUSDCAD",
+      "best_model": "RandomForest",
+      "n_train": 2856,
+      "n_test": 1189,
+      "auc": 0.5211462450592885,
+      "accuracy": 0.5550883095037847,
+      "f1": 0.23796646836127636,
+      "trades": 0,
+      "wins": 0,
+      "win_rate": 0.0,
+      "win_rate_lower95": 0.0,
+      "eligible": false,
+      "rejection_reasons": [
+        "nenhum contrato no teste"
+      ],
+      "selection_warnings": [
+        "cenário conservador de payout líquido 70% não aprovado",
+        "walk-forward sem amostra ou consistência positiva em todas as janelas"
+      ],
+      "evaluation_start": 1789038840,
+      "evaluation_end": 1789125000,
+      "reference_net_payout": 0.85,
+      "dataset_sha256": "3ff7b7b189faa2995e9a95c1c237ea7457afdb579732ce88da7dc43e5ac8fd67",
+      "calibration": {
+        "multiclass_brier": 0.5119124761485143,
+        "log_loss": 0.7686807868057267,
+        "reliability_bins": [
+          {
+            "from": 0.5,
+            "to": 0.6,
+            "count": 1189,
+            "mean_probability": 0.5269341538182044,
+            "observed_win_rate": 0.5550883095037847
+          }
+        ],
+        "target_counts": {
+          "0": 506,
+          "1": 660,
+          "2": 23
+        },
+        "prediction_counts": {
+          "1": 1189
+        },
+        "note": "Bins usam todas as linhas sobrepostas; não são contratos independentes."
+      },
+      "components": {
+        "ai_only": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "low_confidence": 1189
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "technical_only": {
+          "trades": 35,
+          "wins": 19,
+          "win_rate": 0.5428571428571428,
+          "expectancy": 0.004285714285714251,
+          "blockers": {
+            "active_contract": 472,
+            "no_technical_signal": 646,
+            "cadence": 6,
+            "risk_pause": 30
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        },
+        "combined": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "low_confidence": 197,
+            "no_technical_signal": 887,
+            "direction_disagreement": 105
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": null,
+          "rejection_reasons": null
+        }
+      },
+      "payout_scenarios": {
+        "net_70pct": {
+          "trades": 0,
+          "wins": 0,
+          "win_rate": 0.0,
+          "expectancy": 0.0,
+          "blockers": {
+            "low_confidence": 197,
+            "no_technical_signal": 887,
+            "direction_disagreement": 105
+          },
+          "payout_source": "fixed_assumption",
+          "eligible": false,
+          "rejection_reasons": [
+            "nenhum contrato no teste"
+          ]
+        }
+      },
+      "observed_payout_evaluation": {
+        "trades": 0,
+        "wins": 0,
+        "win_rate": 0.0,
+        "expectancy": 0.0,
+        "blockers": {
+          "missing_observed_payout": 197,
+          "no_technical_signal": 887,
+          "direction_disagreement": 105
+        },
+        "payout_source": "observed_asof_no_fallback",
+        "eligible": false,
+        "rejection_reasons": [
+          "nenhum contrato no teste"
+        ],
+        "quotes_sha256": "eea25414f520a855841245250c72c1b978275baf5110443725e28bc1cc9e8c72"
+      }
+    }
+  ],
+  "code_sha256": {
+    "train_model.py": "3723e097560430fd42285418bb32aa6ecf2058ee3fb0cb0316f6a7a2fa39182a",
+    "training_evaluation.py": "725132ad07c1c746b9fd3a9de33dca94d55812f3280cdb07a84b8a0ca511fc40",
+    "training_experiments.py": "4aa010488c39a40bd112fee8ca0f20600f9211c018cb2f7b977c8b217e99821c",
+    "model_contract.py": "951d0068f76f391f1ea3799b8621c82c5d539439069a9de956a693cf2e401f9a",
+    "backtest.py": "56e5e2b7a6c2a4d8c36ede5c6f866417c3cdb11bfa64e928d3199ec308364309",
+    "config.py": "24bd56347d9d5227ff80f37363f0b1a451ce7e29c1777460c7c079463339533e",
+    "ai_predictor.py": "e89da6d0c13636870d3c68fb17cb0e9f20b49d0244a7ccc41a0bbe5636f9b381",
+    "pipeline.py": "26ee5ea9aae5cbcb01f5e4f0d2a4428b0aaaeb4fb2e913bcd633bd3a27a8d3f7"
+  },
+  "artifacts_present": {
+    "model.pkl": false,
+    "model.pkl.metadata.json": false,
+    "model.pkl.candidate": true,
+    "model.pkl.candidate.metadata.json": true
+  },
+  "state_symbol": "frxUSDCAD",
+  "note": "Leitura de artefatos existentes; nenhuma execução de treino ou backtest. Relatórios podem conter períodos sobrepostos. Estado operacional pode mudar após a captura."
+}

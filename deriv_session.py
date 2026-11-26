@@ -1,3 +1,4 @@
+"""Cliente REST da Deriv para contas Options: listagem, criação e obtenção da URL WebSocket via OTP."""
 import json
 import time
 from urllib.error import HTTPError, URLError
@@ -12,10 +13,25 @@ _USER_AGENT = "Mozilla/5.0 (compatible; DerivBot/2.0; +https://developers.deriv.
 
 
 class DerivAPIError(RuntimeError):
+    """Erro da API Deriv, com status HTTP e código de erro opcionais."""
     def __init__(self, message: str, status: int | None = None, code: str = "") -> None:
+        """Guarda a mensagem junto com o status HTTP e o código retornados pela API."""
         super().__init__(message)
         self.status = status
         self.code = code
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    """Indica se o erro representa limite de requisições HTTP/API."""
+    return (
+        isinstance(exc, DerivAPIError)
+        and (
+            exc.status == 429
+            or "1015" in str(exc)
+            or "rate limit" in str(exc).lower()
+            or str(exc.code).lower() in ("ratelimit", "rate_limit")
+        )
+    )
 
 
 def is_bearer_token(token: str, auth_mode: str = "auto") -> bool:
@@ -34,6 +50,7 @@ def is_bearer_token(token: str, auth_mode: str = "auto") -> bool:
 
 
 def is_pat_token(token: str) -> bool:
+    """Indica se o token é um Personal Access Token (prefixo 'pat_')."""
     return str(token).strip().startswith("pat_")
 
 
@@ -46,6 +63,7 @@ def request_json(
     payload: dict | None = None,
     timeout_sec: int = 15,
 ) -> dict:
+    """Faz requisição HTTP autenticada (Bearer) à API REST e retorna o JSON; erros viram `DerivAPIError`."""
     method = method.upper()
     body = None
     headers = {
@@ -95,6 +113,7 @@ def request_json(
 
 
 def _extract_accounts(data: dict) -> list[dict]:
+    """Extrai a lista de contas (dicts) da resposta, aceitando as chaves 'data' ou 'accounts'."""
     raw = data.get("data") if isinstance(data, dict) else []
     if isinstance(raw, dict):
         raw = [raw]
@@ -104,6 +123,7 @@ def _extract_accounts(data: dict) -> list[dict]:
 
 
 def get_options_accounts(*, app_id: str, token: str, timeout_sec: int = 15) -> list[dict]:
+    """Lista as contas Options do token, com até 3 tentativas e backoff em caso de rate limit."""
     last_err: DerivAPIError | None = None
     for attempt in range(3):
         try:
@@ -118,12 +138,7 @@ def get_options_accounts(*, app_id: str, token: str, timeout_sec: int = 15) -> l
         except DerivAPIError as exc:
             last_err = exc
             # 429 / Cloudflare 1015 (rate limit) — backoff exponencial
-            is_rate_limit = (
-                exc.status in (429,)
-                or "1015" in str(exc)
-                or str(exc.code).lower() in ("ratelimit", "rate_limit")
-            )
-            if is_rate_limit and attempt < 2:
+            if is_rate_limit_error(exc) and attempt < 2:
                 wait = 2 ** (attempt + 1)  # 2s, 4s
                 time.sleep(wait)
                 continue
@@ -138,6 +153,7 @@ def create_options_account(
     account_type: str,
     timeout_sec: int = 15,
 ) -> list[dict]:
+    """Cria uma conta Options (USD) do tipo informado e retorna as contas da resposta."""
     data = request_json(
         "POST",
         "/trading/v1/options/accounts",
@@ -150,6 +166,7 @@ def create_options_account(
 
 
 def choose_options_account(accounts: list[dict], *, demo: bool) -> dict | None:
+    """Escolhe a conta demo ou real, preferindo as ativas; None se nenhuma servir."""
     desired_type = "demo" if demo else "real"
     candidates = [
         acc for acc in accounts
@@ -171,6 +188,7 @@ def get_options_ws_url(
     timeout_sec: int = 15,
     attempts: int = 3,
 ) -> str:
+    """Obtém via OTP a URL WebSocket autenticada da conta, com novas tentativas em caso de erro."""
     last_error: DerivAPIError | None = None
     max_attempts = max(1, int(attempts or 1))
 
@@ -188,7 +206,10 @@ def get_options_ws_url(
             last_error = exc
             if attempt >= max_attempts - 1:
                 raise
-            time.sleep(0.5 * (attempt + 1))
+            if is_rate_limit_error(exc):
+                time.sleep(min(30, 5 * (2 ** attempt)))
+            else:
+                time.sleep(0.5 * (attempt + 1))
     else:
         raise last_error or DerivAPIError("Unable to obtain Options WebSocket URL")
 
@@ -206,6 +227,7 @@ def setup_bearer_options_session(
     demo: bool,
     timeout_sec: int = 15,
 ) -> dict:
+    """Resolve (ou cria) a conta demo/real e retorna {'account', 'account_id', 'ws_url'}."""
     account_type = "demo" if demo else "real"
     accounts = get_options_accounts(app_id=app_id, token=token, timeout_sec=timeout_sec)
     account = choose_options_account(accounts, demo=demo)
@@ -234,7 +256,3 @@ def setup_bearer_options_session(
     )
     return {"account": account, "account_id": account_id, "ws_url": ws_url}
 
-
-def setup_pat_options_session(**kwargs) -> dict:
-    """Compatibilidade com chamadas antigas; use setup_bearer_options_session."""
-    return setup_bearer_options_session(**kwargs)
